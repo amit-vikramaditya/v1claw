@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/sipeed/picoclaw/pkg/logger"
+	"github.com/amit-vikramaditya/v1claw/pkg/logger"
 )
 
 const logComponent = "events"

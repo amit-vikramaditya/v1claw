@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
-	"github.com/sipeed/picoclaw/pkg/events"
-	"github.com/sipeed/picoclaw/pkg/logger"
+	"github.com/amit-vikramaditya/v1claw/pkg/events"
+	"github.com/amit-vikramaditya/v1claw/pkg/logger"
 )
 
 var upgrader = websocket.Upgrader{

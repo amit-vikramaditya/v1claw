@@ -9,13 +9,13 @@ import (
 	"sync"
 	"time"
 
-	"github.com/sipeed/picoclaw/pkg/bus"
-	"github.com/sipeed/picoclaw/pkg/events"
-	"github.com/sipeed/picoclaw/pkg/logger"
-	"github.com/sipeed/picoclaw/pkg/state"
+	"github.com/amit-vikramaditya/v1claw/pkg/bus"
+	"github.com/amit-vikramaditya/v1claw/pkg/events"
+	"github.com/amit-vikramaditya/v1claw/pkg/logger"
+	"github.com/amit-vikramaditya/v1claw/pkg/state"
 )
 
-// Server provides HTTP and WebSocket API endpoints for PicoClaw.
+// Server provides HTTP and WebSocket API endpoints for V1Claw.
 type Server struct {
 	mu         sync.RWMutex
 	addr       string

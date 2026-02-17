@@ -10,8 +10,8 @@ import (
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
 	"github.com/openai/openai-go/v3/responses"
-	"github.com/sipeed/picoclaw/pkg/auth"
-	"github.com/sipeed/picoclaw/pkg/logger"
+	"github.com/amit-vikramaditya/v1claw/pkg/auth"
+	"github.com/amit-vikramaditya/v1claw/pkg/logger"
 )
 
 const codexDefaultModel = "gpt-5.2"
@@ -370,7 +370,7 @@ func createCodexTokenSource() func() (string, string, error) {
 			return "", "", fmt.Errorf("loading auth credentials: %w", err)
 		}
 		if cred == nil {
-			return "", "", fmt.Errorf("no credentials for openai. Run: picoclaw auth login --provider openai")
+			return "", "", fmt.Errorf("no credentials for openai. Run: v1claw auth login --provider openai")
 		}
 
 		if cred.AuthMethod == "oauth" && cred.NeedsRefresh() && cred.RefreshToken != "" {

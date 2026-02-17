@@ -1,8 +1,8 @@
-// PicoClaw - Ultra-lightweight personal AI agent
+// V1Claw - Ultra-lightweight personal AI agent
 // Inspired by and based on nanobot: https://github.com/HKUDS/nanobot
 // License: MIT
 //
-// Copyright (c) 2026 PicoClaw contributors
+// Copyright (c) 2026 V1Claw contributors
 
 package heartbeat
 
@@ -14,11 +14,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/sipeed/picoclaw/pkg/bus"
-	"github.com/sipeed/picoclaw/pkg/constants"
-	"github.com/sipeed/picoclaw/pkg/logger"
-	"github.com/sipeed/picoclaw/pkg/state"
-	"github.com/sipeed/picoclaw/pkg/tools"
+	"github.com/amit-vikramaditya/v1claw/pkg/bus"
+	"github.com/amit-vikramaditya/v1claw/pkg/constants"
+	"github.com/amit-vikramaditya/v1claw/pkg/logger"
+	"github.com/amit-vikramaditya/v1claw/pkg/state"
+	"github.com/amit-vikramaditya/v1claw/pkg/tools"
 )
 
 const (

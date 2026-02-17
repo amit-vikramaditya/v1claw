@@ -12,8 +12,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/sipeed/picoclaw/pkg/events"
-	"github.com/sipeed/picoclaw/pkg/state"
+	"github.com/amit-vikramaditya/v1claw/pkg/events"
+	"github.com/amit-vikramaditya/v1claw/pkg/state"
 )
 
 func newTestServer(t *testing.T) (*Server, *state.Manager) {

@@ -57,9 +57,9 @@ type Config struct {
 
 // V1APIConfig configures the V1 assistant REST/WebSocket API.
 type V1APIConfig struct {
-	Enabled bool   `json:"enabled" env:"PICOCLAW_V1_API_ENABLED"`
-	Addr    string `json:"addr" env:"PICOCLAW_V1_API_ADDR"`
-	APIKey  string `json:"api_key" env:"PICOCLAW_V1_API_KEY"`
+	Enabled bool   `json:"enabled" env:"V1CLAW_V1_API_ENABLED"`
+	Addr    string `json:"addr" env:"V1CLAW_V1_API_ADDR"`
+	APIKey  string `json:"api_key" env:"V1CLAW_V1_API_KEY"`
 }
 
 type AgentsConfig struct {
@@ -67,13 +67,13 @@ type AgentsConfig struct {
 }
 
 type AgentDefaults struct {
-	Workspace           string  `json:"workspace" env:"PICOCLAW_AGENTS_DEFAULTS_WORKSPACE"`
-	RestrictToWorkspace bool    `json:"restrict_to_workspace" env:"PICOCLAW_AGENTS_DEFAULTS_RESTRICT_TO_WORKSPACE"`
-	Provider            string  `json:"provider" env:"PICOCLAW_AGENTS_DEFAULTS_PROVIDER"`
-	Model               string  `json:"model" env:"PICOCLAW_AGENTS_DEFAULTS_MODEL"`
-	MaxTokens           int     `json:"max_tokens" env:"PICOCLAW_AGENTS_DEFAULTS_MAX_TOKENS"`
-	Temperature         float64 `json:"temperature" env:"PICOCLAW_AGENTS_DEFAULTS_TEMPERATURE"`
-	MaxToolIterations   int     `json:"max_tool_iterations" env:"PICOCLAW_AGENTS_DEFAULTS_MAX_TOOL_ITERATIONS"`
+	Workspace           string  `json:"workspace" env:"V1CLAW_AGENTS_DEFAULTS_WORKSPACE"`
+	RestrictToWorkspace bool    `json:"restrict_to_workspace" env:"V1CLAW_AGENTS_DEFAULTS_RESTRICT_TO_WORKSPACE"`
+	Provider            string  `json:"provider" env:"V1CLAW_AGENTS_DEFAULTS_PROVIDER"`
+	Model               string  `json:"model" env:"V1CLAW_AGENTS_DEFAULTS_MODEL"`
+	MaxTokens           int     `json:"max_tokens" env:"V1CLAW_AGENTS_DEFAULTS_MAX_TOKENS"`
+	Temperature         float64 `json:"temperature" env:"V1CLAW_AGENTS_DEFAULTS_TEMPERATURE"`
+	MaxToolIterations   int     `json:"max_tool_iterations" env:"V1CLAW_AGENTS_DEFAULTS_MAX_TOOL_ITERATIONS"`
 }
 
 type ChannelsConfig struct {
@@ -90,88 +90,88 @@ type ChannelsConfig struct {
 }
 
 type WhatsAppConfig struct {
-	Enabled   bool                `json:"enabled" env:"PICOCLAW_CHANNELS_WHATSAPP_ENABLED"`
-	BridgeURL string              `json:"bridge_url" env:"PICOCLAW_CHANNELS_WHATSAPP_BRIDGE_URL"`
-	AllowFrom FlexibleStringSlice `json:"allow_from" env:"PICOCLAW_CHANNELS_WHATSAPP_ALLOW_FROM"`
+	Enabled   bool                `json:"enabled" env:"V1CLAW_CHANNELS_WHATSAPP_ENABLED"`
+	BridgeURL string              `json:"bridge_url" env:"V1CLAW_CHANNELS_WHATSAPP_BRIDGE_URL"`
+	AllowFrom FlexibleStringSlice `json:"allow_from" env:"V1CLAW_CHANNELS_WHATSAPP_ALLOW_FROM"`
 }
 
 type TelegramConfig struct {
-	Enabled   bool                `json:"enabled" env:"PICOCLAW_CHANNELS_TELEGRAM_ENABLED"`
-	Token     string              `json:"token" env:"PICOCLAW_CHANNELS_TELEGRAM_TOKEN"`
-	Proxy     string              `json:"proxy" env:"PICOCLAW_CHANNELS_TELEGRAM_PROXY"`
-	AllowFrom FlexibleStringSlice `json:"allow_from" env:"PICOCLAW_CHANNELS_TELEGRAM_ALLOW_FROM"`
+	Enabled   bool                `json:"enabled" env:"V1CLAW_CHANNELS_TELEGRAM_ENABLED"`
+	Token     string              `json:"token" env:"V1CLAW_CHANNELS_TELEGRAM_TOKEN"`
+	Proxy     string              `json:"proxy" env:"V1CLAW_CHANNELS_TELEGRAM_PROXY"`
+	AllowFrom FlexibleStringSlice `json:"allow_from" env:"V1CLAW_CHANNELS_TELEGRAM_ALLOW_FROM"`
 }
 
 type FeishuConfig struct {
-	Enabled           bool                `json:"enabled" env:"PICOCLAW_CHANNELS_FEISHU_ENABLED"`
-	AppID             string              `json:"app_id" env:"PICOCLAW_CHANNELS_FEISHU_APP_ID"`
-	AppSecret         string              `json:"app_secret" env:"PICOCLAW_CHANNELS_FEISHU_APP_SECRET"`
-	EncryptKey        string              `json:"encrypt_key" env:"PICOCLAW_CHANNELS_FEISHU_ENCRYPT_KEY"`
-	VerificationToken string              `json:"verification_token" env:"PICOCLAW_CHANNELS_FEISHU_VERIFICATION_TOKEN"`
-	AllowFrom         FlexibleStringSlice `json:"allow_from" env:"PICOCLAW_CHANNELS_FEISHU_ALLOW_FROM"`
+	Enabled           bool                `json:"enabled" env:"V1CLAW_CHANNELS_FEISHU_ENABLED"`
+	AppID             string              `json:"app_id" env:"V1CLAW_CHANNELS_FEISHU_APP_ID"`
+	AppSecret         string              `json:"app_secret" env:"V1CLAW_CHANNELS_FEISHU_APP_SECRET"`
+	EncryptKey        string              `json:"encrypt_key" env:"V1CLAW_CHANNELS_FEISHU_ENCRYPT_KEY"`
+	VerificationToken string              `json:"verification_token" env:"V1CLAW_CHANNELS_FEISHU_VERIFICATION_TOKEN"`
+	AllowFrom         FlexibleStringSlice `json:"allow_from" env:"V1CLAW_CHANNELS_FEISHU_ALLOW_FROM"`
 }
 
 type DiscordConfig struct {
-	Enabled   bool                `json:"enabled" env:"PICOCLAW_CHANNELS_DISCORD_ENABLED"`
-	Token     string              `json:"token" env:"PICOCLAW_CHANNELS_DISCORD_TOKEN"`
-	AllowFrom FlexibleStringSlice `json:"allow_from" env:"PICOCLAW_CHANNELS_DISCORD_ALLOW_FROM"`
+	Enabled   bool                `json:"enabled" env:"V1CLAW_CHANNELS_DISCORD_ENABLED"`
+	Token     string              `json:"token" env:"V1CLAW_CHANNELS_DISCORD_TOKEN"`
+	AllowFrom FlexibleStringSlice `json:"allow_from" env:"V1CLAW_CHANNELS_DISCORD_ALLOW_FROM"`
 }
 
 type MaixCamConfig struct {
-	Enabled   bool                `json:"enabled" env:"PICOCLAW_CHANNELS_MAIXCAM_ENABLED"`
-	Host      string              `json:"host" env:"PICOCLAW_CHANNELS_MAIXCAM_HOST"`
-	Port      int                 `json:"port" env:"PICOCLAW_CHANNELS_MAIXCAM_PORT"`
-	AllowFrom FlexibleStringSlice `json:"allow_from" env:"PICOCLAW_CHANNELS_MAIXCAM_ALLOW_FROM"`
+	Enabled   bool                `json:"enabled" env:"V1CLAW_CHANNELS_MAIXCAM_ENABLED"`
+	Host      string              `json:"host" env:"V1CLAW_CHANNELS_MAIXCAM_HOST"`
+	Port      int                 `json:"port" env:"V1CLAW_CHANNELS_MAIXCAM_PORT"`
+	AllowFrom FlexibleStringSlice `json:"allow_from" env:"V1CLAW_CHANNELS_MAIXCAM_ALLOW_FROM"`
 }
 
 type QQConfig struct {
-	Enabled   bool                `json:"enabled" env:"PICOCLAW_CHANNELS_QQ_ENABLED"`
-	AppID     string              `json:"app_id" env:"PICOCLAW_CHANNELS_QQ_APP_ID"`
-	AppSecret string              `json:"app_secret" env:"PICOCLAW_CHANNELS_QQ_APP_SECRET"`
-	AllowFrom FlexibleStringSlice `json:"allow_from" env:"PICOCLAW_CHANNELS_QQ_ALLOW_FROM"`
+	Enabled   bool                `json:"enabled" env:"V1CLAW_CHANNELS_QQ_ENABLED"`
+	AppID     string              `json:"app_id" env:"V1CLAW_CHANNELS_QQ_APP_ID"`
+	AppSecret string              `json:"app_secret" env:"V1CLAW_CHANNELS_QQ_APP_SECRET"`
+	AllowFrom FlexibleStringSlice `json:"allow_from" env:"V1CLAW_CHANNELS_QQ_ALLOW_FROM"`
 }
 
 type DingTalkConfig struct {
-	Enabled      bool                `json:"enabled" env:"PICOCLAW_CHANNELS_DINGTALK_ENABLED"`
-	ClientID     string              `json:"client_id" env:"PICOCLAW_CHANNELS_DINGTALK_CLIENT_ID"`
-	ClientSecret string              `json:"client_secret" env:"PICOCLAW_CHANNELS_DINGTALK_CLIENT_SECRET"`
-	AllowFrom    FlexibleStringSlice `json:"allow_from" env:"PICOCLAW_CHANNELS_DINGTALK_ALLOW_FROM"`
+	Enabled      bool                `json:"enabled" env:"V1CLAW_CHANNELS_DINGTALK_ENABLED"`
+	ClientID     string              `json:"client_id" env:"V1CLAW_CHANNELS_DINGTALK_CLIENT_ID"`
+	ClientSecret string              `json:"client_secret" env:"V1CLAW_CHANNELS_DINGTALK_CLIENT_SECRET"`
+	AllowFrom    FlexibleStringSlice `json:"allow_from" env:"V1CLAW_CHANNELS_DINGTALK_ALLOW_FROM"`
 }
 
 type SlackConfig struct {
-	Enabled   bool                `json:"enabled" env:"PICOCLAW_CHANNELS_SLACK_ENABLED"`
-	BotToken  string              `json:"bot_token" env:"PICOCLAW_CHANNELS_SLACK_BOT_TOKEN"`
-	AppToken  string              `json:"app_token" env:"PICOCLAW_CHANNELS_SLACK_APP_TOKEN"`
-	AllowFrom FlexibleStringSlice `json:"allow_from" env:"PICOCLAW_CHANNELS_SLACK_ALLOW_FROM"`
+	Enabled   bool                `json:"enabled" env:"V1CLAW_CHANNELS_SLACK_ENABLED"`
+	BotToken  string              `json:"bot_token" env:"V1CLAW_CHANNELS_SLACK_BOT_TOKEN"`
+	AppToken  string              `json:"app_token" env:"V1CLAW_CHANNELS_SLACK_APP_TOKEN"`
+	AllowFrom FlexibleStringSlice `json:"allow_from" env:"V1CLAW_CHANNELS_SLACK_ALLOW_FROM"`
 }
 
 type LINEConfig struct {
-	Enabled            bool                `json:"enabled" env:"PICOCLAW_CHANNELS_LINE_ENABLED"`
-	ChannelSecret      string              `json:"channel_secret" env:"PICOCLAW_CHANNELS_LINE_CHANNEL_SECRET"`
-	ChannelAccessToken string              `json:"channel_access_token" env:"PICOCLAW_CHANNELS_LINE_CHANNEL_ACCESS_TOKEN"`
-	WebhookHost        string              `json:"webhook_host" env:"PICOCLAW_CHANNELS_LINE_WEBHOOK_HOST"`
-	WebhookPort        int                 `json:"webhook_port" env:"PICOCLAW_CHANNELS_LINE_WEBHOOK_PORT"`
-	WebhookPath        string              `json:"webhook_path" env:"PICOCLAW_CHANNELS_LINE_WEBHOOK_PATH"`
-	AllowFrom          FlexibleStringSlice `json:"allow_from" env:"PICOCLAW_CHANNELS_LINE_ALLOW_FROM"`
+	Enabled            bool                `json:"enabled" env:"V1CLAW_CHANNELS_LINE_ENABLED"`
+	ChannelSecret      string              `json:"channel_secret" env:"V1CLAW_CHANNELS_LINE_CHANNEL_SECRET"`
+	ChannelAccessToken string              `json:"channel_access_token" env:"V1CLAW_CHANNELS_LINE_CHANNEL_ACCESS_TOKEN"`
+	WebhookHost        string              `json:"webhook_host" env:"V1CLAW_CHANNELS_LINE_WEBHOOK_HOST"`
+	WebhookPort        int                 `json:"webhook_port" env:"V1CLAW_CHANNELS_LINE_WEBHOOK_PORT"`
+	WebhookPath        string              `json:"webhook_path" env:"V1CLAW_CHANNELS_LINE_WEBHOOK_PATH"`
+	AllowFrom          FlexibleStringSlice `json:"allow_from" env:"V1CLAW_CHANNELS_LINE_ALLOW_FROM"`
 }
 
 type OneBotConfig struct {
-	Enabled            bool                `json:"enabled" env:"PICOCLAW_CHANNELS_ONEBOT_ENABLED"`
-	WSUrl              string              `json:"ws_url" env:"PICOCLAW_CHANNELS_ONEBOT_WS_URL"`
-	AccessToken        string              `json:"access_token" env:"PICOCLAW_CHANNELS_ONEBOT_ACCESS_TOKEN"`
-	ReconnectInterval  int                 `json:"reconnect_interval" env:"PICOCLAW_CHANNELS_ONEBOT_RECONNECT_INTERVAL"`
-	GroupTriggerPrefix []string            `json:"group_trigger_prefix" env:"PICOCLAW_CHANNELS_ONEBOT_GROUP_TRIGGER_PREFIX"`
-	AllowFrom          FlexibleStringSlice `json:"allow_from" env:"PICOCLAW_CHANNELS_ONEBOT_ALLOW_FROM"`
+	Enabled            bool                `json:"enabled" env:"V1CLAW_CHANNELS_ONEBOT_ENABLED"`
+	WSUrl              string              `json:"ws_url" env:"V1CLAW_CHANNELS_ONEBOT_WS_URL"`
+	AccessToken        string              `json:"access_token" env:"V1CLAW_CHANNELS_ONEBOT_ACCESS_TOKEN"`
+	ReconnectInterval  int                 `json:"reconnect_interval" env:"V1CLAW_CHANNELS_ONEBOT_RECONNECT_INTERVAL"`
+	GroupTriggerPrefix []string            `json:"group_trigger_prefix" env:"V1CLAW_CHANNELS_ONEBOT_GROUP_TRIGGER_PREFIX"`
+	AllowFrom          FlexibleStringSlice `json:"allow_from" env:"V1CLAW_CHANNELS_ONEBOT_ALLOW_FROM"`
 }
 
 type HeartbeatConfig struct {
-	Enabled  bool `json:"enabled" env:"PICOCLAW_HEARTBEAT_ENABLED"`
-	Interval int  `json:"interval" env:"PICOCLAW_HEARTBEAT_INTERVAL"` // minutes, min 5
+	Enabled  bool `json:"enabled" env:"V1CLAW_HEARTBEAT_ENABLED"`
+	Interval int  `json:"interval" env:"V1CLAW_HEARTBEAT_INTERVAL"` // minutes, min 5
 }
 
 type DevicesConfig struct {
-	Enabled    bool `json:"enabled" env:"PICOCLAW_DEVICES_ENABLED"`
-	MonitorUSB bool `json:"monitor_usb" env:"PICOCLAW_DEVICES_MONITOR_USB"`
+	Enabled    bool `json:"enabled" env:"V1CLAW_DEVICES_ENABLED"`
+	MonitorUSB bool `json:"monitor_usb" env:"V1CLAW_DEVICES_MONITOR_USB"`
 }
 
 type ProvidersConfig struct {
@@ -191,33 +191,33 @@ type ProvidersConfig struct {
 }
 
 type ProviderConfig struct {
-	APIKey      string `json:"api_key" env:"PICOCLAW_PROVIDERS_{{.Name}}_API_KEY"`
-	APIBase     string `json:"api_base" env:"PICOCLAW_PROVIDERS_{{.Name}}_API_BASE"`
-	Proxy       string `json:"proxy,omitempty" env:"PICOCLAW_PROVIDERS_{{.Name}}_PROXY"`
-	AuthMethod  string `json:"auth_method,omitempty" env:"PICOCLAW_PROVIDERS_{{.Name}}_AUTH_METHOD"`
-	ConnectMode string `json:"connect_mode,omitempty" env:"PICOCLAW_PROVIDERS_{{.Name}}_CONNECT_MODE"` //only for Github Copilot, `stdio` or `grpc`
+	APIKey      string `json:"api_key" env:"V1CLAW_PROVIDERS_{{.Name}}_API_KEY"`
+	APIBase     string `json:"api_base" env:"V1CLAW_PROVIDERS_{{.Name}}_API_BASE"`
+	Proxy       string `json:"proxy,omitempty" env:"V1CLAW_PROVIDERS_{{.Name}}_PROXY"`
+	AuthMethod  string `json:"auth_method,omitempty" env:"V1CLAW_PROVIDERS_{{.Name}}_AUTH_METHOD"`
+	ConnectMode string `json:"connect_mode,omitempty" env:"V1CLAW_PROVIDERS_{{.Name}}_CONNECT_MODE"` //only for Github Copilot, `stdio` or `grpc`
 }
 
 type GatewayConfig struct {
-	Host string `json:"host" env:"PICOCLAW_GATEWAY_HOST"`
-	Port int    `json:"port" env:"PICOCLAW_GATEWAY_PORT"`
+	Host string `json:"host" env:"V1CLAW_GATEWAY_HOST"`
+	Port int    `json:"port" env:"V1CLAW_GATEWAY_PORT"`
 }
 
 type BraveConfig struct {
-	Enabled    bool   `json:"enabled" env:"PICOCLAW_TOOLS_WEB_BRAVE_ENABLED"`
-	APIKey     string `json:"api_key" env:"PICOCLAW_TOOLS_WEB_BRAVE_API_KEY"`
-	MaxResults int    `json:"max_results" env:"PICOCLAW_TOOLS_WEB_BRAVE_MAX_RESULTS"`
+	Enabled    bool   `json:"enabled" env:"V1CLAW_TOOLS_WEB_BRAVE_ENABLED"`
+	APIKey     string `json:"api_key" env:"V1CLAW_TOOLS_WEB_BRAVE_API_KEY"`
+	MaxResults int    `json:"max_results" env:"V1CLAW_TOOLS_WEB_BRAVE_MAX_RESULTS"`
 }
 
 type DuckDuckGoConfig struct {
-	Enabled    bool `json:"enabled" env:"PICOCLAW_TOOLS_WEB_DUCKDUCKGO_ENABLED"`
-	MaxResults int  `json:"max_results" env:"PICOCLAW_TOOLS_WEB_DUCKDUCKGO_MAX_RESULTS"`
+	Enabled    bool `json:"enabled" env:"V1CLAW_TOOLS_WEB_DUCKDUCKGO_ENABLED"`
+	MaxResults int  `json:"max_results" env:"V1CLAW_TOOLS_WEB_DUCKDUCKGO_MAX_RESULTS"`
 }
 
 type PerplexityConfig struct {
-	Enabled    bool   `json:"enabled" env:"PICOCLAW_TOOLS_WEB_PERPLEXITY_ENABLED"`
-	APIKey     string `json:"api_key" env:"PICOCLAW_TOOLS_WEB_PERPLEXITY_API_KEY"`
-	MaxResults int    `json:"max_results" env:"PICOCLAW_TOOLS_WEB_PERPLEXITY_MAX_RESULTS"`
+	Enabled    bool   `json:"enabled" env:"V1CLAW_TOOLS_WEB_PERPLEXITY_ENABLED"`
+	APIKey     string `json:"api_key" env:"V1CLAW_TOOLS_WEB_PERPLEXITY_API_KEY"`
+	MaxResults int    `json:"max_results" env:"V1CLAW_TOOLS_WEB_PERPLEXITY_MAX_RESULTS"`
 }
 
 type WebToolsConfig struct {
@@ -227,7 +227,7 @@ type WebToolsConfig struct {
 }
 
 type CronToolsConfig struct {
-	ExecTimeoutMinutes int `json:"exec_timeout_minutes" env:"PICOCLAW_TOOLS_CRON_EXEC_TIMEOUT_MINUTES"` // 0 means no timeout
+	ExecTimeoutMinutes int `json:"exec_timeout_minutes" env:"V1CLAW_TOOLS_CRON_EXEC_TIMEOUT_MINUTES"` // 0 means no timeout
 }
 
 type ToolsConfig struct {
@@ -239,7 +239,7 @@ func DefaultConfig() *Config {
 	return &Config{
 		Agents: AgentsConfig{
 			Defaults: AgentDefaults{
-				Workspace:           "~/.picoclaw/workspace",
+				Workspace:           "~/.v1claw/workspace",
 				RestrictToWorkspace: true,
 				Provider:            "",
 				Model:               "glm-4.7",

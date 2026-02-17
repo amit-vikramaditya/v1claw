@@ -7,7 +7,7 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/sipeed/picoclaw/pkg/logger"
+	"github.com/amit-vikramaditya/v1claw/pkg/logger"
 )
 
 // EdgeTTS implements TTSProvider using Microsoft Edge TTS (free, no API key).

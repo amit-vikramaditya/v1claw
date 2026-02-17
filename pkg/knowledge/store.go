@@ -10,11 +10,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/sipeed/picoclaw/pkg/logger"
+	"github.com/amit-vikramaditya/v1claw/pkg/logger"
 )
 
 // Store is a local vector knowledge base backed by a JSON file.
-// For lightweight deployments (PicoClaw's philosophy), this avoids
+// For lightweight deployments (V1Claw's philosophy), this avoids
 // external dependencies like SQLite vector extensions or separate
 // vector databases.
 type Store struct {

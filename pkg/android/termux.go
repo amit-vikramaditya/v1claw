@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/sipeed/picoclaw/pkg/logger"
+	"github.com/amit-vikramaditya/v1claw/pkg/logger"
 )
 
 // TermuxAPI provides access to Android hardware via Termux:API package.

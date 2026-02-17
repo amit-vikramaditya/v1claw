@@ -17,11 +17,11 @@ import (
 	"github.com/mymmrac/telego/telegohandler"
 	tu "github.com/mymmrac/telego/telegoutil"
 
-	"github.com/sipeed/picoclaw/pkg/bus"
-	"github.com/sipeed/picoclaw/pkg/config"
-	"github.com/sipeed/picoclaw/pkg/logger"
-	"github.com/sipeed/picoclaw/pkg/utils"
-	"github.com/sipeed/picoclaw/pkg/voice"
+	"github.com/amit-vikramaditya/v1claw/pkg/bus"
+	"github.com/amit-vikramaditya/v1claw/pkg/config"
+	"github.com/amit-vikramaditya/v1claw/pkg/logger"
+	"github.com/amit-vikramaditya/v1claw/pkg/utils"
+	"github.com/amit-vikramaditya/v1claw/pkg/voice"
 )
 
 type TelegramChannel struct {

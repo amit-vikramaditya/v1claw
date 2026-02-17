@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/sipeed/picoclaw/pkg/logger"
+	"github.com/amit-vikramaditya/v1claw/pkg/logger"
 )
 
 // Routine represents a learned user behavior pattern.

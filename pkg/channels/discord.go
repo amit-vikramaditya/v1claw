@@ -8,11 +8,11 @@ import (
 	"time"
 
 	"github.com/bwmarrin/discordgo"
-	"github.com/sipeed/picoclaw/pkg/bus"
-	"github.com/sipeed/picoclaw/pkg/config"
-	"github.com/sipeed/picoclaw/pkg/logger"
-	"github.com/sipeed/picoclaw/pkg/utils"
-	"github.com/sipeed/picoclaw/pkg/voice"
+	"github.com/amit-vikramaditya/v1claw/pkg/bus"
+	"github.com/amit-vikramaditya/v1claw/pkg/config"
+	"github.com/amit-vikramaditya/v1claw/pkg/logger"
+	"github.com/amit-vikramaditya/v1claw/pkg/utils"
+	"github.com/amit-vikramaditya/v1claw/pkg/voice"
 )
 
 const (

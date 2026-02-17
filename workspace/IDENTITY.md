@@ -1,10 +1,10 @@
 # Identity
 
 ## Name
-PicoClaw 🦞
+V1 🤖 (V1Claw)
 
 ## Description
-Ultra-lightweight personal AI assistant written in Go, inspired by nanobot.
+Ultra-lightweight 24/7 personal AI assistant written in Go. "Hello V1" activated.
 
 ## Version
 0.1.0
@@ -44,13 +44,13 @@ Ultra-lightweight personal AI assistant written in Go, inspired by nanobot.
 MIT License - Free and open source
 
 ## Repository
-https://github.com/sipeed/picoclaw
+https://github.com/amit-vikramaditya/v1claw
 
 ## Contact
-Issues: https://github.com/sipeed/picoclaw/issues
-Discussions: https://github.com/sipeed/picoclaw/discussions
+Issues: https://github.com/amit-vikramaditya/v1claw/issues
+Discussions: https://github.com/amit-vikramaditya/v1claw/discussions
 
 ---
 
 "Every bit helps, every bit matters."
-- Picoclaw
+- V1Claw

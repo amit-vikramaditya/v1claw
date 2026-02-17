@@ -3,7 +3,7 @@ package events
 import (
 	"context"
 
-	"github.com/sipeed/picoclaw/pkg/bus"
+	"github.com/amit-vikramaditya/v1claw/pkg/bus"
 )
 
 // BusAdapter wraps the existing MessageBus as an EventSource,

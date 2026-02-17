@@ -9,7 +9,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/sipeed/picoclaw/pkg/logger"
+	"github.com/amit-vikramaditya/v1claw/pkg/logger"
 )
 
 // OpenAIEmbedder implements EmbeddingProvider using the OpenAI-compatible embeddings API.

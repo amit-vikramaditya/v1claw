@@ -9,7 +9,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/sipeed/picoclaw/pkg/logger"
+	"github.com/amit-vikramaditya/v1claw/pkg/logger"
 )
 
 // OpenAITTS implements TTSProvider using the OpenAI-compatible TTS API.

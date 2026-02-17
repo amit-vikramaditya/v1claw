@@ -14,10 +14,10 @@ import (
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 	larkws "github.com/larksuite/oapi-sdk-go/v3/ws"
 
-	"github.com/sipeed/picoclaw/pkg/bus"
-	"github.com/sipeed/picoclaw/pkg/config"
-	"github.com/sipeed/picoclaw/pkg/logger"
-	"github.com/sipeed/picoclaw/pkg/utils"
+	"github.com/amit-vikramaditya/v1claw/pkg/bus"
+	"github.com/amit-vikramaditya/v1claw/pkg/config"
+	"github.com/amit-vikramaditya/v1claw/pkg/logger"
+	"github.com/amit-vikramaditya/v1claw/pkg/utils"
 )
 
 type FeishuChannel struct {
@@ -108,7 +108,7 @@ func (c *FeishuChannel) Send(ctx context.Context, msg bus.OutboundMessage) error
 			ReceiveId(msg.ChatID).
 			MsgType(larkim.MsgTypeText).
 			Content(string(payload)).
-			Uuid(fmt.Sprintf("picoclaw-%d", time.Now().UnixNano())).
+			Uuid(fmt.Sprintf("v1claw-%d", time.Now().UnixNano())).
 			Build()).
 		Build()
 
