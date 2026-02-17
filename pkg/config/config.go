@@ -51,7 +51,15 @@ type Config struct {
 	Tools     ToolsConfig     `json:"tools"`
 	Heartbeat HeartbeatConfig `json:"heartbeat"`
 	Devices   DevicesConfig   `json:"devices"`
+	V1API     V1APIConfig     `json:"v1_api"`
 	mu        sync.RWMutex
+}
+
+// V1APIConfig configures the V1 assistant REST/WebSocket API.
+type V1APIConfig struct {
+	Enabled bool   `json:"enabled" env:"PICOCLAW_V1_API_ENABLED"`
+	Addr    string `json:"addr" env:"PICOCLAW_V1_API_ADDR"`
+	APIKey  string `json:"api_key" env:"PICOCLAW_V1_API_KEY"`
 }
 
 type AgentsConfig struct {
@@ -350,6 +358,11 @@ func DefaultConfig() *Config {
 		Devices: DevicesConfig{
 			Enabled:    false,
 			MonitorUSB: true,
+		},
+		V1API: V1APIConfig{
+			Enabled: false,
+			Addr:    ":18791",
+			APIKey:  "",
 		},
 	}
 }

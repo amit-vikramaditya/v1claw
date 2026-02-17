@@ -23,17 +23,20 @@ import (
 
 	"github.com/chzyer/readline"
 	"github.com/sipeed/picoclaw/pkg/agent"
+	"github.com/sipeed/picoclaw/pkg/api"
 	"github.com/sipeed/picoclaw/pkg/auth"
 	"github.com/sipeed/picoclaw/pkg/bus"
 	"github.com/sipeed/picoclaw/pkg/channels"
 	"github.com/sipeed/picoclaw/pkg/config"
 	"github.com/sipeed/picoclaw/pkg/cron"
 	"github.com/sipeed/picoclaw/pkg/devices"
+	"github.com/sipeed/picoclaw/pkg/events"
 	"github.com/sipeed/picoclaw/pkg/health"
 	"github.com/sipeed/picoclaw/pkg/heartbeat"
 	"github.com/sipeed/picoclaw/pkg/logger"
 	"github.com/sipeed/picoclaw/pkg/migrate"
 	"github.com/sipeed/picoclaw/pkg/providers"
+	"github.com/sipeed/picoclaw/pkg/queue"
 	"github.com/sipeed/picoclaw/pkg/skills"
 	"github.com/sipeed/picoclaw/pkg/state"
 	"github.com/sipeed/picoclaw/pkg/tools"
@@ -660,6 +663,40 @@ func gatewayCmd() {
 		fmt.Println("✓ Device event service started")
 	}
 
+	// V1 Event Router
+	eventRouter := events.NewRouter()
+	eventRouter.Start(ctx)
+	fmt.Println("✓ V1 event router started")
+
+	// V1 Job Queue
+	jobQueue, err := queue.NewQueue(cfg.WorkspacePath())
+	if err != nil {
+		fmt.Printf("Error creating job queue: %v\n", err)
+	} else {
+		jobQueue.Start(ctx, 5*time.Second)
+		fmt.Println("✓ V1 job queue started")
+	}
+
+	// V1 API Server
+	var apiServer *api.Server
+	if cfg.V1API.Enabled {
+		apiServer = api.NewServer(api.Config{
+			Addr:   cfg.V1API.Addr,
+			APIKey: cfg.V1API.APIKey,
+		}, msgBus, eventRouter, stateManager)
+
+		apiServer.SetChatHandler(func(ctx context.Context, message, sessionKey string) (string, error) {
+			return agentLoop.ProcessDirectWithChannel(ctx, message, sessionKey, "api", sessionKey)
+		})
+
+		go func() {
+			if err := apiServer.Start(ctx); err != nil {
+				logger.ErrorCF("api", "V1 API server error", map[string]interface{}{"error": err.Error()})
+			}
+		}()
+		fmt.Printf("✓ V1 API server started on %s\n", cfg.V1API.Addr)
+	}
+
 	if err := channelManager.StartAll(ctx); err != nil {
 		fmt.Printf("Error starting channels: %v\n", err)
 	}
@@ -680,6 +717,13 @@ func gatewayCmd() {
 
 	fmt.Println("\nShutting down...")
 	cancel()
+	if apiServer != nil {
+		apiServer.Stop()
+	}
+	if jobQueue != nil {
+		jobQueue.Stop()
+	}
+	eventRouter.Stop()
 	healthServer.Stop(context.Background())
 	deviceService.Stop()
 	heartbeatService.Stop()
