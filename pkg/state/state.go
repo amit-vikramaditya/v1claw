@@ -21,6 +21,22 @@ type State struct {
 
 	// Timestamp is the last time this state was updated
 	Timestamp time.Time `json:"timestamp"`
+
+	// Users tracks per-user state for multi-user support.
+	// Keyed by user identifier (e.g., "telegram:123456").
+	Users map[string]*UserState `json:"users,omitempty"`
+}
+
+// UserState tracks the state for an individual user across channels.
+type UserState struct {
+	// Channel is the user's last active channel platform (e.g., "telegram").
+	Channel string `json:"channel"`
+	// ChatID is the user's last active chat ID on that channel.
+	ChatID string `json:"chat_id"`
+	// SenderID is the platform-specific user identifier.
+	SenderID string `json:"sender_id,omitempty"`
+	// LastActive is when this user was last seen.
+	LastActive time.Time `json:"last_active"`
 }
 
 // Manager manages persistent state with atomic saves.
@@ -119,6 +135,106 @@ func (sm *Manager) GetTimestamp() time.Time {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
 	return sm.state.Timestamp
+}
+
+// --- Multi-User Methods ---
+
+// SetUserState records the last active channel/chat for a specific user.
+// The userKey should be a stable user identifier (e.g., "telegram:123456").
+func (sm *Manager) SetUserState(userKey, channel, chatID, senderID string) error {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+
+	if sm.state.Users == nil {
+		sm.state.Users = make(map[string]*UserState)
+	}
+
+	sm.state.Users[userKey] = &UserState{
+		Channel:    channel,
+		ChatID:     chatID,
+		SenderID:   senderID,
+		LastActive: time.Now(),
+	}
+
+	// Also update the global last channel for backward compatibility.
+	sm.state.LastChannel = channel + ":" + chatID
+	sm.state.LastChatID = chatID
+	sm.state.Timestamp = time.Now()
+
+	return sm.saveAtomic()
+}
+
+// GetUserState returns the state for a specific user, or nil if not found.
+func (sm *Manager) GetUserState(userKey string) *UserState {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+
+	if sm.state.Users == nil {
+		return nil
+	}
+	return sm.state.Users[userKey]
+}
+
+// GetAllUsers returns a copy of all tracked user states.
+func (sm *Manager) GetAllUsers() map[string]*UserState {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+
+	if sm.state.Users == nil {
+		return nil
+	}
+
+	result := make(map[string]*UserState, len(sm.state.Users))
+	for k, v := range sm.state.Users {
+		copied := *v
+		result[k] = &copied
+	}
+	return result
+}
+
+// GetActiveUsers returns users active within the given duration.
+func (sm *Manager) GetActiveUsers(within time.Duration) map[string]*UserState {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+
+	if sm.state.Users == nil {
+		return nil
+	}
+
+	cutoff := time.Now().Add(-within)
+	result := make(map[string]*UserState)
+	for k, v := range sm.state.Users {
+		if v.LastActive.After(cutoff) {
+			copied := *v
+			result[k] = &copied
+		}
+	}
+	return result
+}
+
+// RemoveUser removes a user from the tracked state.
+func (sm *Manager) RemoveUser(userKey string) error {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+
+	if sm.state.Users == nil {
+		return nil
+	}
+
+	delete(sm.state.Users, userKey)
+	sm.state.Timestamp = time.Now()
+	return sm.saveAtomic()
+}
+
+// UserCount returns the number of tracked users.
+func (sm *Manager) UserCount() int {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+
+	if sm.state.Users == nil {
+		return 0
+	}
+	return len(sm.state.Users)
 }
 
 // saveAtomic performs an atomic save using temp file + rename.

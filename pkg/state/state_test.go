@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestAtomicSave(t *testing.T) {
@@ -212,5 +213,172 @@ func TestNewManager_EmptyWorkspace(t *testing.T) {
 
 	if !sm.GetTimestamp().IsZero() {
 		t.Error("Expected zero timestamp for new state")
+	}
+}
+
+func TestSetUserState(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "state-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	sm := NewManager(tmpDir)
+
+	// Set user state
+	err = sm.SetUserState("telegram:123", "telegram", "123", "user_alice")
+	if err != nil {
+		t.Fatalf("SetUserState failed: %v", err)
+	}
+
+	// Verify user state
+	us := sm.GetUserState("telegram:123")
+	if us == nil {
+		t.Fatal("Expected user state, got nil")
+	}
+	if us.Channel != "telegram" {
+		t.Errorf("Expected channel 'telegram', got '%s'", us.Channel)
+	}
+	if us.ChatID != "123" {
+		t.Errorf("Expected chatID '123', got '%s'", us.ChatID)
+	}
+	if us.SenderID != "user_alice" {
+		t.Errorf("Expected senderID 'user_alice', got '%s'", us.SenderID)
+	}
+	if us.LastActive.IsZero() {
+		t.Error("Expected non-zero LastActive")
+	}
+
+	// Verify backward compat: global last channel also updated
+	if sm.GetLastChannel() != "telegram:123" {
+		t.Errorf("Expected global last channel 'telegram:123', got '%s'", sm.GetLastChannel())
+	}
+}
+
+func TestMultipleUsers(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "state-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	sm := NewManager(tmpDir)
+
+	// Set multiple users
+	sm.SetUserState("telegram:alice", "telegram", "111", "alice")
+	sm.SetUserState("discord:bob", "discord", "222", "bob")
+	sm.SetUserState("slack:charlie", "slack", "333", "charlie")
+
+	if sm.UserCount() != 3 {
+		t.Errorf("Expected 3 users, got %d", sm.UserCount())
+	}
+
+	// Verify each user
+	alice := sm.GetUserState("telegram:alice")
+	if alice == nil || alice.Channel != "telegram" {
+		t.Error("Alice state incorrect")
+	}
+
+	bob := sm.GetUserState("discord:bob")
+	if bob == nil || bob.Channel != "discord" {
+		t.Error("Bob state incorrect")
+	}
+
+	// Non-existent user
+	if sm.GetUserState("unknown:user") != nil {
+		t.Error("Expected nil for unknown user")
+	}
+}
+
+func TestGetAllUsers(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "state-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	sm := NewManager(tmpDir)
+
+	sm.SetUserState("u1", "telegram", "1", "s1")
+	sm.SetUserState("u2", "discord", "2", "s2")
+
+	all := sm.GetAllUsers()
+	if len(all) != 2 {
+		t.Errorf("Expected 2 users, got %d", len(all))
+	}
+
+	// Verify it's a copy (modifying returned map shouldn't affect state)
+	all["u1"].Channel = "modified"
+	original := sm.GetUserState("u1")
+	if original.Channel != "telegram" {
+		t.Error("GetAllUsers should return copies, not references")
+	}
+}
+
+func TestGetActiveUsers(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "state-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	sm := NewManager(tmpDir)
+
+	sm.SetUserState("active", "telegram", "1", "s1")
+
+	// All users should be active within 1 hour
+	active := sm.GetActiveUsers(time.Hour)
+	if len(active) != 1 {
+		t.Errorf("Expected 1 active user, got %d", len(active))
+	}
+}
+
+func TestRemoveUser(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "state-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	sm := NewManager(tmpDir)
+
+	sm.SetUserState("u1", "telegram", "1", "s1")
+	sm.SetUserState("u2", "discord", "2", "s2")
+
+	err = sm.RemoveUser("u1")
+	if err != nil {
+		t.Fatalf("RemoveUser failed: %v", err)
+	}
+
+	if sm.UserCount() != 1 {
+		t.Errorf("Expected 1 user after removal, got %d", sm.UserCount())
+	}
+
+	if sm.GetUserState("u1") != nil {
+		t.Error("Expected u1 to be removed")
+	}
+}
+
+func TestUserStatePersistence(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "state-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Create state with users
+	sm1 := NewManager(tmpDir)
+	sm1.SetUserState("telegram:alice", "telegram", "111", "alice")
+	sm1.SetUserState("discord:bob", "discord", "222", "bob")
+
+	// Load in new manager — verify persistence
+	sm2 := NewManager(tmpDir)
+	if sm2.UserCount() != 2 {
+		t.Errorf("Expected 2 users after reload, got %d", sm2.UserCount())
+	}
+
+	alice := sm2.GetUserState("telegram:alice")
+	if alice == nil || alice.SenderID != "alice" {
+		t.Error("Alice state not persisted correctly")
 	}
 }
