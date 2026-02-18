@@ -4,8 +4,12 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 )
+
+// storeMu protects concurrent access to the auth store file.
+var storeMu sync.Mutex
 
 type AuthCredential struct {
 	AccessToken  string    `json:"access_token"`
@@ -86,6 +90,8 @@ func GetCredential(provider string) (*AuthCredential, error) {
 }
 
 func SetCredential(provider string, cred *AuthCredential) error {
+	storeMu.Lock()
+	defer storeMu.Unlock()
 	store, err := LoadStore()
 	if err != nil {
 		return err
@@ -95,6 +101,8 @@ func SetCredential(provider string, cred *AuthCredential) error {
 }
 
 func DeleteCredential(provider string) error {
+	storeMu.Lock()
+	defer storeMu.Unlock()
 	store, err := LoadStore()
 	if err != nil {
 		return err

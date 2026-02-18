@@ -213,16 +213,13 @@ func (cb *ContextBuilder) BuildMessages(history []providers.Message, summary str
 		systemPrompt += "\n\n## Summary of Previous Conversation\n\n" + summary
 	}
 
-	//This fix prevents the session memory from LLM failure due to elimination of toolu_IDs required from LLM
-	// --- INICIO DEL FIX ---
-	//Diegox-17
+	// Remove orphaned tool messages from history start to prevent LLM errors
+	// (tool responses without preceding assistant tool_use are invalid).
 	for len(history) > 0 && (history[0].Role == "tool") {
 		logger.DebugCF("agent", "Removing orphaned tool message from history to prevent LLM error",
 			map[string]interface{}{"role": history[0].Role})
 		history = history[1:]
 	}
-	//Diegox-17
-	// --- FIN DEL FIX ---
 
 	messages = append(messages, providers.Message{
 		Role:    "system",

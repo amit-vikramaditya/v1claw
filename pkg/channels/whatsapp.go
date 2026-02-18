@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"sync"
 	"time"
 
@@ -12,6 +11,7 @@ import (
 
 	"github.com/amit-vikramaditya/v1claw/pkg/bus"
 	"github.com/amit-vikramaditya/v1claw/pkg/config"
+	"github.com/amit-vikramaditya/v1claw/pkg/logger"
 	"github.com/amit-vikramaditya/v1claw/pkg/utils"
 )
 
@@ -36,7 +36,7 @@ func NewWhatsAppChannel(cfg config.WhatsAppConfig, bus *bus.MessageBus) (*WhatsA
 }
 
 func (c *WhatsAppChannel) Start(ctx context.Context) error {
-	log.Printf("Starting WhatsApp channel connecting to %s...", c.url)
+	logger.InfoC("whatsapp", fmt.Sprintf("Starting WhatsApp channel connecting to %s...", c.url))
 
 	dialer := websocket.DefaultDialer
 	dialer.HandshakeTimeout = 10 * time.Second
@@ -52,7 +52,7 @@ func (c *WhatsAppChannel) Start(ctx context.Context) error {
 	c.mu.Unlock()
 
 	c.setRunning(true)
-	log.Println("WhatsApp channel connected")
+	logger.InfoC("whatsapp", "WhatsApp channel connected")
 
 	go c.listen(ctx)
 
@@ -60,14 +60,14 @@ func (c *WhatsAppChannel) Start(ctx context.Context) error {
 }
 
 func (c *WhatsAppChannel) Stop(ctx context.Context) error {
-	log.Println("Stopping WhatsApp channel...")
+	logger.InfoC("whatsapp", "Stopping WhatsApp channel...")
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	if c.conn != nil {
 		if err := c.conn.Close(); err != nil {
-			log.Printf("Error closing WhatsApp connection: %v", err)
+			logger.ErrorC("whatsapp", fmt.Sprintf("Error closing WhatsApp connection: %v", err))
 		}
 		c.conn = nil
 	}
@@ -121,14 +121,14 @@ func (c *WhatsAppChannel) listen(ctx context.Context) {
 
 			_, message, err := conn.ReadMessage()
 			if err != nil {
-				log.Printf("WhatsApp read error: %v", err)
+				logger.WarnC("whatsapp", fmt.Sprintf("WhatsApp read error: %v", err))
 				time.Sleep(2 * time.Second)
 				continue
 			}
 
 			var msg map[string]interface{}
 			if err := json.Unmarshal(message, &msg); err != nil {
-				log.Printf("Failed to unmarshal WhatsApp message: %v", err)
+				logger.WarnC("whatsapp", fmt.Sprintf("Failed to unmarshal WhatsApp message: %v", err))
 				continue
 			}
 
@@ -178,7 +178,7 @@ func (c *WhatsAppChannel) handleIncomingMessage(msg map[string]interface{}) {
 		metadata["user_name"] = userName
 	}
 
-	log.Printf("WhatsApp message from %s: %s...", senderID, utils.Truncate(content, 50))
+	logger.DebugC("whatsapp", fmt.Sprintf("WhatsApp message from %s: %s...", senderID, utils.Truncate(content, 50)))
 
 	c.HandleMessage(senderID, chatID, content, mediaPaths, metadata)
 }
