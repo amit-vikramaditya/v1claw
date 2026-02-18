@@ -33,7 +33,8 @@ UNAME_S:=$(shell uname -s)
 UNAME_M:=$(shell uname -m)
 
 # Termux detection: Termux reports GOOS=android but is effectively Linux
-IS_TERMUX:=$(shell test -d /data/data/com.termux && echo yes)
+# Check both standard and alternate Termux paths, plus TERMUX_VERSION env
+IS_TERMUX:=$(shell test -d /data/data/com.termux && echo yes || (test -n "$$TERMUX_VERSION" && echo yes))
 
 # Platform-specific settings
 ifeq ($(UNAME_S),Linux)
