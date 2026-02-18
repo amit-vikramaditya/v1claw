@@ -95,8 +95,8 @@ func TestPipelineModes(t *testing.T) {
 	defer msgBus.Close()
 
 	tests := []struct {
-		mode     PipelineMode
-		hasWake  bool
+		mode    PipelineMode
+		hasWake bool
 	}{
 		{ModeWakeWord, true},
 		{ModePushToTalk, false},

@@ -18,21 +18,21 @@ import (
 type PipelineMode string
 
 const (
-	ModeWakeWord    PipelineMode = "wake-word"
-	ModePushToTalk  PipelineMode = "push-to-talk"
-	ModeAlwaysOn    PipelineMode = "always-on"
+	ModeWakeWord   PipelineMode = "wake-word"
+	ModePushToTalk PipelineMode = "push-to-talk"
+	ModeAlwaysOn   PipelineMode = "always-on"
 )
 
 // PipelineConfig configures the voice pipeline.
 type PipelineConfig struct {
-	Mode            PipelineMode `json:"mode"`              // "wake-word", "push-to-talk", "always-on"
-	RecordDuration  int          `json:"record_duration"`   // Seconds per recording chunk (default: 5)
-	SilenceTimeout  int          `json:"silence_timeout"`   // Seconds of silence before stopping (default: 2)
-	SessionKey      string       `json:"session_key"`       // Session key for agent (default: "voice")
-	WakeWord        WakeWordConfig `json:"wake_word"`
-	Recorder        RecorderConfig `json:"recorder"`
-	Player          PlayerConfig   `json:"player"`
-	TTS             TTSConfig      `json:"tts"`
+	Mode           PipelineMode   `json:"mode"`            // "wake-word", "push-to-talk", "always-on"
+	RecordDuration int            `json:"record_duration"` // Seconds per recording chunk (default: 5)
+	SilenceTimeout int            `json:"silence_timeout"` // Seconds of silence before stopping (default: 2)
+	SessionKey     string         `json:"session_key"`     // Session key for agent (default: "voice")
+	WakeWord       WakeWordConfig `json:"wake_word"`
+	Recorder       RecorderConfig `json:"recorder"`
+	Player         PlayerConfig   `json:"player"`
+	TTS            TTSConfig      `json:"tts"`
 }
 
 // Pipeline orchestrates: Mic → STT → Agent → TTS → Speaker.
@@ -45,9 +45,9 @@ type Pipeline struct {
 	wakeWord    *WakeWordDetector
 	msgBus      *bus.MessageBus
 
-	mu       sync.Mutex
-	running  bool
-	stopCh   chan struct{}
+	mu      sync.Mutex
+	running bool
+	stopCh  chan struct{}
 }
 
 // NewPipeline creates a voice pipeline.

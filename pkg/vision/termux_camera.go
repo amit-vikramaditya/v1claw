@@ -14,7 +14,7 @@ import (
 
 // TermuxCamera implements CameraProvider using termux-camera-photo.
 type TermuxCamera struct {
-	cameraID int    // 0 = back, 1 = front
+	cameraID int // 0 = back, 1 = front
 	name     string
 	tempDir  string
 }

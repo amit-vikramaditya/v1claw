@@ -61,25 +61,25 @@ type Config struct {
 // All permissions default to false (blocked) for security. Users must
 // explicitly enable features they need via config.json or env vars.
 type PermissionsConfig struct {
-	Camera      bool `json:"camera" env:"V1CLAW_PERMISSIONS_CAMERA"`           // Allow camera capture
-	Microphone  bool `json:"microphone" env:"V1CLAW_PERMISSIONS_MICROPHONE"`   // Allow mic recording
-	SMS         bool `json:"sms" env:"V1CLAW_PERMISSIONS_SMS"`                 // Allow reading/sending SMS
-	PhoneCalls  bool `json:"phone_calls" env:"V1CLAW_PERMISSIONS_PHONE_CALLS"` // Allow making phone calls
-	Location    bool `json:"location" env:"V1CLAW_PERMISSIONS_LOCATION"`       // Allow GPS/location access
-	Clipboard   bool `json:"clipboard" env:"V1CLAW_PERMISSIONS_CLIPBOARD"`     // Allow clipboard read/write
-	Sensors     bool `json:"sensors" env:"V1CLAW_PERMISSIONS_SENSORS"`         // Allow sensor access
+	Camera        bool `json:"camera" env:"V1CLAW_PERMISSIONS_CAMERA"`                 // Allow camera capture
+	Microphone    bool `json:"microphone" env:"V1CLAW_PERMISSIONS_MICROPHONE"`         // Allow mic recording
+	SMS           bool `json:"sms" env:"V1CLAW_PERMISSIONS_SMS"`                       // Allow reading/sending SMS
+	PhoneCalls    bool `json:"phone_calls" env:"V1CLAW_PERMISSIONS_PHONE_CALLS"`       // Allow making phone calls
+	Location      bool `json:"location" env:"V1CLAW_PERMISSIONS_LOCATION"`             // Allow GPS/location access
+	Clipboard     bool `json:"clipboard" env:"V1CLAW_PERMISSIONS_CLIPBOARD"`           // Allow clipboard read/write
+	Sensors       bool `json:"sensors" env:"V1CLAW_PERMISSIONS_SENSORS"`               // Allow sensor access
 	ShellHardware bool `json:"shell_hardware" env:"V1CLAW_PERMISSIONS_SHELL_HARDWARE"` // Allow shell exec of hardware commands (termux-*)
 }
 
 // VoiceConfig configures the voice I/O pipeline.
 type VoiceConfig struct {
-	Enabled        bool   `json:"enabled" env:"V1CLAW_VOICE_ENABLED"`
-	Mode           string `json:"mode" env:"V1CLAW_VOICE_MODE"`                       // "wake-word", "push-to-talk", "always-on"
-	RecordDuration int    `json:"record_duration" env:"V1CLAW_VOICE_RECORD_DURATION"` // Seconds per chunk (default: 5)
-	RecorderBackend string `json:"recorder_backend" env:"V1CLAW_VOICE_RECORDER"`     // "auto", "termux", "system"
-	PlayerBackend  string `json:"player_backend" env:"V1CLAW_VOICE_PLAYER"`           // "auto", "termux", "system"
-	TTSProvider    string `json:"tts_provider" env:"V1CLAW_VOICE_TTS_PROVIDER"`       // "openai", "edge", "auto"
-	WakeWordPhrases []string `json:"wake_word_phrases"`                               // e.g., ["hello v1", "hey v1"]
+	Enabled         bool     `json:"enabled" env:"V1CLAW_VOICE_ENABLED"`
+	Mode            string   `json:"mode" env:"V1CLAW_VOICE_MODE"`                       // "wake-word", "push-to-talk", "always-on"
+	RecordDuration  int      `json:"record_duration" env:"V1CLAW_VOICE_RECORD_DURATION"` // Seconds per chunk (default: 5)
+	RecorderBackend string   `json:"recorder_backend" env:"V1CLAW_VOICE_RECORDER"`       // "auto", "termux", "system"
+	PlayerBackend   string   `json:"player_backend" env:"V1CLAW_VOICE_PLAYER"`           // "auto", "termux", "system"
+	TTSProvider     string   `json:"tts_provider" env:"V1CLAW_VOICE_TTS_PROVIDER"`       // "openai", "edge", "auto"
+	WakeWordPhrases []string `json:"wake_word_phrases"`                                  // e.g., ["hello v1", "hey v1"]
 }
 
 // V1APIConfig configures the V1 assistant REST/WebSocket API.
