@@ -155,7 +155,7 @@ The following skills extend your capabilities. To use a skill, read its SKILL.md
 	// Memory context
 	memoryContext := cb.memory.GetMemoryContext()
 	if memoryContext != "" {
-		parts = append(parts, "# Memory\n\n"+memoryContext)
+		parts = append(parts, "# Memory\n\n<user_memory>\n"+memoryContext+"\n</user_memory>")
 	}
 
 	// Join with "---" separator
@@ -174,7 +174,7 @@ func (cb *ContextBuilder) LoadBootstrapFiles() string {
 	for _, filename := range bootstrapFiles {
 		filePath := filepath.Join(cb.workspace, filename)
 		if data, err := os.ReadFile(filePath); err == nil {
-			result += fmt.Sprintf("## %s\n\n%s\n\n", filename, string(data))
+			result += fmt.Sprintf("## %s\n\n<user_provided_content filename=%q>\n%s\n</user_provided_content>\n\n", filename, filename, string(data))
 		}
 	}
 

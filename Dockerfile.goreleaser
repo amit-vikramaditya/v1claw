@@ -4,7 +4,13 @@ ARG TARGETPLATFORM
 
 RUN apk add --no-cache ca-certificates tzdata
 
+RUN addgroup -S v1claw && adduser -S -G v1claw v1claw
+
 COPY $TARGETPLATFORM/v1claw /usr/local/bin/v1claw
+
+RUN mkdir -p /home/v1claw && chown -R v1claw:v1claw /home/v1claw
+
+USER v1claw
 
 ENTRYPOINT ["v1claw"]
 CMD ["gateway"]

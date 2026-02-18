@@ -125,6 +125,7 @@ func (s *Server) Stop() {
 func (s *Server) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if s.apiKey == "" {
+			// API key not configured — auth disabled (INSECURE: configure api_key in config)
 			next(w, r)
 			return
 		}
@@ -155,6 +156,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req ChatRequest
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1MB limit
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, ErrorResponse{Error: "invalid request body"})
 		return
@@ -183,7 +185,8 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 
 	response, err := handler(ctx, req.Message, req.SessionKey)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
+		logger.WarnCF("api", "Chat handler error", map[string]interface{}{"error": err.Error()})
+		writeJSON(w, http.StatusInternalServerError, ErrorResponse{Error: "internal error processing request"})
 		return
 	}
 
@@ -248,6 +251,7 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req EventRequest
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1MB limit
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, ErrorResponse{Error: "invalid request body"})
 		return

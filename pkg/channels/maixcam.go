@@ -70,7 +70,7 @@ func (c *MaixCamChannel) acceptConnections(ctx context.Context) {
 		default:
 			conn, err := c.listener.Accept()
 			if err != nil {
-				if c.running {
+				if c.running.Load() {
 					logger.ErrorCF("maixcam", "Failed to accept connection", map[string]interface{}{
 						"error": err.Error(),
 					})
@@ -101,6 +101,18 @@ func (c *MaixCamChannel) handleConnection(conn net.Conn, ctx context.Context) {
 		c.clientsMux.Unlock()
 		logger.DebugC("maixcam", "Connection closed")
 	}()
+
+	// Authenticate if token is configured
+	if c.config.Token != "" {
+		var authMsg struct {
+			Auth string `json:"auth"`
+		}
+		if err := json.NewDecoder(conn).Decode(&authMsg); err != nil || authMsg.Auth != c.config.Token {
+			logger.WarnCF("maixcam", "Authentication failed", map[string]interface{}{"remote": conn.RemoteAddr().String()})
+			return
+		}
+		logger.InfoCF("maixcam", "Client authenticated", map[string]interface{}{"remote": conn.RemoteAddr().String()})
+	}
 
 	decoder := json.NewDecoder(conn)
 

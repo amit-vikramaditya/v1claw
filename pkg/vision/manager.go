@@ -6,6 +6,7 @@ import (
 	"sync"
 
 	"github.com/amit-vikramaditya/v1claw/pkg/logger"
+	"github.com/amit-vikramaditya/v1claw/pkg/permissions"
 )
 
 // Manager coordinates vision providers with fallback.
@@ -128,6 +129,10 @@ func (m *Manager) CaptureAndAnalyze(ctx context.Context, cameraName, prompt stri
 
 // Screenshot captures and analyzes the screen.
 func (m *Manager) Screenshot(ctx context.Context, windowTitle, prompt string) (*AnalysisResult, error) {
+	if err := permissions.Global().Check(permissions.Screen, "vision.Screenshot"); err != nil {
+		return nil, err
+	}
+
 	m.mu.RLock()
 	screen := m.screen
 	m.mu.RUnlock()

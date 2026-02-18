@@ -2,10 +2,12 @@ package dashboard
 
 import (
 	"context"
+	"crypto/subtle"
 	"embed"
 	"fmt"
 	"html/template"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -20,6 +22,7 @@ type Config struct {
 	Enabled bool   `json:"enabled"`
 	Addr    string `json:"addr"` // Default ":18792"
 	Title   string `json:"title"`
+	APIKey  string `json:"api_key" env:"V1CLAW_DASHBOARD_API_KEY"`
 }
 
 // StatusData provides real-time status for the dashboard.
@@ -121,6 +124,10 @@ func (s *Server) Stop() {
 }
 
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
+	if !s.checkAuth(w, r) {
+		return
+	}
+
 	if r.URL.Path != "/" {
 		http.NotFound(w, r)
 		return
@@ -134,6 +141,10 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
+	if !s.checkAuth(w, r) {
+		return
+	}
+
 	data := s.getStatus()
 
 	// Return as HTML fragment for htmx polling.
@@ -157,6 +168,22 @@ func (s *Server) getStatus() StatusData {
 		Uptime:    time.Since(s.startTime).Truncate(time.Second).String(),
 		Timestamp: time.Now(),
 	}
+}
+
+// checkAuth validates the API key if configured. Returns true if authorized.
+func (s *Server) checkAuth(w http.ResponseWriter, r *http.Request) bool {
+	if s.config.APIKey != "" {
+		auth := r.Header.Get("Authorization")
+		if auth == "" {
+			auth = r.URL.Query().Get("api_key")
+		}
+		token := strings.TrimPrefix(auth, "Bearer ")
+		if subtle.ConstantTimeCompare([]byte(token), []byte(s.config.APIKey)) != 1 {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return false
+		}
+	}
+	return true
 }
 
 const fallbackTemplate = `<!DOCTYPE html>

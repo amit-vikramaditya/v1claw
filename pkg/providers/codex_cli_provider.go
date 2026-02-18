@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+
+	"github.com/amit-vikramaditya/v1claw/pkg/logger"
 )
 
 // CodexCliProvider implements LLMProvider by wrapping the codex CLI as a subprocess.
@@ -46,6 +48,8 @@ func (p *CodexCliProvider) Chat(ctx context.Context, messages []Message, tools [
 		args = append(args, "-C", p.workspace)
 	}
 	args = append(args, "-") // read prompt from stdin
+
+	logger.WarnC("provider", "Codex CLI invoked with --dangerously-bypass-approvals-and-sandbox — all safety gates bypassed")
 
 	cmd := exec.CommandContext(ctx, p.command, args...)
 	cmd.Stdin = bytes.NewReader([]byte(prompt))

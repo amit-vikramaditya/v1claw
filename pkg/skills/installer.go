@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -65,12 +66,12 @@ func (si *SkillInstaller) InstallFromGitHub(ctx context.Context, repo string) er
 		return fmt.Errorf("failed to read response: %w", err)
 	}
 
-	if err := os.MkdirAll(skillDir, 0755); err != nil {
+	if err := os.MkdirAll(skillDir, 0700); err != nil {
 		return fmt.Errorf("failed to create skill directory: %w", err)
 	}
 
 	skillPath := filepath.Join(skillDir, "SKILL.md")
-	if err := os.WriteFile(skillPath, body, 0644); err != nil {
+	if err := os.WriteFile(skillPath, body, 0600); err != nil {
 		return fmt.Errorf("failed to write skill file: %w", err)
 	}
 
@@ -78,6 +79,11 @@ func (si *SkillInstaller) InstallFromGitHub(ctx context.Context, repo string) er
 }
 
 func (si *SkillInstaller) Uninstall(skillName string) error {
+	// Validate skill name to prevent path traversal
+	if strings.Contains(skillName, "..") || strings.Contains(skillName, "/") || strings.Contains(skillName, "\\") {
+		return fmt.Errorf("invalid skill name: %q", skillName)
+	}
+
 	skillDir := filepath.Join(si.workspace, "skills", skillName)
 
 	if _, err := os.Stat(skillDir); os.IsNotExist(err) {

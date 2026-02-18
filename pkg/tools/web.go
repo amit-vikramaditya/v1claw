@@ -396,6 +396,11 @@ func (t *WebFetchTool) Execute(ctx context.Context, args map[string]interface{})
 		return ErrorResult("missing domain in URL")
 	}
 
+	// SSRF protection: block internal/private network access
+	if isBlockedHost(parsedURL.Host) {
+		return ErrorResult("URL blocked: access to internal/private networks is not allowed")
+	}
+
 	maxChars := t.maxChars
 	if mc, ok := args["maxChars"].(float64); ok {
 		if int(mc) > 100 {
@@ -432,7 +437,7 @@ func (t *WebFetchTool) Execute(ctx context.Context, args map[string]interface{})
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 10<<20)) // 10MB limit
 	if err != nil {
 		return ErrorResult(fmt.Sprintf("failed to read response: %v", err))
 	}
@@ -505,4 +510,57 @@ func (t *WebFetchTool) extractText(htmlContent string) string {
 	}
 
 	return strings.Join(cleanLines, "\n")
+}
+
+// isBlockedHost returns true if the host resolves to a private/internal address.
+func isBlockedHost(host string) bool {
+	// Strip port if present
+	hostname := host
+	if idx := strings.LastIndex(host, ":"); idx != -1 {
+		hostname = host[:idx]
+	}
+	hostname = strings.ToLower(strings.TrimSpace(hostname))
+
+	// Block well-known internal hostnames
+	blockedHosts := []string{
+		"localhost",
+		"metadata.google.internal",
+		"metadata",
+		"169.254.169.254",
+		"[::1]",
+	}
+	for _, b := range blockedHosts {
+		if hostname == b {
+			return true
+		}
+	}
+
+	// Block loopback and link-local
+	if strings.HasPrefix(hostname, "127.") || hostname == "::1" || hostname == "[::1]" {
+		return true
+	}
+
+	// Block RFC1918 private ranges
+	if strings.HasPrefix(hostname, "10.") ||
+		strings.HasPrefix(hostname, "192.168.") {
+		return true
+	}
+	// 172.16.0.0 - 172.31.255.255
+	if strings.HasPrefix(hostname, "172.") {
+		parts := strings.SplitN(hostname, ".", 3)
+		if len(parts) >= 2 {
+			var second int
+			fmt.Sscanf(parts[1], "%d", &second)
+			if second >= 16 && second <= 31 {
+				return true
+			}
+		}
+	}
+
+	// Block link-local
+	if strings.HasPrefix(hostname, "169.254.") {
+		return true
+	}
+
+	return false
 }

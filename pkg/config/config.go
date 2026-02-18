@@ -117,9 +117,10 @@ type ChannelsConfig struct {
 }
 
 type WhatsAppConfig struct {
-	Enabled   bool                `json:"enabled" env:"V1CLAW_CHANNELS_WHATSAPP_ENABLED"`
-	BridgeURL string              `json:"bridge_url" env:"V1CLAW_CHANNELS_WHATSAPP_BRIDGE_URL"`
-	AllowFrom FlexibleStringSlice `json:"allow_from" env:"V1CLAW_CHANNELS_WHATSAPP_ALLOW_FROM"`
+	Enabled     bool                `json:"enabled" env:"V1CLAW_CHANNELS_WHATSAPP_ENABLED"`
+	BridgeURL   string              `json:"bridge_url" env:"V1CLAW_CHANNELS_WHATSAPP_BRIDGE_URL"`
+	BridgeToken string              `json:"bridge_token" env:"V1CLAW_CHANNELS_WHATSAPP_BRIDGE_TOKEN"`
+	AllowFrom   FlexibleStringSlice `json:"allow_from" env:"V1CLAW_CHANNELS_WHATSAPP_ALLOW_FROM"`
 }
 
 type TelegramConfig struct {
@@ -148,6 +149,7 @@ type MaixCamConfig struct {
 	Enabled   bool                `json:"enabled" env:"V1CLAW_CHANNELS_MAIXCAM_ENABLED"`
 	Host      string              `json:"host" env:"V1CLAW_CHANNELS_MAIXCAM_HOST"`
 	Port      int                 `json:"port" env:"V1CLAW_CHANNELS_MAIXCAM_PORT"`
+	Token     string              `json:"token" env:"V1CLAW_CHANNELS_MAIXCAM_TOKEN"`
 	AllowFrom FlexibleStringSlice `json:"allow_from" env:"V1CLAW_CHANNELS_MAIXCAM_ALLOW_FROM"`
 }
 
@@ -354,7 +356,7 @@ func DefaultConfig() *Config {
 			ShengSuanYun: ProviderConfig{},
 		},
 		Gateway: GatewayConfig{
-			Host: "0.0.0.0",
+			Host: "127.0.0.1",
 			Port: 18790,
 		},
 		Tools: ToolsConfig{
@@ -426,7 +428,7 @@ func SaveConfig(path string, cfg *Config) error {
 	}
 
 	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := os.MkdirAll(dir, 0700); err != nil {
 		return err
 	}
 

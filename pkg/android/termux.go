@@ -41,6 +41,9 @@ func (t *TermuxAPI) IsAvailable() bool {
 
 // Notify sends an Android notification.
 func (t *TermuxAPI) Notify(ctx context.Context, title, content string, id string) error {
+	if err := permissions.Global().Check(permissions.Notifications, "termux.Notify"); err != nil {
+		return err
+	}
 	args := []string{"--title", title, "--content", content}
 	if id != "" {
 		args = append(args, "--id", id)
@@ -57,6 +60,9 @@ func (t *TermuxAPI) NotifyRemove(ctx context.Context, id string) error {
 
 // Toast shows a brief Android toast message.
 func (t *TermuxAPI) Toast(ctx context.Context, message string, short bool) error {
+	if err := permissions.Global().Check(permissions.Notifications, "termux.Toast"); err != nil {
+		return err
+	}
 	args := []string{message}
 	if short {
 		args = append(args, "-s")
@@ -68,6 +74,9 @@ func (t *TermuxAPI) Toast(ctx context.Context, message string, short bool) error
 
 // Vibrate vibrates the device for the given duration.
 func (t *TermuxAPI) Vibrate(ctx context.Context, durationMs int, force bool) error {
+	if err := permissions.Global().Check(permissions.ShellHardware, "termux.Vibrate"); err != nil {
+		return err
+	}
 	args := []string{"-d", fmt.Sprintf("%d", durationMs)}
 	if force {
 		args = append(args, "-f")
@@ -133,6 +142,9 @@ func (t *TermuxAPI) GetLocation(ctx context.Context, provider string) (*Location
 
 // Speak uses Android's built-in TTS engine to speak text.
 func (t *TermuxAPI) Speak(ctx context.Context, text string) error {
+	if err := permissions.Global().Check(permissions.Microphone, "termux.Speak"); err != nil {
+		return err
+	}
 	cmd := exec.CommandContext(ctx, "termux-tts-speak", text)
 	return cmd.Run()
 }
@@ -141,6 +153,9 @@ func (t *TermuxAPI) Speak(ctx context.Context, text string) error {
 
 // Torch toggles the device flashlight.
 func (t *TermuxAPI) Torch(ctx context.Context, on bool) error {
+	if err := permissions.Global().Check(permissions.ShellHardware, "termux.Torch"); err != nil {
+		return err
+	}
 	state := "off"
 	if on {
 		state = "on"
@@ -162,6 +177,9 @@ type WifiInfo struct {
 
 // GetWifiInfo returns current WiFi connection info.
 func (t *TermuxAPI) GetWifiInfo(ctx context.Context) (*WifiInfo, error) {
+	if err := permissions.Global().Check(permissions.Location, "termux.GetWifiInfo"); err != nil {
+		return nil, err
+	}
 	out, err := t.output(ctx, "termux-wifi-connectioninfo")
 	if err != nil {
 		return nil, err
@@ -275,6 +293,9 @@ func (t *TermuxAPI) ListSensors(ctx context.Context) ([]string, error) {
 
 // SetVolume sets the media volume (0-15).
 func (t *TermuxAPI) SetVolume(ctx context.Context, stream string, volume int) error {
+	if err := permissions.Global().Check(permissions.ShellHardware, "termux.SetVolume"); err != nil {
+		return err
+	}
 	return t.run(ctx, "termux-volume", stream, fmt.Sprintf("%d", volume))
 }
 

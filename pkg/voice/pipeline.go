@@ -147,6 +147,12 @@ func (p *Pipeline) recordLoop(ctx context.Context) {
 		default:
 		}
 
+		// Recheck microphone permission each iteration
+		if err := permissions.Global().Check(permissions.Microphone, "voice.recordLoop"); err != nil {
+			logger.WarnC("voice", "Microphone permission revoked, stopping recording")
+			return
+		}
+
 		filePath, err := p.recorder.Record(ctx, duration)
 		if err != nil {
 			logger.WarnCF("voice", "Recording failed", map[string]interface{}{"error": err.Error()})
@@ -256,12 +262,14 @@ func (p *Pipeline) speakResponse(ctx context.Context, text string) {
 
 	// Fallback: if on Termux, use native Android TTS directly.
 	if isTermux() {
-		if _, err := exec.LookPath("termux-tts-speak"); err == nil {
-			cmd := exec.CommandContext(ctx, "termux-tts-speak", text)
-			if err := cmd.Run(); err != nil {
-				logger.WarnCF("voice", "termux-tts-speak failed", map[string]interface{}{"error": err.Error()})
+		if err := permissions.Global().Check(permissions.ShellHardware, "voice.speakResponse"); err == nil {
+			if _, err := exec.LookPath("termux-tts-speak"); err == nil {
+				cmd := exec.CommandContext(ctx, "termux-tts-speak", text)
+				if err := cmd.Run(); err != nil {
+					logger.WarnCF("voice", "termux-tts-speak failed", map[string]interface{}{"error": err.Error()})
+				}
+				return
 			}
-			return
 		}
 	}
 

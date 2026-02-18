@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"sync"
 	"time"
 
@@ -41,7 +42,13 @@ func (c *WhatsAppChannel) Start(ctx context.Context) error {
 	dialer := websocket.DefaultDialer
 	dialer.HandshakeTimeout = 10 * time.Second
 
-	conn, _, err := dialer.Dial(c.url, nil)
+	var header http.Header
+	if c.config.BridgeToken != "" {
+		header = http.Header{}
+		header.Set("Authorization", "Bearer "+c.config.BridgeToken)
+	}
+
+	conn, _, err := dialer.Dial(c.url, header)
 	if err != nil {
 		return fmt.Errorf("failed to connect to WhatsApp bridge: %w", err)
 	}

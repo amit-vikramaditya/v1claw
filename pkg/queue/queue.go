@@ -338,7 +338,7 @@ func (q *Queue) save() {
 		return
 	}
 	tmpPath := q.path + ".tmp"
-	if err := os.WriteFile(tmpPath, data, 0644); err != nil {
+	if err := os.WriteFile(tmpPath, data, 0600); err != nil {
 		logger.ErrorC("queue", fmt.Sprintf("Failed to write queue: %v", err))
 		return
 	}

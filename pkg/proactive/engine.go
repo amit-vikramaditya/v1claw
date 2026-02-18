@@ -315,7 +315,7 @@ func (e *Engine) save() {
 	}
 	path := filepath.Join(e.dataDir, "proactive.json")
 	tmpPath := path + ".tmp"
-	if err := os.WriteFile(tmpPath, data, 0644); err != nil {
+	if err := os.WriteFile(tmpPath, data, 0600); err != nil {
 		return
 	}
 	if err := os.Rename(tmpPath, path); err != nil {

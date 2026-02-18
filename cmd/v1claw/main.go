@@ -21,6 +21,7 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/amit-vikramaditya/v1claw/pkg/agent"
@@ -548,7 +549,7 @@ func gatewayCmd() {
 
 	// Load hardware permissions from config into global registry.
 	perms := permissions.Global()
-	perms.SetAll(map[permissions.Feature]bool{
+	if err := perms.SetAll(map[permissions.Feature]bool{
 		permissions.Camera:        cfg.Permissions.Camera,
 		permissions.Microphone:    cfg.Permissions.Microphone,
 		permissions.SMS:           cfg.Permissions.SMS,
@@ -557,7 +558,11 @@ func gatewayCmd() {
 		permissions.Clipboard:     cfg.Permissions.Clipboard,
 		permissions.Sensors:       cfg.Permissions.Sensors,
 		permissions.ShellHardware: cfg.Permissions.ShellHardware,
-	})
+	}); err != nil {
+		fmt.Printf("Error setting permissions: %v\n", err)
+		os.Exit(1)
+	}
+	perms.Freeze()
 	enabledPerms := perms.EnabledFeatures()
 	if len(enabledPerms) > 0 {
 		names := make([]string, len(enabledPerms))
@@ -825,7 +830,7 @@ func gatewayCmd() {
 	}
 
 	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, os.Interrupt)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 	<-sigChan
 
 	fmt.Println("\nShutting down...")

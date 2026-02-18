@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -175,6 +176,13 @@ func (t *CronTool) addJob(args map[string]interface{}) *ToolResult {
 	}
 
 	command, _ := args["command"].(string)
+	if command != "" {
+		// Validate cron commands against same safety guards as shell exec
+		lower := strings.ToLower(strings.TrimSpace(command))
+		if msg := guardHardwareCommands(lower); msg != "" {
+			return ErrorResult(fmt.Sprintf("Cron command blocked: %s", msg))
+		}
+	}
 	if command != "" {
 		// Commands must be processed by agent/exec tool, so deliver must be false (or handled specifically)
 		// Actually, let's keep deliver=false to let the system know it's not a simple chat message

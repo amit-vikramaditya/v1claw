@@ -66,7 +66,7 @@ func LoadStore() (*AuthStore, error) {
 func SaveStore(store *AuthStore) error {
 	path := authFilePath()
 	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := os.MkdirAll(dir, 0700); err != nil {
 		return err
 	}
 

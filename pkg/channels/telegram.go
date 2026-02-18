@@ -30,6 +30,7 @@ type TelegramChannel struct {
 	commands     TelegramCommander
 	config       *config.Config
 	chatIDs      map[string]int64
+	chatIDsMu    sync.Mutex
 	transcriber  *voice.GroqTranscriber
 	placeholders sync.Map // chatID -> messageID
 	stopThinking sync.Map // chatID -> thinkingCancel
@@ -210,7 +211,9 @@ func (c *TelegramChannel) handleMessage(ctx context.Context, message *telego.Mes
 	}
 
 	chatID := message.Chat.ID
+	c.chatIDsMu.Lock()
 	c.chatIDs[senderID] = chatID
+	c.chatIDsMu.Unlock()
 
 	content := ""
 	mediaPaths := []string{}

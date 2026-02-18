@@ -14,6 +14,12 @@ func extractToolCallsFromText(text string) []ToolCall {
 		return nil
 	}
 
+	// Safety: reject tool calls embedded deep in text content (likely injection).
+	// Legitimate tool calls from CLI providers appear near the start or end of output.
+	if start > 500 {
+		return nil
+	}
+
 	end := findMatchingBrace(text, start)
 	if end == start {
 		return nil

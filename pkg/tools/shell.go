@@ -25,14 +25,36 @@ type ExecTool struct {
 
 func NewExecTool(workingDir string, restrict bool) *ExecTool {
 	denyPatterns := []*regexp.Regexp{
-		regexp.MustCompile(`\brm\s+-[rf]{1,2}\b`),
+		// Destructive file operations
+		regexp.MustCompile(`\brm\s+(-[^\s]*\s+)*-[rf]`),
+		regexp.MustCompile(`\brm\s+--recursive\b`),
+		regexp.MustCompile(`\brm\s+--force\b`),
 		regexp.MustCompile(`\bdel\s+/[fq]\b`),
 		regexp.MustCompile(`\brmdir\s+/s\b`),
-		regexp.MustCompile(`\b(format|mkfs|diskpart)\b\s`), // Match disk wiping commands (must be followed by space/args)
+		regexp.MustCompile(`\b(format|mkfs|diskpart)\b\s`),
 		regexp.MustCompile(`\bdd\s+if=`),
-		regexp.MustCompile(`>\s*/dev/sd[a-z]\b`), // Block writes to disk devices (but allow /dev/null)
+		regexp.MustCompile(`>\s*/dev/sd[a-z]\b`),
 		regexp.MustCompile(`\b(shutdown|reboot|poweroff)\b`),
 		regexp.MustCompile(`:\(\)\s*\{.*\};\s*:`),
+		// Pipe-to-shell (download & execute)
+		regexp.MustCompile(`\|\s*(ba)?sh\b`),
+		regexp.MustCompile(`\|\s*bash\b`),
+		// Reverse shells and network backdoors
+		regexp.MustCompile(`\bnc\s+.*-[el]\b`),
+		regexp.MustCompile(`\bncat\s+.*-[el]\b`),
+		regexp.MustCompile(`\bnetcat\b`),
+		regexp.MustCompile(`/dev/tcp/`),
+		// Scripting language one-liners that could bypass guards
+		regexp.MustCompile(`\bpython[23]?\s+-c\b`),
+		regexp.MustCompile(`\bperl\s+-e\b`),
+		regexp.MustCompile(`\bruby\s+-e\b`),
+		regexp.MustCompile(`\bnode\s+-e\b`),
+		// Shell rc file modification
+		regexp.MustCompile(`>\s*~/?\.(bashrc|bash_profile|profile|zshrc|zprofile)\b`),
+		// Base64 decode piped to execution
+		regexp.MustCompile(`base64\s+(-d|--decode)\s*\|\s*(ba)?sh`),
+		// Eval/source of untrusted input
+		regexp.MustCompile(`\beval\s+"\$`),
 	}
 
 	return &ExecTool{
@@ -78,6 +100,17 @@ func (t *ExecTool) Execute(ctx context.Context, args map[string]interface{}) *To
 	cwd := t.workingDir
 	if wd, ok := args["working_dir"].(string); ok && wd != "" {
 		cwd = wd
+	}
+
+	// Validate working_dir stays within workspace when restricted
+	if t.restrictToWorkspace && cwd != t.workingDir {
+		absWD, err1 := filepath.Abs(t.workingDir)
+		absCWD, err2 := filepath.Abs(cwd)
+		if err1 == nil && err2 == nil {
+			if !strings.HasPrefix(absCWD, absWD+string(filepath.Separator)) && absCWD != absWD {
+				return ErrorResult("working_dir must be within the workspace directory")
+			}
+		}
 	}
 
 	if cwd == "" {
@@ -264,6 +297,12 @@ func guardHardwareCommands(lower string) string {
 			if !reg.IsAllowed(g.feature) {
 				return fmt.Sprintf("Command blocked: %s requires permissions.%s=true in config", g.desc, g.feature)
 			}
+		}
+	}
+	// Catch-all: block ANY termux-* command not already allowed above
+	if strings.Contains(lower, "termux-") {
+		if !reg.IsAllowed(permissions.ShellHardware) {
+			return "Command blocked: termux hardware commands require permissions.shell_hardware=true in config"
 		}
 	}
 	return ""

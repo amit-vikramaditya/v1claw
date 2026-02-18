@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+
+	"github.com/amit-vikramaditya/v1claw/pkg/logger"
 )
 
 // ClaudeCliProvider implements LLMProvider using the claude CLI as a subprocess.
@@ -36,6 +38,8 @@ func (p *ClaudeCliProvider) Chat(ctx context.Context, messages []Message, tools 
 		args = append(args, "--model", model)
 	}
 	args = append(args, "-") // read from stdin
+
+	logger.WarnC("provider", "Claude CLI invoked with --dangerously-skip-permissions — all safety gates bypassed")
 
 	cmd := exec.CommandContext(ctx, p.command, args...)
 	if p.workspace != "" {

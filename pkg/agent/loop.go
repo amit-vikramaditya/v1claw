@@ -977,6 +977,10 @@ func (al *AgentLoop) handleCommand(ctx context.Context, msg bus.InboundMessage) 
 
 		switch target {
 		case "model":
+			// Validate model name — reject URLs and suspicious patterns
+			if strings.Contains(value, "://") || strings.Contains(value, "/") || strings.Contains(value, "\\") {
+				return "Invalid model name — URLs and paths are not allowed", true
+			}
 			oldModel := al.model
 			al.model = value
 			return fmt.Sprintf("Switched model from %s to %s", oldModel, value), true
