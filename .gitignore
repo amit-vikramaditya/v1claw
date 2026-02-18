@@ -44,3 +44,4 @@ tasks/
 
 # Added by goreleaser init:
 dist/
+OUR_WORK.md
