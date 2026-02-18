@@ -413,7 +413,7 @@ func onboard() {
 			}
 
 			// Ask for model name
-			fmt.Printf("\n  Available models: %s\n", info.models)
+			fmt.Printf("\n  Example models: %s\n", info.models)
 			fmt.Print("Model name: ")
 			modelName := ""
 			if scanner.Scan() {
