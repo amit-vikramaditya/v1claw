@@ -247,6 +247,78 @@ func onboard() {
 	}
 
 	cfg := config.DefaultConfig()
+
+	// Interactive provider setup
+	scanner := bufio.NewScanner(os.Stdin)
+
+	fmt.Println("\n🔧 Let's set up your AI provider.")
+	fmt.Println("")
+	fmt.Println("Pick a provider:")
+	fmt.Println("  1. Google Gemini  (free — recommended)")
+	fmt.Println("  2. OpenAI         (GPT-5, GPT-4)")
+	fmt.Println("  3. Anthropic      (Claude)")
+	fmt.Println("  4. Groq           (fast, free tier)")
+	fmt.Println("  5. DeepSeek")
+	fmt.Println("  6. OpenRouter     (100+ models)")
+	fmt.Println("  7. Ollama         (local, no API key)")
+	fmt.Println("  8. Skip           (configure later)")
+	fmt.Print("\nEnter number [1]: ")
+
+	choice := "1"
+	if scanner.Scan() {
+		t := strings.TrimSpace(scanner.Text())
+		if t != "" {
+			choice = t
+		}
+	}
+
+	type providerInfo struct {
+		name    string
+		model   string
+		keyHint string
+		keyURL  string
+	}
+
+	providerMap := map[string]providerInfo{
+		"1": {name: "gemini", model: "gemini-2.0-flash", keyHint: "Gemini API key", keyURL: "https://aistudio.google.com/apikey"},
+		"2": {name: "openai", model: "gpt-4o", keyHint: "OpenAI API key (starts with sk-)", keyURL: "https://platform.openai.com/api-keys"},
+		"3": {name: "anthropic", model: "claude-sonnet-4-20250514", keyHint: "Anthropic API key (starts with sk-ant-)", keyURL: "https://console.anthropic.com/keys"},
+		"4": {name: "groq", model: "llama-3.3-70b-versatile", keyHint: "Groq API key", keyURL: "https://console.groq.com/keys"},
+		"5": {name: "deepseek", model: "deepseek-chat", keyHint: "DeepSeek API key", keyURL: "https://platform.deepseek.com/api_keys"},
+		"6": {name: "openrouter", model: "google/gemini-2.0-flash-exp:free", keyHint: "OpenRouter API key", keyURL: "https://openrouter.ai/keys"},
+		"7": {name: "ollama", model: "llama3.2"},
+	}
+
+	if info, ok := providerMap[choice]; ok {
+		cfg.Agents.Defaults.Model = info.model
+
+		if info.name == "ollama" {
+			cfg.Providers.Ollama.APIBase = "http://localhost:11434/v1"
+			fmt.Println("\n✓ Ollama selected. Make sure Ollama is running locally.")
+			fmt.Printf("  Model: %s (change with: ollama pull <model>)\n", info.model)
+		} else {
+			fmt.Printf("\nGet your key at: %s\n", info.keyURL)
+			fmt.Printf("Enter your %s: ", info.keyHint)
+
+			apiKey := ""
+			if scanner.Scan() {
+				apiKey = strings.TrimSpace(scanner.Text())
+			}
+
+			if apiKey == "" {
+				fmt.Println("\n⚠ No API key entered. You can add it later in:", configPath)
+			} else {
+				setProviderKey(cfg, info.name, apiKey)
+				fmt.Println("\n✓ API key saved.")
+			}
+			fmt.Printf("  Model: %s\n", cfg.Agents.Defaults.Model)
+		}
+	} else if choice != "8" {
+		fmt.Println("\n⚠ Invalid choice. You can configure manually in:", configPath)
+	} else {
+		fmt.Println("\n⚠ Skipped. Add your provider and API key in:", configPath)
+	}
+
 	if err := config.SaveConfig(configPath, cfg); err != nil {
 		fmt.Printf("Error saving config: %v\n", err)
 		os.Exit(1)
@@ -255,11 +327,26 @@ func onboard() {
 	workspace := cfg.WorkspacePath()
 	createWorkspaceTemplates(workspace)
 
-	fmt.Printf("%s V1 is ready!\n", logo)
-	fmt.Println("\nNext steps:")
-	fmt.Println("  1. Add your API key to", configPath)
-	fmt.Println("     Get one at: https://openrouter.ai/keys")
-	fmt.Println("  2. Chat: v1claw agent -m \"Hello!\"")
+	fmt.Printf("\n%s V1 is ready!\n", logo)
+	fmt.Println("\nTry it out:")
+	fmt.Println("  v1claw agent -m \"Hello!\"")
+}
+
+func setProviderKey(cfg *config.Config, provider, key string) {
+	switch provider {
+	case "gemini":
+		cfg.Providers.Gemini.APIKey = key
+	case "openai":
+		cfg.Providers.OpenAI.APIKey = key
+	case "anthropic":
+		cfg.Providers.Anthropic.APIKey = key
+	case "groq":
+		cfg.Providers.Groq.APIKey = key
+	case "deepseek":
+		cfg.Providers.DeepSeek.APIKey = key
+	case "openrouter":
+		cfg.Providers.OpenRouter.APIKey = key
+	}
 }
 
 func copyEmbeddedToTarget(targetDir string) error {

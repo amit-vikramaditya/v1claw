@@ -27,12 +27,12 @@ func TestDefaultConfig_WorkspacePath(t *testing.T) {
 	}
 }
 
-// TestDefaultConfig_Model verifies model is set
+// TestDefaultConfig_Model verifies model default is empty (set during interactive onboard)
 func TestDefaultConfig_Model(t *testing.T) {
 	cfg := DefaultConfig()
 
-	if cfg.Agents.Defaults.Model == "" {
-		t.Error("Model should not be empty")
+	if cfg.Agents.Defaults.Model != "" {
+		t.Errorf("Model should be empty by default, got %q", cfg.Agents.Defaults.Model)
 	}
 }
 
@@ -182,9 +182,7 @@ func TestConfig_Complete(t *testing.T) {
 	if cfg.Agents.Defaults.Workspace == "" {
 		t.Error("Workspace should not be empty")
 	}
-	if cfg.Agents.Defaults.Model == "" {
-		t.Error("Model should not be empty")
-	}
+	// Model is empty by default (set during interactive onboard)
 	if cfg.Agents.Defaults.Temperature == 0 {
 		t.Error("Temperature should have default value")
 	}

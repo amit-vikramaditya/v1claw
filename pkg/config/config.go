@@ -271,7 +271,7 @@ func DefaultConfig() *Config {
 				Workspace:           "~/.v1claw/workspace",
 				RestrictToWorkspace: true,
 				Provider:            "",
-				Model:               "glm-4.7",
+				Model:               "",
 				MaxTokens:           8192,
 				Temperature:         0.7,
 				MaxToolIterations:   20,

@@ -197,75 +197,15 @@ This compiles V1Claw into a single file. It takes 2-5 minutes on a phone. When i
 ./build/v1claw-linux-arm64 onboard
 ```
 
-This creates your config file at `~/.v1claw/config.json`.
+The setup wizard will ask you to:
+1. **Pick your AI provider** (Gemini is free and recommended)
+2. **Paste your API key**
 
-#### Step 7: Add your API key
+That's it — your config is ready at `~/.v1claw/config.json`.
 
-Open the config file in a text editor:
+> **Don't have an API key yet?** Press Enter to pick Gemini, then get a free key at [aistudio.google.com/apikey](https://aistudio.google.com/apikey). You can re-run `onboard` anytime, or edit the config manually with `nano ~/.v1claw/config.json`.
 
-```bash
-nano ~/.v1claw/config.json
-```
-
-Find the `"agents"` section and change the model name. Find the `"providers"` section and add your API key.
-
-**If you're using Google Gemini** (free), change it to look like this:
-
-```json
-{
-  "agents": [
-    {
-      "name": "v1claw",
-      "model": "gemini-2.0-flash"
-    }
-  ],
-  "providers": {
-    "gemini": {
-      "api_key": "YOUR_GEMINI_API_KEY_HERE"
-    }
-  }
-}
-```
-
-**If you're using OpenAI:**
-
-```json
-{
-  "agents": [
-    {
-      "name": "v1claw",
-      "model": "gpt-4o"
-    }
-  ],
-  "providers": {
-    "openai": {
-      "api_key": "sk-YOUR_OPENAI_KEY_HERE"
-    }
-  }
-}
-```
-
-**If you're using Anthropic Claude:**
-
-```json
-{
-  "agents": [
-    {
-      "name": "v1claw",
-      "model": "claude-sonnet-4-20250514"
-    }
-  ],
-  "providers": {
-    "anthropic": {
-      "api_key": "sk-ant-YOUR_KEY_HERE"
-    }
-  }
-}
-```
-
-Save the file: press `Ctrl+O`, then `Enter`, then `Ctrl+X`.
-
-#### Step 8: Test it!
+#### Step 7: Test it!
 
 ```bash
 ./build/v1claw-linux-arm64 agent -m "Hello! What can you do?"
@@ -273,7 +213,7 @@ Save the file: press `Ctrl+O`, then `Enter`, then `Ctrl+X`.
 
 You should see the AI respond. **If it does — congratulations, V1Claw is working on your phone!** 🎉
 
-#### Step 9: Start chatting
+#### Step 8: Start chatting
 
 ```bash
 ./build/v1claw-linux-arm64 agent
@@ -281,7 +221,7 @@ You should see the AI respond. **If it does — congratulations, V1Claw is worki
 
 This opens an interactive chat. Type anything and press Enter. Type `exit` or press `Ctrl+C` to quit.
 
-#### Step 10: Enable phone hardware (optional)
+#### Step 9: Enable phone hardware (optional)
 
 Want V1Claw to use your mic, camera, or read notifications? Edit the config again:
 
@@ -309,7 +249,7 @@ Add a `"permissions"` section (you can turn each feature on or off individually)
 
 > 🔒 **Every feature is OFF by default.** Only turn on what you need. You can change these anytime by editing the config and restarting.
 
-#### Step 11: Run V1Claw 24/7 in the background (optional)
+#### Step 10: Run V1Claw 24/7 in the background (optional)
 
 ```bash
 nohup ./build/v1claw-linux-arm64 gateway > v1claw.log 2>&1 &
@@ -391,17 +331,9 @@ The binary will appear at `build/v1claw-darwin-arm64` (Apple Silicon) or `build/
 ./build/v1claw-darwin-* onboard
 ```
 
-#### Step 5: Add your API key
+The setup wizard will ask you to pick a provider and enter your API key. Your config is ready immediately.
 
-```bash
-nano ~/.v1claw/config.json
-```
-
-Change the model and add your API key (see the Android Step 7 above for examples with Gemini, OpenAI, or Claude).
-
-Save: `Ctrl+O` → Enter → `Ctrl+X`.
-
-#### Step 6: Test it
+#### Step 5: Test it
 
 ```bash
 ./build/v1claw-darwin-* agent -m "Hello! Tell me a fun fact."
@@ -409,13 +341,13 @@ Save: `Ctrl+O` → Enter → `Ctrl+X`.
 
 If you see a response — **it's working!** 🎉
 
-#### Step 7: Interactive chat
+#### Step 6: Interactive chat
 
 ```bash
 ./build/v1claw-darwin-* agent
 ```
 
-#### Step 8: Run as a 24/7 service (optional)
+#### Step 7: Run as a 24/7 service (optional)
 
 ```bash
 # Quick background mode
@@ -478,23 +410,15 @@ The binary will appear at `build/v1claw-linux-amd64` or `build/v1claw-linux-arm6
 ./build/v1claw-linux-* onboard
 ```
 
-#### Step 5: Add your API key
+The setup wizard will ask you to pick a provider and enter your API key. Your config is ready immediately.
 
-```bash
-nano ~/.v1claw/config.json
-```
-
-Change the model and add your API key (see the Android Step 7 above for examples with Gemini, OpenAI, or Claude).
-
-Save: `Ctrl+O` → Enter → `Ctrl+X`.
-
-#### Step 6: Test it
+#### Step 5: Test it
 
 ```bash
 ./build/v1claw-linux-* agent -m "Hello! What can you do?"
 ```
 
-#### Step 7: Run as a 24/7 system service (optional)
+#### Step 6: Run as a 24/7 system service (optional)
 
 ```bash
 # Install the binary
@@ -572,19 +496,15 @@ go build -o build/v1claw.exe ./cmd/v1claw
 build\v1claw.exe onboard
 ```
 
-#### Step 5: Add your API key
+The setup wizard will ask you to pick a provider and enter your API key. Your config is ready immediately.
 
-Open the config file at `%USERPROFILE%\.v1claw\config.json` in Notepad or any text editor.
-
-Change the model and add your API key (see the Android Step 7 above for examples with Gemini, OpenAI, or Claude).
-
-#### Step 6: Test it
+#### Step 5: Test it
 
 ```bash
 build\v1claw.exe agent -m "Hello! What can you do?"
 ```
 
-#### Step 7: Interactive chat
+#### Step 6: Interactive chat
 
 ```bash
 build\v1claw.exe agent
@@ -608,7 +528,7 @@ cd V1Claw
 
 # Copy the example config and edit it
 cp config/config.example.json config/config.json
-nano config/config.json   # Add your API key (see Android Step 7 above)
+nano config/config.json   # Add your provider API key
 
 # Run a one-shot query
 docker compose run --rm v1claw-agent -m "Hello V1Claw!"
