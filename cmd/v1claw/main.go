@@ -281,30 +281,40 @@ func onboard() {
 	}
 
 	type providerInfo struct {
-		name    string
-		model   string
-		keyHint string
-		keyURL  string
+		name      string
+		models    string // example model names shown to user
+		keyHint   string
+		keyURL    string
 	}
 
 	providerMap := map[string]providerInfo{
-		"1": {name: "gemini", model: "gemini-2.0-flash", keyHint: "Gemini API key", keyURL: "https://aistudio.google.com/apikey"},
-		"2": {name: "openai", model: "gpt-4o", keyHint: "OpenAI API key (starts with sk-)", keyURL: "https://platform.openai.com/api-keys"},
-		"3": {name: "anthropic", model: "claude-sonnet-4-20250514", keyHint: "Anthropic API key (starts with sk-ant-)", keyURL: "https://console.anthropic.com/keys"},
-		"4": {name: "groq", model: "llama-3.3-70b-versatile", keyHint: "Groq API key", keyURL: "https://console.groq.com/keys"},
-		"5": {name: "deepseek", model: "deepseek-chat", keyHint: "DeepSeek API key", keyURL: "https://platform.deepseek.com/api_keys"},
-		"6": {name: "openrouter", model: "google/gemini-2.0-flash-exp:free", keyHint: "OpenRouter API key", keyURL: "https://openrouter.ai/keys"},
-		"7": {name: "nvidia", model: "meta/llama-3.1-70b-instruct", keyHint: "NVIDIA API key", keyURL: "https://build.nvidia.com"},
-		"8": {name: "github_copilot", model: "gpt-4o", keyHint: "GitHub Copilot token", keyURL: "https://github.com/settings/copilot"},
+		"1": {name: "gemini", models: "gemini-1.5-flash, gemini-1.5-pro, gemini-2.0-flash", keyHint: "Gemini API key", keyURL: "https://aistudio.google.com/apikey"},
+		"2": {name: "openai", models: "gpt-4o, gpt-4o-mini, gpt-5, o1", keyHint: "OpenAI API key (starts with sk-)", keyURL: "https://platform.openai.com/api-keys"},
+		"3": {name: "anthropic", models: "claude-sonnet-4-20250514, claude-3.5-haiku-20241022", keyHint: "Anthropic API key (starts with sk-ant-)", keyURL: "https://console.anthropic.com/keys"},
+		"4": {name: "groq", models: "llama-3.3-70b-versatile, mixtral-8x7b-32768, gemma2-9b-it", keyHint: "Groq API key", keyURL: "https://console.groq.com/keys"},
+		"5": {name: "deepseek", models: "deepseek-chat, deepseek-coder, deepseek-reasoner", keyHint: "DeepSeek API key", keyURL: "https://platform.deepseek.com/api_keys"},
+		"6": {name: "openrouter", models: "google/gemini-2.0-flash-exp:free, meta-llama/llama-3-8b-instruct:free", keyHint: "OpenRouter API key", keyURL: "https://openrouter.ai/keys"},
+		"7": {name: "nvidia", models: "meta/llama-3.1-70b-instruct, nvidia/nemotron-4-340b-instruct", keyHint: "NVIDIA API key", keyURL: "https://build.nvidia.com"},
+		"8": {name: "github_copilot", models: "gpt-4o, gpt-4o-mini", keyHint: "GitHub Copilot token", keyURL: "https://github.com/settings/copilot"},
 	}
 
 	switch {
 	case choice == "9":
 		// Ollama
-		cfg.Agents.Defaults.Model = "llama3.2"
-		cfg.Providers.Ollama.APIBase = "http://localhost:11434/v1"
 		fmt.Println("\n✓ Ollama selected. Make sure Ollama is running locally.")
-		fmt.Printf("  Model: llama3.2 (change with: ollama pull <model>)\n")
+		fmt.Println("  Common models: llama3.2, mistral, codellama, phi3")
+		fmt.Print("Model name: ")
+		modelName := ""
+		if scanner.Scan() {
+			modelName = strings.TrimSpace(scanner.Text())
+		}
+		if modelName == "" {
+			modelName = "llama3.2"
+			fmt.Printf("  Using default: %s\n", modelName)
+		}
+		cfg.Agents.Defaults.Model = modelName
+		cfg.Providers.Ollama.APIBase = "http://localhost:11434/v1"
+		fmt.Printf("  Model: %s (install with: ollama pull %s)\n", modelName, modelName)
 
 	case choice == "10":
 		// LM Studio / Custom OpenAI-compatible API
@@ -381,13 +391,10 @@ func onboard() {
 
 	default:
 		if info, ok := providerMap[choice]; ok {
-			cfg.Agents.Defaults.Model = info.model
-
 			if info.name == "github_copilot" {
 				fmt.Println("\n  GitHub Copilot uses your existing subscription.")
 				fmt.Println("  Make sure you're logged in: v1claw auth login")
 				setProviderKey(cfg, info.name, "copilot")
-				fmt.Printf("  Model: %s\n", info.model)
 			} else {
 				fmt.Printf("\nGet your key at: %s\n", info.keyURL)
 				fmt.Printf("Enter your %s: ", info.keyHint)
@@ -403,7 +410,20 @@ func onboard() {
 					setProviderKey(cfg, info.name, apiKey)
 					fmt.Println("\n✓ API key saved.")
 				}
-				fmt.Printf("  Model: %s\n", cfg.Agents.Defaults.Model)
+			}
+
+			// Ask for model name
+			fmt.Printf("\n  Available models: %s\n", info.models)
+			fmt.Print("Model name: ")
+			modelName := ""
+			if scanner.Scan() {
+				modelName = strings.TrimSpace(scanner.Text())
+			}
+			if modelName == "" {
+				fmt.Println("\n⚠ No model entered. You can set it later in:", configPath)
+			} else {
+				cfg.Agents.Defaults.Model = modelName
+				fmt.Printf("  Model: %s\n", modelName)
 			}
 		} else {
 			fmt.Println("\n⚠ Invalid choice. You can configure manually in:", configPath)
