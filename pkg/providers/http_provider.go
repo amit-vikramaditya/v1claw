@@ -125,6 +125,16 @@ func (p *HTTPProvider) Chat(ctx context.Context, messages []Message, tools []Too
 
 // formatAPIError turns raw API error responses into human-readable messages.
 func formatAPIError(statusCode int, body []byte) error {
+	// Try to extract error message from JSON response.
+	// Handles both {"error": {...}} and [{"error": {...}}] (Gemini wraps in array).
+	raw := bytes.TrimSpace(body)
+	if len(raw) > 0 && raw[0] == '[' {
+		var arr []json.RawMessage
+		if err := json.Unmarshal(raw, &arr); err == nil && len(arr) > 0 {
+			raw = arr[0]
+		}
+	}
+
 	var apiErr struct {
 		Error struct {
 			Message string `json:"message"`
@@ -133,29 +143,34 @@ func formatAPIError(statusCode int, body []byte) error {
 		} `json:"error"`
 	}
 
-	if err := json.Unmarshal(body, &apiErr); err == nil && apiErr.Error.Message != "" {
+	if err := json.Unmarshal(raw, &apiErr); err == nil && apiErr.Error.Message != "" {
 		msg := apiErr.Error.Message
+
+		// Strip verbose quota details (lines starting with "* Quota exceeded...")
+		if idx := strings.Index(msg, "\n*"); idx > 0 {
+			msg = strings.TrimSpace(msg[:idx])
+		}
 
 		switch statusCode {
 		case 429:
-			// Extract the core message, drop the verbose details
-			if idx := strings.Index(msg, "\n*"); idx > 0 {
-				msg = msg[:idx]
-			}
-			return fmt.Errorf("Rate limit exceeded (HTTP 429): %s\n\n  This usually means your free tier quota is used up.\n  Wait a few minutes, or check your plan at the provider's dashboard.", msg)
+			return fmt.Errorf("rate limit exceeded: %s\n\n  Your free tier quota is used up. Wait a few minutes, or upgrade your plan.\n  Check usage at your provider's dashboard.", msg)
 		case 401:
-			return fmt.Errorf("Authentication failed (HTTP 401): Your API key is invalid or expired.\n  Check your key in ~/.v1claw/config.json or re-run: v1claw onboard")
+			return fmt.Errorf("invalid API key: Your API key was rejected.\n  Check your key in ~/.v1claw/config.json or re-run: v1claw onboard")
 		case 403:
-			return fmt.Errorf("Access denied (HTTP 403): %s\n  Your API key may not have access to this model.", msg)
+			return fmt.Errorf("access denied: %s\n  Your API key may not have access to this model.", msg)
 		case 404:
-			return fmt.Errorf("Model not found (HTTP 404): %s\n  Check the model name in ~/.v1claw/config.json", msg)
+			return fmt.Errorf("model not found: %s\n  Check the model name in ~/.v1claw/config.json", msg)
 		default:
-			return fmt.Errorf("API error (HTTP %d): %s", statusCode, msg)
+			return fmt.Errorf("API error (%d): %s", statusCode, msg)
 		}
 	}
 
-	// Fallback for non-JSON or unexpected format
-	return fmt.Errorf("API error (HTTP %d): %s", statusCode, string(body))
+	// Fallback: truncate long non-JSON bodies
+	s := string(body)
+	if len(s) > 200 {
+		s = s[:200] + "..."
+	}
+	return fmt.Errorf("API error (%d): %s", statusCode, s)
 }
 
 func (p *HTTPProvider) parseResponse(body []byte) (*LLMResponse, error) {

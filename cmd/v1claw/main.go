@@ -253,16 +253,23 @@ func onboard() {
 
 	fmt.Println("\n🔧 Let's set up your AI provider.")
 	fmt.Println("")
-	fmt.Println("Pick a provider:")
-	fmt.Println("  1. Google Gemini  (free — recommended)")
-	fmt.Println("  2. OpenAI         (GPT-5, GPT-4)")
-	fmt.Println("  3. Anthropic      (Claude)")
-	fmt.Println("  4. Groq           (fast, free tier)")
-	fmt.Println("  5. DeepSeek")
-	fmt.Println("  6. OpenRouter     (100+ models)")
-	fmt.Println("  7. Ollama         (local, no API key)")
-	fmt.Println("  8. LM Studio / Custom API  (OpenAI-compatible)")
-	fmt.Println("  9. Skip           (configure later)")
+	fmt.Println("  Cloud providers:")
+	fmt.Println("    1. Google Gemini    (free tier available — recommended)")
+	fmt.Println("    2. OpenAI           (GPT-5, GPT-4)")
+	fmt.Println("    3. Anthropic        (Claude)")
+	fmt.Println("    4. Groq             (fast inference, free tier)")
+	fmt.Println("    5. DeepSeek         (DeepSeek V3, Coder)")
+	fmt.Println("    6. OpenRouter       (100+ models, single API key)")
+	fmt.Println("    7. NVIDIA NIM       (NVIDIA hosted models)")
+	fmt.Println("    8. GitHub Copilot   (use your Copilot subscription)")
+	fmt.Println("")
+	fmt.Println("  Local / self-hosted:")
+	fmt.Println("    9. Ollama           (run models locally, no API key)")
+	fmt.Println("   10. LM Studio / Custom API  (any OpenAI-compatible server)")
+	fmt.Println("")
+	fmt.Println("  Other:")
+	fmt.Println("   11. Edit config manually  (open in nano/vim)")
+	fmt.Println("   12. Skip                  (configure later)")
 	fmt.Print("\nEnter number [1]: ")
 
 	choice := "1"
@@ -287,10 +294,19 @@ func onboard() {
 		"4": {name: "groq", model: "llama-3.3-70b-versatile", keyHint: "Groq API key", keyURL: "https://console.groq.com/keys"},
 		"5": {name: "deepseek", model: "deepseek-chat", keyHint: "DeepSeek API key", keyURL: "https://platform.deepseek.com/api_keys"},
 		"6": {name: "openrouter", model: "google/gemini-2.0-flash-exp:free", keyHint: "OpenRouter API key", keyURL: "https://openrouter.ai/keys"},
-		"7": {name: "ollama", model: "llama3.2"},
+		"7": {name: "nvidia", model: "meta/llama-3.1-70b-instruct", keyHint: "NVIDIA API key", keyURL: "https://build.nvidia.com"},
+		"8": {name: "github_copilot", model: "gpt-4o", keyHint: "GitHub Copilot token", keyURL: "https://github.com/settings/copilot"},
 	}
 
-	if choice == "8" {
+	switch {
+	case choice == "9":
+		// Ollama
+		cfg.Agents.Defaults.Model = "llama3.2"
+		cfg.Providers.Ollama.APIBase = "http://localhost:11434/v1"
+		fmt.Println("\n✓ Ollama selected. Make sure Ollama is running locally.")
+		fmt.Printf("  Model: llama3.2 (change with: ollama pull <model>)\n")
+
+	case choice == "10":
 		// LM Studio / Custom OpenAI-compatible API
 		fmt.Println("\n  Enter the base URL of your OpenAI-compatible API.")
 		fmt.Println("  Examples:")
@@ -331,34 +347,67 @@ func onboard() {
 		fmt.Println("\n✓ Custom API configured.")
 		fmt.Printf("  Base URL: %s\n", apiBase)
 		fmt.Printf("  Model: %s\n", modelName)
-	} else if info, ok := providerMap[choice]; ok {
-		cfg.Agents.Defaults.Model = info.model
 
-		if info.name == "ollama" {
-			cfg.Providers.Ollama.APIBase = "http://localhost:11434/v1"
-			fmt.Println("\n✓ Ollama selected. Make sure Ollama is running locally.")
-			fmt.Printf("  Model: %s (change with: ollama pull <model>)\n", info.model)
-		} else {
-			fmt.Printf("\nGet your key at: %s\n", info.keyURL)
-			fmt.Printf("Enter your %s: ", info.keyHint)
-
-			apiKey := ""
-			if scanner.Scan() {
-				apiKey = strings.TrimSpace(scanner.Text())
-			}
-
-			if apiKey == "" {
-				fmt.Println("\n⚠ No API key entered. You can add it later in:", configPath)
-			} else {
-				setProviderKey(cfg, info.name, apiKey)
-				fmt.Println("\n✓ API key saved.")
-			}
-			fmt.Printf("  Model: %s\n", cfg.Agents.Defaults.Model)
+	case choice == "11":
+		// Save default config first, then open in editor
+		if err := config.SaveConfig(configPath, cfg); err != nil {
+			fmt.Printf("Error saving config: %v\n", err)
+			os.Exit(1)
 		}
-	} else if choice != "9" {
-		fmt.Println("\n⚠ Invalid choice. You can configure manually in:", configPath)
-	} else {
+		workspace := cfg.WorkspacePath()
+		createWorkspaceTemplates(workspace)
+
+		editor := "nano"
+		if v := os.Getenv("EDITOR"); v != "" {
+			editor = v
+		}
+		fmt.Printf("\nOpening %s in %s...\n", configPath, editor)
+		fmt.Println("  Set your provider API key and model, then save and exit.")
+		cmd := exec.Command(editor, configPath)
+		cmd.Stdin = os.Stdin
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			fmt.Printf("Could not open editor: %v\n", err)
+			fmt.Println("  Edit manually: nano", configPath)
+		}
+		fmt.Printf("\n%s V1 is ready!\n", logo)
+		fmt.Println("\nTry it out:")
+		fmt.Println("  v1claw agent -m \"Hello!\"")
+		return
+
+	case choice == "12":
 		fmt.Println("\n⚠ Skipped. Add your provider and API key in:", configPath)
+
+	default:
+		if info, ok := providerMap[choice]; ok {
+			cfg.Agents.Defaults.Model = info.model
+
+			if info.name == "github_copilot" {
+				fmt.Println("\n  GitHub Copilot uses your existing subscription.")
+				fmt.Println("  Make sure you're logged in: v1claw auth login")
+				setProviderKey(cfg, info.name, "copilot")
+				fmt.Printf("  Model: %s\n", info.model)
+			} else {
+				fmt.Printf("\nGet your key at: %s\n", info.keyURL)
+				fmt.Printf("Enter your %s: ", info.keyHint)
+
+				apiKey := ""
+				if scanner.Scan() {
+					apiKey = strings.TrimSpace(scanner.Text())
+				}
+
+				if apiKey == "" {
+					fmt.Println("\n⚠ No API key entered. You can add it later in:", configPath)
+				} else {
+					setProviderKey(cfg, info.name, apiKey)
+					fmt.Println("\n✓ API key saved.")
+				}
+				fmt.Printf("  Model: %s\n", cfg.Agents.Defaults.Model)
+			}
+		} else {
+			fmt.Println("\n⚠ Invalid choice. You can configure manually in:", configPath)
+		}
 	}
 
 	if err := config.SaveConfig(configPath, cfg); err != nil {
@@ -388,6 +437,10 @@ func setProviderKey(cfg *config.Config, provider, key string) {
 		cfg.Providers.DeepSeek.APIKey = key
 	case "openrouter":
 		cfg.Providers.OpenRouter.APIKey = key
+	case "nvidia":
+		cfg.Providers.Nvidia.APIKey = key
+	case "github_copilot":
+		cfg.Providers.GitHubCopilot.APIKey = key
 	}
 }
 
