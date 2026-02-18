@@ -41,6 +41,7 @@ import (
 	"github.com/amit-vikramaditya/v1claw/pkg/skills"
 	"github.com/amit-vikramaditya/v1claw/pkg/state"
 	"github.com/amit-vikramaditya/v1claw/pkg/tools"
+	"github.com/amit-vikramaditya/v1claw/pkg/vision"
 	"github.com/amit-vikramaditya/v1claw/pkg/voice"
 	"github.com/chzyer/readline"
 )
@@ -642,6 +643,66 @@ func gatewayCmd() {
 		fmt.Println("⚠ Warning: No channels enabled")
 	}
 
+	// Voice I/O Pipeline
+	var voicePipeline *voice.Pipeline
+	if cfg.Voice.Enabled {
+		if transcriber == nil {
+			fmt.Println("⚠ Voice enabled but no Groq API key for transcription — voice input disabled")
+		} else {
+			ttsManager := voice.NewTTSManager()
+			// Register TTS providers based on config.
+			ttsProvider := cfg.Voice.TTSProvider
+			if ttsProvider == "" || ttsProvider == "auto" {
+				// Auto: use OpenAI if key available, else Edge TTS.
+				if cfg.Providers.OpenAI.APIKey != "" {
+					ttsProvider = "openai"
+				} else {
+					ttsProvider = "edge"
+				}
+			}
+			switch ttsProvider {
+			case "openai":
+				if cfg.Providers.OpenAI.APIKey != "" {
+					ttsManager.Register(voice.NewOpenAITTS(voice.OpenAITTSConfig{
+						APIKey: cfg.Providers.OpenAI.APIKey,
+					}))
+				}
+			case "edge":
+				ttsManager.Register(voice.NewEdgeTTS())
+			}
+
+			voiceMode := voice.PipelineMode(cfg.Voice.Mode)
+			if voiceMode == "" {
+				voiceMode = voice.ModeWakeWord
+			}
+			wakeWordPhrases := cfg.Voice.WakeWordPhrases
+			if len(wakeWordPhrases) == 0 {
+				wakeWordPhrases = []string{"hello v1", "hey v1", "hi v1"}
+			}
+
+			voicePipeline = voice.NewPipeline(voice.PipelineConfig{
+				Mode:           voiceMode,
+				RecordDuration: cfg.Voice.RecordDuration,
+				SessionKey:     "voice",
+				WakeWord: voice.WakeWordConfig{
+					Enabled: voiceMode == voice.ModeWakeWord,
+					Phrases: wakeWordPhrases,
+				},
+				Recorder: voice.RecorderConfig{
+					Backend: cfg.Voice.RecorderBackend,
+				},
+				Player: voice.PlayerConfig{
+					Backend: cfg.Voice.PlayerBackend,
+				},
+			}, msgBus, transcriber, ttsManager)
+
+			logger.InfoCF("voice", "Voice pipeline configured", map[string]interface{}{
+				"mode": string(voiceMode), "tts": ttsProvider,
+			})
+			fmt.Printf("✓ Voice pipeline configured (mode: %s, tts: %s)\n", voiceMode, ttsProvider)
+		}
+	}
+
 	fmt.Printf("✓ Gateway started on %s:%d\n", cfg.Gateway.Host, cfg.Gateway.Port)
 	fmt.Println("Press Ctrl+C to stop")
 
@@ -668,6 +729,18 @@ func gatewayCmd() {
 		fmt.Printf("Error starting device service: %v\n", err)
 	} else if cfg.Devices.Enabled {
 		fmt.Println("✓ Device event service started")
+	}
+
+	// Auto-register Termux cameras if running on Android.
+	visionManager := vision.NewManager()
+	if os.Getenv("TERMUX_VERSION") != "" {
+		backCam := vision.NewTermuxCamera(vision.TermuxCameraConfig{CameraID: 0})
+		if backCam.IsAvailable() {
+			visionManager.RegisterCamera(backCam)
+			visionManager.RegisterCamera(vision.NewTermuxCamera(vision.TermuxCameraConfig{CameraID: 1}))
+			logger.InfoC("vision", "Termux cameras registered (back + front)")
+			fmt.Println("✓ Termux cameras registered")
+		}
 	}
 
 	// V1 Event Router
@@ -718,12 +791,24 @@ func gatewayCmd() {
 
 	go agentLoop.Run(ctx)
 
+	// Start voice pipeline after agent loop.
+	if voicePipeline != nil {
+		if err := voicePipeline.Start(ctx); err != nil {
+			fmt.Printf("⚠ Voice pipeline failed to start: %v\n", err)
+		} else {
+			fmt.Println("✓ Voice pipeline started — listening for wake word")
+		}
+	}
+
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt)
 	<-sigChan
 
 	fmt.Println("\nShutting down...")
 	cancel()
+	if voicePipeline != nil {
+		voicePipeline.Stop()
+	}
 	if apiServer != nil {
 		apiServer.Stop()
 	}

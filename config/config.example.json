@@ -143,5 +143,14 @@
   "gateway": {
     "host": "0.0.0.0",
     "port": 18790
+  },
+  "voice": {
+    "enabled": false,
+    "mode": "wake-word",
+    "record_duration": 5,
+    "recorder_backend": "auto",
+    "player_backend": "auto",
+    "tts_provider": "auto",
+    "wake_word_phrases": ["hello v1", "hey v1", "hi v1"]
   }
 }

@@ -52,7 +52,19 @@ type Config struct {
 	Heartbeat HeartbeatConfig `json:"heartbeat"`
 	Devices   DevicesConfig   `json:"devices"`
 	V1API     V1APIConfig     `json:"v1_api"`
+	Voice     VoiceConfig     `json:"voice"`
 	mu        sync.RWMutex
+}
+
+// VoiceConfig configures the voice I/O pipeline.
+type VoiceConfig struct {
+	Enabled        bool   `json:"enabled" env:"V1CLAW_VOICE_ENABLED"`
+	Mode           string `json:"mode" env:"V1CLAW_VOICE_MODE"`                       // "wake-word", "push-to-talk", "always-on"
+	RecordDuration int    `json:"record_duration" env:"V1CLAW_VOICE_RECORD_DURATION"` // Seconds per chunk (default: 5)
+	RecorderBackend string `json:"recorder_backend" env:"V1CLAW_VOICE_RECORDER"`     // "auto", "termux", "system"
+	PlayerBackend  string `json:"player_backend" env:"V1CLAW_VOICE_PLAYER"`           // "auto", "termux", "system"
+	TTSProvider    string `json:"tts_provider" env:"V1CLAW_VOICE_TTS_PROVIDER"`       // "openai", "edge", "auto"
+	WakeWordPhrases []string `json:"wake_word_phrases"`                               // e.g., ["hello v1", "hey v1"]
 }
 
 // V1APIConfig configures the V1 assistant REST/WebSocket API.
