@@ -69,6 +69,7 @@ endif
 ifeq ($(IS_TERMUX),yes)
 	export GOOS=linux
 	export GOTOOLCHAIN=local
+	export CGO_ENABLED=0
 	PLATFORM=linux
 endif
 
