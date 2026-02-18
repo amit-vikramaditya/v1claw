@@ -391,6 +391,9 @@ func onboard() {
 
 	default:
 		if info, ok := providerMap[choice]; ok {
+			// Set the explicit provider so auto-detection isn't needed
+			cfg.Agents.Defaults.Provider = info.name
+
 			if info.name == "github_copilot" {
 				fmt.Println("\n  GitHub Copilot uses your existing subscription.")
 				fmt.Println("  Make sure you're logged in: v1claw auth login")
@@ -418,6 +421,7 @@ func onboard() {
 			modelName := ""
 			if scanner.Scan() {
 				modelName = strings.TrimSpace(scanner.Text())
+				modelName = strings.Trim(modelName, "\"'") // strip accidental quotes
 			}
 			if modelName == "" {
 				fmt.Println("\n⚠ No model entered. You can set it later in:", configPath)
