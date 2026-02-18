@@ -21,13 +21,13 @@ type ChatResponse struct {
 
 // StatusResponse is the response body for GET /api/v1/status.
 type StatusResponse struct {
-	Status              string    `json:"status"`
-	Timestamp           time.Time `json:"timestamp"`
-	EventSources        int       `json:"event_sources"`
-	EventSubscriptions  int       `json:"event_subscriptions"`
-	EventRouterRunning  bool      `json:"event_router_running"`
-	TrackedUsers        int       `json:"tracked_users"`
-	WebSocketClients    int       `json:"websocket_clients"`
+	Status             string    `json:"status"`
+	Timestamp          time.Time `json:"timestamp"`
+	EventSources       int       `json:"event_sources"`
+	EventSubscriptions int       `json:"event_subscriptions"`
+	EventRouterRunning bool      `json:"event_router_running"`
+	TrackedUsers       int       `json:"tracked_users"`
+	WebSocketClients   int       `json:"websocket_clients"`
 }
 
 // UsersResponse is the response body for GET /api/v1/users.
@@ -39,7 +39,7 @@ type UsersResponse struct {
 type EventRequest struct {
 	Kind     string                 `json:"kind"`
 	Source   string                 `json:"source,omitempty"`
-	Priority int                   `json:"priority,omitempty"`
+	Priority int                    `json:"priority,omitempty"`
 	Channel  string                 `json:"channel,omitempty"`
 	ChatID   string                 `json:"chat_id,omitempty"`
 	Payload  map[string]interface{} `json:"payload,omitempty"`

@@ -19,8 +19,8 @@ type mockTTSProvider struct {
 	failErr   error
 }
 
-func (m *mockTTSProvider) Name() string        { return m.name }
-func (m *mockTTSProvider) IsAvailable() bool    { return m.available }
+func (m *mockTTSProvider) Name() string      { return m.name }
+func (m *mockTTSProvider) IsAvailable() bool { return m.available }
 func (m *mockTTSProvider) Synthesize(ctx context.Context, text string, opts TTSOptions) (io.ReadCloser, string, error) {
 	if m.failErr != nil {
 		return nil, "", m.failErr
@@ -104,7 +104,7 @@ func TestWakeWordDetector_BasicDetection(t *testing.T) {
 	}{
 		{"Hello V1, what time is it?", "hello v1", "what time is it?", true},
 		{"hey v1 turn on the lights", "hey v1", "turn on the lights", true},
-		{"Hi V1", "", "Hi V1", false},  // Not in configured phrases
+		{"Hi V1", "", "Hi V1", false}, // Not in configured phrases
 		{"good morning", "", "good morning", false},
 		{"Hello V1", "hello v1", "", true},
 		{"HELLO V1, how are you?", "hello v1", "how are you?", true},

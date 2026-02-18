@@ -29,11 +29,35 @@ func getGlobalConfigDir() string {
 	return filepath.Join(home, ".v1claw")
 }
 
+func dirExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
+}
+
+func resolveBuiltinSkillsDir(workspace string) string {
+	candidates := []string{
+		filepath.Join(workspace, "skills"),
+		filepath.Join(getGlobalConfigDir(), "v1claw", "skills"),
+	}
+
+	if wd, err := os.Getwd(); err == nil {
+		candidates = append(candidates,
+			filepath.Join(wd, "workspace", "skills"),
+			filepath.Join(wd, "cmd", "v1claw", "workspace", "skills"),
+			filepath.Join(wd, "skills"),
+		)
+	}
+
+	for _, candidate := range candidates {
+		if dirExists(candidate) {
+			return candidate
+		}
+	}
+	return ""
+}
+
 func NewContextBuilder(workspace string) *ContextBuilder {
-	// builtin skills: skills directory in current project
-	// Use the skills/ directory under the current working directory
-	wd, _ := os.Getwd()
-	builtinSkillsDir := filepath.Join(wd, "skills")
+	builtinSkillsDir := resolveBuiltinSkillsDir(workspace)
 	globalSkillsDir := filepath.Join(getGlobalConfigDir(), "skills")
 
 	return &ContextBuilder{
@@ -207,10 +231,12 @@ func (cb *ContextBuilder) BuildMessages(history []providers.Message, summary str
 
 	messages = append(messages, history...)
 
-	messages = append(messages, providers.Message{
-		Role:    "user",
-		Content: currentMessage,
-	})
+	if currentMessage != "" {
+		messages = append(messages, providers.Message{
+			Role:    "user",
+			Content: currentMessage,
+		})
+	}
 
 	return messages
 }

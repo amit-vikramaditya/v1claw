@@ -36,8 +36,8 @@ type EmailProvider interface {
 // EmailConfig holds email integration configuration.
 type EmailConfig struct {
 	Enabled      bool   `json:"enabled"`
-	IMAPServer   string `json:"imap_server"`   // e.g., "imap.gmail.com:993"
-	SMTPServer   string `json:"smtp_server"`   // e.g., "smtp.gmail.com:587"
+	IMAPServer   string `json:"imap_server"` // e.g., "imap.gmail.com:993"
+	SMTPServer   string `json:"smtp_server"` // e.g., "smtp.gmail.com:587"
 	Username     string `json:"username"`
 	Password     string `json:"password"`
 	PollInterval int    `json:"poll_interval"` // Minutes between inbox checks

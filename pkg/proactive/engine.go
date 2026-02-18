@@ -15,22 +15,22 @@ import (
 
 // Routine represents a learned user behavior pattern.
 type Routine struct {
-	ID          string        `json:"id"`
-	Name        string        `json:"name"`
-	Description string        `json:"description"`
-	TimeOfDay   string        `json:"time_of_day"`   // "HH:MM" in local time
-	DaysOfWeek  []time.Weekday `json:"days_of_week"` // Empty = every day
-	Action      string        `json:"action"`        // Action to suggest/execute
-	Confidence  float64       `json:"confidence"`    // 0.0-1.0 based on observation count
-	Observations int          `json:"observations"`  // Times this pattern was observed
-	LastTriggered time.Time   `json:"last_triggered"`
-	Enabled     bool          `json:"enabled"`
+	ID            string         `json:"id"`
+	Name          string         `json:"name"`
+	Description   string         `json:"description"`
+	TimeOfDay     string         `json:"time_of_day"`  // "HH:MM" in local time
+	DaysOfWeek    []time.Weekday `json:"days_of_week"` // Empty = every day
+	Action        string         `json:"action"`       // Action to suggest/execute
+	Confidence    float64        `json:"confidence"`   // 0.0-1.0 based on observation count
+	Observations  int            `json:"observations"` // Times this pattern was observed
+	LastTriggered time.Time      `json:"last_triggered"`
+	Enabled       bool           `json:"enabled"`
 }
 
 // Suggestion represents a proactive suggestion V1 can make.
 type Suggestion struct {
 	ID        string    `json:"id"`
-	Type      string    `json:"type"`    // "reminder", "routine", "anomaly", "insight"
+	Type      string    `json:"type"` // "reminder", "routine", "anomaly", "insight"
 	Message   string    `json:"message"`
 	Priority  int       `json:"priority"`
 	ExpiresAt time.Time `json:"expires_at"`

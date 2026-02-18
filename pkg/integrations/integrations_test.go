@@ -39,19 +39,21 @@ func (m *mockCalendar) Create(ctx context.Context, event CalendarEvent) (string,
 	return event.ID, nil
 }
 func (m *mockCalendar) Update(ctx context.Context, event CalendarEvent) error { return nil }
-func (m *mockCalendar) Delete(ctx context.Context, id string) error            { return nil }
+func (m *mockCalendar) Delete(ctx context.Context, id string) error           { return nil }
 
 func TestCalendarManager_Today(t *testing.T) {
 	now := time.Now()
+	startOfToday := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+
 	cal := &mockCalendar{events: []CalendarEvent{
-		{ID: "1", Summary: "Morning standup", Start: now.Add(1 * time.Hour), End: now.Add(2 * time.Hour)},
-		{ID: "2", Summary: "Tomorrow meeting", Start: now.Add(25 * time.Hour), End: now.Add(26 * time.Hour)},
+		{ID: "1", Summary: "Morning standup", Start: startOfToday.Add(9 * time.Hour), End: startOfToday.Add(10 * time.Hour)},
+		{ID: "2", Summary: "Tomorrow meeting", Start: startOfToday.Add(25 * time.Hour), End: startOfToday.Add(26 * time.Hour)},
 	}}
 
 	mgr := NewCalendarManager(CalendarConfig{}, cal)
 	events, err := mgr.Today(context.Background())
 	require.NoError(t, err)
-	assert.Len(t, events, 1)
+	require.Len(t, events, 1)
 	assert.Equal(t, "Morning standup", events[0].Summary)
 }
 
@@ -108,15 +110,15 @@ type mockEmail struct {
 	messages []EmailMessage
 }
 
-func (m *mockEmail) Name() string                                      { return "mock" }
+func (m *mockEmail) Name() string { return "mock" }
 func (m *mockEmail) Fetch(ctx context.Context, limit int) ([]EmailMessage, error) {
 	if limit > len(m.messages) {
 		limit = len(m.messages)
 	}
 	return m.messages[:limit], nil
 }
-func (m *mockEmail) Send(ctx context.Context, msg EmailMessage) error  { return nil }
-func (m *mockEmail) MarkRead(ctx context.Context, id string) error     { return nil }
+func (m *mockEmail) Send(ctx context.Context, msg EmailMessage) error { return nil }
+func (m *mockEmail) MarkRead(ctx context.Context, id string) error    { return nil }
 func (m *mockEmail) UnreadCount(ctx context.Context) (int, error) {
 	count := 0
 	for _, msg := range m.messages {

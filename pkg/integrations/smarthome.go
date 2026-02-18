@@ -8,13 +8,13 @@ import (
 
 // SmartHomeDevice represents an IoT device.
 type SmartHomeDevice struct {
-	ID       string            `json:"id"`
-	Name     string            `json:"name"`
-	Type     string            `json:"type"`  // "light", "switch", "sensor", "thermostat", "lock", "camera"
-	State    string            `json:"state"` // "on", "off", "locked", "unlocked", etc.
-	Area     string            `json:"area,omitempty"`
+	ID       string                 `json:"id"`
+	Name     string                 `json:"name"`
+	Type     string                 `json:"type"`  // "light", "switch", "sensor", "thermostat", "lock", "camera"
+	State    string                 `json:"state"` // "on", "off", "locked", "unlocked", etc.
+	Area     string                 `json:"area,omitempty"`
 	Attrs    map[string]interface{} `json:"attributes,omitempty"`
-	LastSeen time.Time         `json:"last_seen"`
+	LastSeen time.Time              `json:"last_seen"`
 }
 
 // SmartHomeProvider is the interface for smart home backends.
@@ -41,7 +41,7 @@ type SmartHomeConfig struct {
 	HAURL   string `json:"ha_url"`   // e.g., "http://homeassistant.local:8123"
 	HAToken string `json:"ha_token"` // Long-lived access token
 	// MQTT
-	MQTTBroker   string `json:"mqtt_broker"`   // e.g., "tcp://localhost:1883"
+	MQTTBroker   string `json:"mqtt_broker"` // e.g., "tcp://localhost:1883"
 	MQTTUsername string `json:"mqtt_username"`
 	MQTTPassword string `json:"mqtt_password"`
 }

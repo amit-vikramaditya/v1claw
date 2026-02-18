@@ -13,15 +13,16 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"time"
 
-	"github.com/chzyer/readline"
 	"github.com/amit-vikramaditya/v1claw/pkg/agent"
 	"github.com/amit-vikramaditya/v1claw/pkg/api"
 	"github.com/amit-vikramaditya/v1claw/pkg/auth"
@@ -41,6 +42,7 @@ import (
 	"github.com/amit-vikramaditya/v1claw/pkg/state"
 	"github.com/amit-vikramaditya/v1claw/pkg/tools"
 	"github.com/amit-vikramaditya/v1claw/pkg/voice"
+	"github.com/chzyer/readline"
 )
 
 //go:generate cp -r ../../workspace .
@@ -164,7 +166,7 @@ func main() {
 		// 获取全局配置目录和内置 skills 目录
 		globalDir := filepath.Dir(getConfigPath())
 		globalSkillsDir := filepath.Join(globalDir, "skills")
-		builtinSkillsDir := filepath.Join(globalDir, "v1claw", "skills")
+		builtinSkillsDir := detectBuiltinSkillsDir(workspace)
 		skillsLoader := skills.NewSkillsLoader(workspace, globalSkillsDir, builtinSkillsDir)
 
 		switch subcommand {
@@ -181,7 +183,7 @@ func main() {
 		case "install-builtin":
 			skillsInstallBuiltinCmd(workspace)
 		case "list-builtin":
-			skillsListBuiltinCmd()
+			skillsListBuiltinCmd(workspace)
 		case "search":
 			skillsSearchCmd(installer)
 		case "show":
@@ -537,6 +539,11 @@ func gatewayCmd() {
 		os.Exit(1)
 	}
 
+	if err := validateGatewaySecurity(cfg); err != nil {
+		fmt.Printf("Security configuration error: %v\n", err)
+		os.Exit(1)
+	}
+
 	provider, err := providers.CreateProvider(cfg)
 	if err != nil {
 		fmt.Printf("Error creating provider: %v\n", err)
@@ -731,6 +738,69 @@ func gatewayCmd() {
 	agentLoop.Stop()
 	channelManager.StopAll(ctx)
 	fmt.Println("✓ Gateway stopped")
+}
+
+func isPublicHost(host string) bool {
+	host = strings.TrimSpace(host)
+	if host == "" || host == "localhost" {
+		return false
+	}
+	if host == "0.0.0.0" || host == "::" || host == "[::]" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return true
+	}
+	return !ip.IsLoopback()
+}
+
+func enabledChannelsWithoutAllowlist(cfg *config.Config) []string {
+	type channelRule struct {
+		name      string
+		enabled   bool
+		allowList []string
+	}
+
+	rules := []channelRule{
+		{name: "telegram", enabled: cfg.Channels.Telegram.Enabled, allowList: cfg.Channels.Telegram.AllowFrom},
+		{name: "whatsapp", enabled: cfg.Channels.WhatsApp.Enabled, allowList: cfg.Channels.WhatsApp.AllowFrom},
+		{name: "feishu", enabled: cfg.Channels.Feishu.Enabled, allowList: cfg.Channels.Feishu.AllowFrom},
+		{name: "discord", enabled: cfg.Channels.Discord.Enabled, allowList: cfg.Channels.Discord.AllowFrom},
+		{name: "maixcam", enabled: cfg.Channels.MaixCam.Enabled, allowList: cfg.Channels.MaixCam.AllowFrom},
+		{name: "qq", enabled: cfg.Channels.QQ.Enabled, allowList: cfg.Channels.QQ.AllowFrom},
+		{name: "dingtalk", enabled: cfg.Channels.DingTalk.Enabled, allowList: cfg.Channels.DingTalk.AllowFrom},
+		{name: "slack", enabled: cfg.Channels.Slack.Enabled, allowList: cfg.Channels.Slack.AllowFrom},
+		{name: "line", enabled: cfg.Channels.LINE.Enabled, allowList: cfg.Channels.LINE.AllowFrom},
+		{name: "onebot", enabled: cfg.Channels.OneBot.Enabled, allowList: cfg.Channels.OneBot.AllowFrom},
+	}
+
+	var insecure []string
+	for _, rule := range rules {
+		if rule.enabled && len(rule.allowList) == 0 {
+			insecure = append(insecure, rule.name)
+		}
+	}
+	sort.Strings(insecure)
+	return insecure
+}
+
+func validateGatewaySecurity(cfg *config.Config) error {
+	if cfg.V1API.Enabled && strings.TrimSpace(cfg.V1API.APIKey) == "" {
+		return fmt.Errorf("v1_api.api_key is required when v1_api.enabled=true")
+	}
+
+	if isPublicHost(cfg.Gateway.Host) {
+		if !cfg.Agents.Defaults.RestrictToWorkspace {
+			return fmt.Errorf("agents.defaults.restrict_to_workspace must be true for public gateway host %q", cfg.Gateway.Host)
+		}
+
+		if insecureChannels := enabledChannelsWithoutAllowlist(cfg); len(insecureChannels) > 0 {
+			return fmt.Errorf("public gateway host %q requires allow_from for enabled channels: %s", cfg.Gateway.Host, strings.Join(insecureChannels, ", "))
+		}
+	}
+
+	return nil
 }
 
 func statusCmd() {
@@ -1337,49 +1407,117 @@ func skillsRemoveCmd(installer *skills.SkillInstaller, skillName string) {
 	fmt.Printf("✓ Skill '%s' removed successfully!\n", skillName)
 }
 
-func skillsInstallBuiltinCmd(workspace string) {
-	builtinSkillsDir := "./v1claw/skills"
-	workspaceSkillsDir := filepath.Join(workspace, "skills")
-
-	fmt.Printf("Copying builtin skills to workspace...\n")
-
-	skillsToInstall := []string{
-		"weather",
-		"news",
-		"stock",
-		"calculator",
+func detectBuiltinSkillsDir(workspace string) string {
+	candidates := []string{
+		filepath.Join(workspace, "skills"),
+		filepath.Join(filepath.Dir(getConfigPath()), "v1claw", "skills"),
+		filepath.Join(".", "workspace", "skills"),
+		filepath.Join(".", "cmd", "v1claw", "workspace", "skills"),
+		filepath.Join(".", "skills"),
 	}
 
-	for _, skillName := range skillsToInstall {
-		builtinPath := filepath.Join(builtinSkillsDir, skillName)
-		workspacePath := filepath.Join(workspaceSkillsDir, skillName)
+	seen := make(map[string]struct{}, len(candidates))
+	for _, candidate := range candidates {
+		clean := filepath.Clean(candidate)
+		if _, ok := seen[clean]; ok {
+			continue
+		}
+		seen[clean] = struct{}{}
 
-		if _, err := os.Stat(builtinPath); err != nil {
-			fmt.Printf("⊘ Builtin skill '%s' not found: %v\n", skillName, err)
+		if info, err := os.Stat(clean); err == nil && info.IsDir() {
+			return clean
+		}
+	}
+
+	return ""
+}
+
+func readSkillDescription(skillFile string) string {
+	data, err := os.ReadFile(skillFile)
+	if err != nil {
+		return "No description"
+	}
+
+	lines := strings.Split(string(data), "\n")
+	if len(lines) < 3 || strings.TrimSpace(lines[0]) != "---" {
+		return "No description"
+	}
+
+	for i := 1; i < len(lines); i++ {
+		line := strings.TrimSpace(lines[i])
+		if line == "---" {
+			break
+		}
+		if strings.HasPrefix(line, "description:") {
+			desc := strings.TrimSpace(strings.TrimPrefix(line, "description:"))
+			desc = strings.Trim(desc, "\"'")
+			if desc != "" {
+				return desc
+			}
+		}
+	}
+
+	return "No description"
+}
+
+func skillsInstallBuiltinCmd(workspace string) {
+	builtinSkillsDir := detectBuiltinSkillsDir(workspace)
+	if builtinSkillsDir == "" {
+		fmt.Println("✗ No builtin skills directory found.")
+		fmt.Println("  Run `v1claw onboard` first, or execute from the source repository.")
+		return
+	}
+
+	workspaceSkillsDir := filepath.Join(workspace, "skills")
+	builtinAbs, _ := filepath.Abs(builtinSkillsDir)
+	workspaceAbs, _ := filepath.Abs(workspaceSkillsDir)
+	if builtinAbs == workspaceAbs {
+		fmt.Println("✓ Builtin skills are already present in your workspace.")
+		return
+	}
+
+	fmt.Printf("Copying builtin skills from %s to workspace...\n", builtinSkillsDir)
+
+	entries, err := os.ReadDir(builtinSkillsDir)
+	if err != nil {
+		fmt.Printf("✗ Failed to read builtin skills directory: %v\n", err)
+		return
+	}
+
+	copied := 0
+	for _, entry := range entries {
+		if !entry.IsDir() {
 			continue
 		}
 
+		skillName := entry.Name()
+		builtinPath := filepath.Join(builtinSkillsDir, skillName)
+		skillFile := filepath.Join(builtinPath, "SKILL.md")
+		if _, err := os.Stat(skillFile); err != nil {
+			continue
+		}
+
+		workspacePath := filepath.Join(workspaceSkillsDir, skillName)
 		if err := os.MkdirAll(workspacePath, 0755); err != nil {
 			fmt.Printf("✗ Failed to create directory for %s: %v\n", skillName, err)
 			continue
 		}
-
 		if err := copyDirectory(builtinPath, workspacePath); err != nil {
 			fmt.Printf("✗ Failed to copy %s: %v\n", skillName, err)
+			continue
 		}
+		copied++
 	}
 
-	fmt.Println("\n✓ All builtin skills installed!")
-	fmt.Println("Now you can use them in your workspace.")
+	fmt.Printf("\n✓ Installed %d builtin skill(s)\n", copied)
 }
 
-func skillsListBuiltinCmd() {
-	cfg, err := loadConfig()
-	if err != nil {
-		fmt.Printf("Error loading config: %v\n", err)
+func skillsListBuiltinCmd(workspace string) {
+	builtinSkillsDir := detectBuiltinSkillsDir(workspace)
+	if builtinSkillsDir == "" {
+		fmt.Println("No builtin skills directory found.")
 		return
 	}
-	builtinSkillsDir := filepath.Join(filepath.Dir(cfg.WorkspacePath()), "v1claw", "skills")
 
 	fmt.Println("\nAvailable Builtin Skills:")
 	fmt.Println("-----------------------")
@@ -1400,22 +1538,7 @@ func skillsListBuiltinCmd() {
 			skillName := entry.Name()
 			skillFile := filepath.Join(builtinSkillsDir, skillName, "SKILL.md")
 
-			description := "No description"
-			if _, err := os.Stat(skillFile); err == nil {
-				data, err := os.ReadFile(skillFile)
-				if err == nil {
-					content := string(data)
-					if idx := strings.Index(content, "\n"); idx > 0 {
-						firstLine := content[:idx]
-						if strings.Contains(firstLine, "description:") {
-							descLine := strings.Index(content[idx:], "\n")
-							if descLine > 0 {
-								description = strings.TrimSpace(content[idx+descLine : idx+descLine])
-							}
-						}
-					}
-				}
-			}
+			description := readSkillDescription(skillFile)
 			status := "✓"
 			fmt.Printf("  %s  %s\n", status, entry.Name())
 			if description != "" {

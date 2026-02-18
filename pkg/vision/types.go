@@ -8,7 +8,7 @@ import (
 
 // ImageSource identifies where an image came from.
 type ImageSource struct {
-	Type     string `json:"type"`      // "camera", "screenshot", "file", "url"
+	Type     string `json:"type"` // "camera", "screenshot", "file", "url"
 	DeviceID string `json:"device_id,omitempty"`
 	Path     string `json:"path,omitempty"`
 	URL      string `json:"url,omitempty"`
@@ -28,9 +28,9 @@ type AnalysisResult struct {
 
 // DetectedObject represents a detected object in an image.
 type DetectedObject struct {
-	Label      string  `json:"label"`
-	Confidence float64 `json:"confidence"`
-	BoundingBox *BBox  `json:"bounding_box,omitempty"`
+	Label       string  `json:"label"`
+	Confidence  float64 `json:"confidence"`
+	BoundingBox *BBox   `json:"bounding_box,omitempty"`
 }
 
 // BBox is a bounding box for object detection.

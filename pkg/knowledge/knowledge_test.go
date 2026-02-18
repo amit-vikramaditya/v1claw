@@ -3,6 +3,8 @@ package knowledge
 import (
 	"context"
 	"math"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -14,8 +16,8 @@ type mockEmbedder struct {
 	dims int
 }
 
-func (m *mockEmbedder) Name() string       { return "mock" }
-func (m *mockEmbedder) Dimensions() int     { return m.dims }
+func (m *mockEmbedder) Name() string    { return "mock" }
+func (m *mockEmbedder) Dimensions() int { return m.dims }
 func (m *mockEmbedder) Embed(ctx context.Context, text string) ([]float64, error) {
 	results, err := m.EmbedBatch(ctx, []string{text})
 	if err != nil {
@@ -192,6 +194,30 @@ func TestOpenAIEmbedder_Defaults(t *testing.T) {
 func TestOpenAIEmbedder_CustomDims(t *testing.T) {
 	e := NewOpenAIEmbedder(OpenAIEmbedderConfig{Dimensions: 384})
 	assert.Equal(t, 384, e.Dimensions())
+}
+
+func TestOpenAIEmbedder_EmptyBatch(t *testing.T) {
+	e := NewOpenAIEmbedder(OpenAIEmbedderConfig{})
+	embeddings, err := e.EmbedBatch(context.Background(), nil)
+	require.NoError(t, err)
+	assert.Len(t, embeddings, 0)
+}
+
+func TestOpenAIEmbedder_EmptyVectorError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[{"embedding":[],"index":0}]}`))
+	}))
+	defer server.Close()
+
+	e := NewOpenAIEmbedder(OpenAIEmbedderConfig{
+		APIBase: server.URL,
+		Model:   "test-model",
+	})
+
+	_, err := e.EmbedBatch(context.Background(), []string{"hello"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "empty vector")
 }
 
 func TestCosineSimilarity_ZeroVector(t *testing.T) {

@@ -1,6 +1,8 @@
 package logger
 
 import (
+	"path/filepath"
+	"sync"
 	"testing"
 )
 
@@ -136,4 +138,56 @@ func TestLoggerHelperFunctions(t *testing.T) {
 	SetLevel(DEBUG)
 	DebugC("test", "Debug with component")
 	WarnF("Warning with fields", map[string]interface{}{"key": "value"})
+}
+
+func TestLoggerConcurrentSetLevelAndLogging(t *testing.T) {
+	initialLevel := GetLevel()
+	defer SetLevel(initialLevel)
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	go func() {
+		defer wg.Done()
+		levels := []LogLevel{DEBUG, INFO, WARN, ERROR}
+		for i := 0; i < 1000; i++ {
+			SetLevel(levels[i%len(levels)])
+		}
+	}()
+
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 1000; i++ {
+			Debug("debug")
+			Info("info")
+			Warn("warn")
+		}
+	}()
+
+	wg.Wait()
+}
+
+func TestLoggerConcurrentFileToggleAndLogging(t *testing.T) {
+	logPath := filepath.Join(t.TempDir(), "logger.log")
+	defer DisableFileLogging()
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 50; i++ {
+			_ = EnableFileLogging(logPath)
+			DisableFileLogging()
+		}
+	}()
+
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 200; i++ {
+			Info("file-log-test")
+		}
+	}()
+
+	wg.Wait()
 }

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -145,6 +146,44 @@ func TestChatEndpoint_WrongMethod(t *testing.T) {
 	assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
 }
 
+func TestWSChat_UsesNonNilContext(t *testing.T) {
+	srv, _ := newTestServer(t)
+
+	ctxErrCh := make(chan error, 1)
+	srv.SetChatHandler(func(ctx context.Context, msg, sess string) (string, error) {
+		if ctx == nil {
+			ctxErrCh <- fmt.Errorf("nil context")
+			return "", nil
+		}
+		if _, ok := ctx.Deadline(); !ok {
+			ctxErrCh <- fmt.Errorf("missing deadline")
+			return "", nil
+		}
+		ctxErrCh <- nil
+		return "ok", nil
+	})
+
+	client := &wsClient{
+		id:   "test_ws",
+		send: make(chan []byte, 2),
+	}
+
+	srv.handleWSChat(client, WSMessage{
+		Type: "chat",
+		Data: map[string]interface{}{
+			"message":     "hello",
+			"session_key": "ws:test",
+		},
+	})
+
+	select {
+	case err := <-ctxErrCh:
+		require.NoError(t, err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for websocket handler invocation")
+	}
+}
+
 func TestUsersEndpoint(t *testing.T) {
 	srv, stateMgr := newTestServer(t)
 	stateMgr.SetUserState("telegram:alice", "telegram", "111", "alice")
@@ -249,6 +288,22 @@ func TestAuthMiddleware_QueryParam(t *testing.T) {
 	handler(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
+}
+
+func TestWebSocketOriginPolicy(t *testing.T) {
+	sameOriginReq := httptest.NewRequest(http.MethodGet, "http://example.com/api/v1/ws", nil)
+	sameOriginReq.Host = "example.com"
+	sameOriginReq.Header.Set("Origin", "http://example.com")
+	assert.True(t, upgrader.CheckOrigin(sameOriginReq))
+
+	crossOriginReq := httptest.NewRequest(http.MethodGet, "http://example.com/api/v1/ws", nil)
+	crossOriginReq.Host = "example.com"
+	crossOriginReq.Header.Set("Origin", "http://evil.example")
+	assert.False(t, upgrader.CheckOrigin(crossOriginReq))
+
+	noOriginReq := httptest.NewRequest(http.MethodGet, "http://example.com/api/v1/ws", nil)
+	noOriginReq.Host = "example.com"
+	assert.True(t, upgrader.CheckOrigin(noOriginReq))
 }
 
 func TestNewServer_DefaultAddr(t *testing.T) {

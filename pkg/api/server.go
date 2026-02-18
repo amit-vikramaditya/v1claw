@@ -18,14 +18,14 @@ import (
 
 // Server provides HTTP and WebSocket API endpoints for V1Claw.
 type Server struct {
-	mu         sync.RWMutex
-	addr       string
-	apiKey     string
-	msgBus     *bus.MessageBus
-	router     *events.Router
-	stateMgr   *state.Manager
-	httpServer *http.Server
-	wsClients  map[string]*wsClient
+	mu          sync.RWMutex
+	addr        string
+	apiKey      string
+	msgBus      *bus.MessageBus
+	router      *events.Router
+	stateMgr    *state.Manager
+	httpServer  *http.Server
+	wsClients   map[string]*wsClient
 	chatHandler ChatHandler
 }
 

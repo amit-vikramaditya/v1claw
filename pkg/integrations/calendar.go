@@ -39,8 +39,8 @@ type CalendarProvider interface {
 // CalendarConfig holds calendar integration configuration.
 type CalendarConfig struct {
 	Enabled     bool   `json:"enabled"`
-	Provider    string `json:"provider"`     // "caldav", "google", "ical"
-	URL         string `json:"url"`          // CalDAV URL or iCal feed URL
+	Provider    string `json:"provider"` // "caldav", "google", "ical"
+	URL         string `json:"url"`      // CalDAV URL or iCal feed URL
 	Username    string `json:"username"`
 	Password    string `json:"password"`
 	CalendarID  string `json:"calendar_id"`  // Specific calendar

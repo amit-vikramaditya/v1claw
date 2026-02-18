@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/amit-vikramaditya/v1claw/pkg/logger"
+	"github.com/google/uuid"
 )
 
 // IsAudioFile checks if a file is an audio file based on its filename extension and content type.

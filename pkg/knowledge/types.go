@@ -22,16 +22,16 @@ type EmbeddingProvider interface {
 type Document struct {
 	ID        string            `json:"id"`
 	Content   string            `json:"content"`
-	Source    string            `json:"source"`    // e.g., "file:/path", "chat:session", "url:..."
+	Source    string            `json:"source"` // e.g., "file:/path", "chat:session", "url:..."
 	Metadata  map[string]string `json:"metadata,omitempty"`
 	Embedding []float64         `json:"embedding,omitempty"`
 }
 
 // SearchResult is a document with similarity score.
 type SearchResult struct {
-	Document   Document `json:"document"`
-	Score      float64  `json:"score"` // 0.0 to 1.0 (cosine similarity)
-	Rank       int      `json:"rank"`
+	Document Document `json:"document"`
+	Score    float64  `json:"score"` // 0.0 to 1.0 (cosine similarity)
+	Rank     int      `json:"rank"`
 }
 
 // ChunkOptions controls how documents are split.

@@ -121,14 +121,20 @@ func TestEngine_DetectPatterns_BelowThreshold(t *testing.T) {
 func TestEngine_Suggestions(t *testing.T) {
 	e := newTestEngine(t)
 
-	var received Suggestion
+	receivedCh := make(chan Suggestion, 1)
 	e.SetHandler(func(ctx context.Context, s Suggestion) {
-		received = s
+		receivedCh <- s
 	})
 
 	e.Suggest("reminder", "You have a meeting in 15 minutes", 1, 30*time.Minute)
 
-	time.Sleep(50 * time.Millisecond) // Handler runs in goroutine
+	var received Suggestion
+	select {
+	case received = <-receivedCh:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for suggestion callback")
+	}
+
 	assert.Equal(t, "reminder", received.Type)
 	assert.Contains(t, received.Message, "meeting")
 

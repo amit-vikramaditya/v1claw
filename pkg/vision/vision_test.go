@@ -17,8 +17,8 @@ type mockVisionProvider struct {
 	err       error
 }
 
-func (m *mockVisionProvider) Name() string        { return m.name }
-func (m *mockVisionProvider) IsAvailable() bool    { return m.available }
+func (m *mockVisionProvider) Name() string      { return m.name }
+func (m *mockVisionProvider) IsAvailable() bool { return m.available }
 func (m *mockVisionProvider) Analyze(ctx context.Context, data []byte, mime, prompt string) (*AnalysisResult, error) {
 	if m.err != nil {
 		return nil, m.err

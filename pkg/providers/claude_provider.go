@@ -5,9 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/amit-vikramaditya/v1claw/pkg/auth"
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
-	"github.com/amit-vikramaditya/v1claw/pkg/auth"
 )
 
 type ClaudeProvider struct {

@@ -3,6 +3,7 @@ package events
 import (
 	"context"
 	"fmt"
+	"sync/atomic"
 	"time"
 )
 
@@ -127,6 +128,6 @@ func FilterByPriority(maxPriority int) EventFilter {
 var eventCounter uint64
 
 func generateEventID() string {
-	eventCounter++
-	return fmt.Sprintf("evt_%d_%d", time.Now().UnixNano(), eventCounter)
+	counter := atomic.AddUint64(&eventCounter, 1)
+	return fmt.Sprintf("evt_%d_%d", time.Now().UnixNano(), counter)
 }

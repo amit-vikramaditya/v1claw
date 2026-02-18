@@ -32,10 +32,10 @@ var upgrader = websocket.Upgrader{
 }
 
 type wsClient struct {
-	id       string
-	conn     *websocket.Conn
-	send     chan []byte
-	mu       sync.Mutex
+	id        string
+	conn      *websocket.Conn
+	send      chan []byte
+	mu        sync.Mutex
 	closeOnce sync.Once
 }
 

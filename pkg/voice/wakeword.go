@@ -17,10 +17,10 @@ type WakeWordHandler func(ctx context.Context, phrase string, confidence float64
 // For hardware wake word detection (Porcupine, OpenWakeWord), a separate
 // adapter can be plugged in via the WakeWordEngine interface.
 type WakeWordDetector struct {
-	phrases   []string
-	handler   WakeWordHandler
-	cooldown  time.Duration
-	lastWake  time.Time
+	phrases  []string
+	handler  WakeWordHandler
+	cooldown time.Duration
+	lastWake time.Time
 }
 
 // WakeWordConfig configures the wake word detector.

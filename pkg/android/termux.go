@@ -148,12 +148,12 @@ func (t *TermuxAPI) Torch(ctx context.Context, on bool) error {
 
 // WifiInfo holds WiFi connection details.
 type WifiInfo struct {
-	BSSID       string `json:"bssid"`
-	FrequencyMHz int   `json:"frequency_mhz"`
-	IP          string `json:"ip"`
-	LinkSpeedMbps int  `json:"link_speed_mbps"`
-	RSSI        int    `json:"rssi"`
-	SSID        string `json:"ssid"`
+	BSSID         string `json:"bssid"`
+	FrequencyMHz  int    `json:"frequency_mhz"`
+	IP            string `json:"ip"`
+	LinkSpeedMbps int    `json:"link_speed_mbps"`
+	RSSI          int    `json:"rssi"`
+	SSID          string `json:"ssid"`
 }
 
 // GetWifiInfo returns current WiFi connection info.

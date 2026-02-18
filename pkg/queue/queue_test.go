@@ -215,6 +215,57 @@ func TestStartStop(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 }
 
+func TestStopSignalsStopChannel(t *testing.T) {
+	q := newTestQueue(t)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	q.Start(ctx, time.Hour)
+	q.Stop()
+
+	select {
+	case <-q.stopCh:
+		// stop signal delivered
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("stop channel was not signaled")
+	}
+}
+
+func TestStartAfterStop_RecreatesStopChannel(t *testing.T) {
+	q := newTestQueue(t)
+
+	ctx1, cancel1 := context.WithCancel(context.Background())
+	q.Start(ctx1, time.Hour)
+	firstStopCh := q.stopCh
+	q.Stop()
+	cancel1()
+
+	select {
+	case <-firstStopCh:
+		// expected closed
+	default:
+		t.Fatal("first stop channel should be closed after Stop")
+	}
+
+	ctx2, cancel2 := context.WithCancel(context.Background())
+	defer cancel2()
+
+	q.Start(ctx2, time.Millisecond)
+	secondStopCh := q.stopCh
+	if firstStopCh == secondStopCh {
+		t.Fatal("start should recreate a fresh stop channel")
+	}
+
+	select {
+	case <-secondStopCh:
+		t.Fatal("new stop channel must be open while queue is running")
+	default:
+	}
+
+	q.Stop()
+}
+
 func TestNoHandler(t *testing.T) {
 	q := newTestQueue(t)
 

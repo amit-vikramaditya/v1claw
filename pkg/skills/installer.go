@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 )
 
@@ -125,7 +124,10 @@ func (si *SkillInstaller) ListAvailableSkills(ctx context.Context) ([]AvailableS
 }
 
 func (si *SkillInstaller) ListBuiltinSkills() []BuiltinSkill {
-	builtinSkillsDir := filepath.Join(filepath.Dir(si.workspace), "v1claw", "skills")
+	builtinSkillsDir := filepath.Join(si.workspace, "skills")
+	if info, err := os.Stat(builtinSkillsDir); err != nil || !info.IsDir() {
+		builtinSkillsDir = filepath.Join(filepath.Dir(si.workspace), "v1claw", "skills")
+	}
 
 	entries, err := os.ReadDir(builtinSkillsDir)
 	if err != nil {
@@ -134,38 +136,20 @@ func (si *SkillInstaller) ListBuiltinSkills() []BuiltinSkill {
 
 	var skills []BuiltinSkill
 	for _, entry := range entries {
-		if entry.IsDir() {
-			_ = entry
-			skillName := entry.Name()
-			skillFile := filepath.Join(builtinSkillsDir, skillName, "SKILL.md")
-
-			data, err := os.ReadFile(skillFile)
-			description := ""
-			if err == nil {
-				content := string(data)
-				if idx := strings.Index(content, "\n"); idx > 0 {
-					firstLine := content[:idx]
-					if strings.Contains(firstLine, "description:") {
-						descLine := strings.Index(content[idx:], "\n")
-						if descLine > 0 {
-							description = strings.TrimSpace(content[idx+descLine : idx+descLine])
-						}
-					}
-				}
-			}
-
-			// skill := BuiltinSkill{
-			// 	Name:    skillName,
-			// 	Path:    description,
-			// 	Enabled: true,
-			// }
-
-			status := "✓"
-			fmt.Printf("  %s  %s\n", status, entry.Name())
-			if description != "" {
-				fmt.Printf("    %s\n", description)
-			}
+		if !entry.IsDir() {
+			continue
 		}
+		skillName := entry.Name()
+		skillFile := filepath.Join(builtinSkillsDir, skillName, "SKILL.md")
+		if _, err := os.Stat(skillFile); err != nil {
+			continue
+		}
+
+		skills = append(skills, BuiltinSkill{
+			Name:    skillName,
+			Path:    filepath.Join(builtinSkillsDir, skillName),
+			Enabled: true,
+		})
 	}
 	return skills
 }

@@ -51,9 +51,9 @@ func TestLocation_Struct(t *testing.T) {
 
 func TestWifiInfo_Struct(t *testing.T) {
 	info := WifiInfo{
-		SSID:         "HomeNetwork",
-		IP:           "192.168.1.100",
-		RSSI:         -50,
+		SSID:          "HomeNetwork",
+		IP:            "192.168.1.100",
+		RSSI:          -50,
 		LinkSpeedMbps: 100,
 	}
 	assert.Equal(t, "HomeNetwork", info.SSID)

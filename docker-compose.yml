@@ -11,8 +11,8 @@ services:
     profiles:
       - agent
     volumes:
-      - ./config/config.json:/root/.v1claw/config.json:ro
-      - v1claw-workspace:/root/.v1claw/workspace
+      - ./config/config.json:/home/v1claw/.v1claw/config.json:ro
+      - v1claw-workspace:/home/v1claw/.v1claw/workspace
     entrypoint: ["v1claw", "agent"]
     stdin_open: true
     tty: true
@@ -31,9 +31,9 @@ services:
       - gateway
     volumes:
       # Configuration file
-      - ./config/config.json:/root/.v1claw/config.json:ro
+      - ./config/config.json:/home/v1claw/.v1claw/config.json:ro
       # Persistent workspace (sessions, memory, logs)
-      - v1claw-workspace:/root/.v1claw/workspace
+      - v1claw-workspace:/home/v1claw/.v1claw/workspace
     command: ["gateway"]
 
 volumes:

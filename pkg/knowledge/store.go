@@ -18,10 +18,10 @@ import (
 // external dependencies like SQLite vector extensions or separate
 // vector databases.
 type Store struct {
-	mu        sync.RWMutex
-	path      string
-	docs      []Document
-	embedder  EmbeddingProvider
+	mu       sync.RWMutex
+	path     string
+	docs     []Document
+	embedder EmbeddingProvider
 }
 
 // NewStore creates a new knowledge store at the given directory.

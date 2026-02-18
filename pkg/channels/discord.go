@@ -7,12 +7,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/bwmarrin/discordgo"
 	"github.com/amit-vikramaditya/v1claw/pkg/bus"
 	"github.com/amit-vikramaditya/v1claw/pkg/config"
 	"github.com/amit-vikramaditya/v1claw/pkg/logger"
 	"github.com/amit-vikramaditya/v1claw/pkg/utils"
 	"github.com/amit-vikramaditya/v1claw/pkg/voice"
+	"github.com/bwmarrin/discordgo"
 )
 
 const (

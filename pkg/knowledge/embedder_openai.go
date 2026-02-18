@@ -25,9 +25,9 @@ type OpenAIEmbedder struct {
 // OpenAIEmbedderConfig configures the OpenAI embeddings provider.
 type OpenAIEmbedderConfig struct {
 	APIKey     string `json:"api_key"`
-	APIBase    string `json:"api_base"`    // Default: "https://api.openai.com/v1"
-	Model      string `json:"model"`       // Default: "text-embedding-3-small"
-	Dimensions int    `json:"dimensions"`  // Default: 1536
+	APIBase    string `json:"api_base"`   // Default: "https://api.openai.com/v1"
+	Model      string `json:"model"`      // Default: "text-embedding-3-small"
+	Dimensions int    `json:"dimensions"` // Default: 1536
 }
 
 // NewOpenAIEmbedder creates a new OpenAI-compatible embedding provider.
@@ -52,8 +52,8 @@ func NewOpenAIEmbedder(cfg OpenAIEmbedderConfig) *OpenAIEmbedder {
 	}
 }
 
-func (e *OpenAIEmbedder) Name() string       { return "openai" }
-func (e *OpenAIEmbedder) Dimensions() int     { return e.dims }
+func (e *OpenAIEmbedder) Name() string    { return "openai" }
+func (e *OpenAIEmbedder) Dimensions() int { return e.dims }
 
 func (e *OpenAIEmbedder) Embed(ctx context.Context, text string) ([]float64, error) {
 	results, err := e.EmbedBatch(ctx, []string{text})
@@ -64,6 +64,10 @@ func (e *OpenAIEmbedder) Embed(ctx context.Context, text string) ([]float64, err
 }
 
 func (e *OpenAIEmbedder) EmbedBatch(ctx context.Context, texts []string) ([][]float64, error) {
+	if len(texts) == 0 {
+		return [][]float64{}, nil
+	}
+
 	reqBody := map[string]interface{}{
 		"model": e.model,
 		"input": texts,
@@ -113,6 +117,12 @@ func (e *OpenAIEmbedder) EmbedBatch(ctx context.Context, texts []string) ([][]fl
 	for _, d := range result.Data {
 		if d.Index < len(embeddings) {
 			embeddings[d.Index] = d.Embedding
+		}
+	}
+
+	for i, embedding := range embeddings {
+		if len(embedding) == 0 {
+			return nil, fmt.Errorf("embeddings API returned empty vector at index %d", i)
 		}
 	}
 

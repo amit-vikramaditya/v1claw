@@ -36,11 +36,11 @@ func DefaultTTSOptions() TTSOptions {
 
 // TTSConfig holds TTS configuration.
 type TTSConfig struct {
-	Enabled    bool   `json:"enabled"`
-	Provider   string `json:"provider"`   // "edge", "openai", "piper"
-	Voice      string `json:"voice"`      // Default voice
-	Speed      float64 `json:"speed"`
-	CacheDir   string `json:"cache_dir"`  // Cache synthesized audio
+	Enabled  bool    `json:"enabled"`
+	Provider string  `json:"provider"` // "edge", "openai", "piper"
+	Voice    string  `json:"voice"`    // Default voice
+	Speed    float64 `json:"speed"`
+	CacheDir string  `json:"cache_dir"` // Cache synthesized audio
 }
 
 // TTSManager manages TTS providers with fallback.

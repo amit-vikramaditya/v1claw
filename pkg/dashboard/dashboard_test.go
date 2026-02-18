@@ -50,11 +50,11 @@ func TestHandleStatus(t *testing.T) {
 	srv := NewServer(Config{})
 	srv.SetStatusProvider(func() StatusData {
 		return StatusData{
-			Status:         "running",
-			TrackedUsers:   5,
-			EventSources:   3,
-			PendingJobs:    2,
-			KnowledgeDocs:  100,
+			Status:        "running",
+			TrackedUsers:  5,
+			EventSources:  3,
+			PendingJobs:   2,
+			KnowledgeDocs: 100,
 		}
 	})
 
@@ -64,8 +64,8 @@ func TestHandleStatus(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, w.Code)
 	body := w.Body.String()
-	assert.Contains(t, body, "5")  // TrackedUsers
-	assert.Contains(t, body, "3")  // EventSources
+	assert.Contains(t, body, "5") // TrackedUsers
+	assert.Contains(t, body, "3") // EventSources
 }
 
 func TestHandleStatus_NoProvider(t *testing.T) {
