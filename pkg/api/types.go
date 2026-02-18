@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/amit-vikramaditya/v1claw/pkg/state"
+	devsync "github.com/amit-vikramaditya/v1claw/pkg/sync"
 )
 
 // ChatRequest is the request body for POST /api/v1/chat.
@@ -28,6 +29,7 @@ type StatusResponse struct {
 	EventRouterRunning bool      `json:"event_router_running"`
 	TrackedUsers       int       `json:"tracked_users"`
 	WebSocketClients   int       `json:"websocket_clients"`
+	RegisteredDevices  int       `json:"registered_devices"`
 }
 
 // UsersResponse is the response body for GET /api/v1/users.
@@ -55,4 +57,38 @@ type WSMessage struct {
 	Type      string      `json:"type"`
 	Data      interface{} `json:"data,omitempty"`
 	Timestamp time.Time   `json:"timestamp"`
+}
+
+// DeviceRegisterRequest is the request body for POST /api/v1/devices.
+type DeviceRegisterRequest struct {
+	ID           string                     `json:"id"`
+	Name         string                     `json:"name"`
+	Host         string                     `json:"host"`
+	Port         int                        `json:"port,omitempty"`
+	Platform     string                     `json:"platform"`
+	Capabilities []devsync.DeviceCapability `json:"capabilities,omitempty"`
+	Location     string                     `json:"location,omitempty"`
+	Version      string                     `json:"version,omitempty"`
+	WSClientID   string                     `json:"ws_client_id,omitempty"`
+}
+
+// DevicesResponse is the response body for GET /api/v1/devices.
+type DevicesResponse struct {
+	Devices []devsync.DeviceInfo `json:"devices"`
+}
+
+// CapabilityRequest is sent via WebSocket to ask a client device to perform an action.
+type CapabilityRequest struct {
+	RequestID  string                   `json:"request_id"`
+	Capability devsync.DeviceCapability `json:"capability"`
+	Action     string                   `json:"action"`
+	Params     map[string]interface{}   `json:"params,omitempty"`
+}
+
+// CapabilityResponse is sent back by a client device with the result.
+type CapabilityResponse struct {
+	RequestID string      `json:"request_id"`
+	Success   bool        `json:"success"`
+	Data      interface{} `json:"data,omitempty"`
+	Error     string      `json:"error,omitempty"`
 }

@@ -10,12 +10,15 @@ import (
 	"bufio"
 	"context"
 	"embed"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"io"
 	"io/fs"
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"runtime"
@@ -42,10 +45,12 @@ import (
 	"github.com/amit-vikramaditya/v1claw/pkg/queue"
 	"github.com/amit-vikramaditya/v1claw/pkg/skills"
 	"github.com/amit-vikramaditya/v1claw/pkg/state"
+	devsync "github.com/amit-vikramaditya/v1claw/pkg/sync"
 	"github.com/amit-vikramaditya/v1claw/pkg/tools"
 	"github.com/amit-vikramaditya/v1claw/pkg/vision"
 	"github.com/amit-vikramaditya/v1claw/pkg/voice"
 	"github.com/chzyer/readline"
+	"github.com/gorilla/websocket"
 )
 
 //go:generate cp -r ../../workspace .
@@ -140,6 +145,8 @@ func main() {
 		onboard()
 	case "agent":
 		agentCmd()
+	case "client":
+		clientCmd()
 	case "gateway":
 		gatewayCmd()
 	case "status":
@@ -215,6 +222,7 @@ func printHelp() {
 	fmt.Println("Commands:")
 	fmt.Println("  onboard     Initialize v1claw configuration and workspace")
 	fmt.Println("  agent       Interact with the agent directly")
+	fmt.Println("  client      Connect to a remote V1Claw gateway")
 	fmt.Println("  auth        Manage authentication (login, logout, status)")
 	fmt.Println("  gateway     Start V1 gateway")
 	fmt.Println("  status      Show V1 status")
@@ -525,6 +533,487 @@ func simpleInteractiveMode(agentLoop *agent.AgentLoop, sessionKey string) {
 	}
 }
 
+func clientCmd() {
+	server := ""
+	apiKey := ""
+	deviceName := ""
+	message := ""
+
+	args := os.Args[2:]
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--server", "-s":
+			if i+1 < len(args) {
+				server = args[i+1]
+				i++
+			}
+		case "--api-key", "-k":
+			if i+1 < len(args) {
+				apiKey = args[i+1]
+				i++
+			}
+		case "--name", "-n":
+			if i+1 < len(args) {
+				deviceName = args[i+1]
+				i++
+			}
+		case "--debug", "-d":
+			logger.SetLevel(logger.DEBUG)
+			fmt.Println("🔍 Debug mode enabled")
+		case "-m", "--message":
+			if i+1 < len(args) {
+				message = args[i+1]
+				i++
+			}
+		}
+	}
+
+	if server == "" {
+		fmt.Println("Usage: v1claw client --server <host:port> [options]")
+		fmt.Println()
+		fmt.Println("Options:")
+		fmt.Println("  --server, -s    Gateway address (required, e.g., 192.168.1.10:18791)")
+		fmt.Println("  --api-key, -k   API key for authentication")
+		fmt.Println("  --name, -n      Device name (defaults to hostname)")
+		fmt.Println("  --message, -m   Send a single message and exit")
+		fmt.Println("  --debug, -d     Enable debug logging")
+		fmt.Println()
+		fmt.Println("Examples:")
+		fmt.Println("  v1claw client --server mypc.tail1234.ts.net:18791")
+		fmt.Println("  v1claw client --server 100.91.10.18:18791 --api-key mykey")
+		fmt.Println("  v1claw client -s 192.168.1.10:18791 -m \"Hello from my phone\"")
+		os.Exit(1)
+	}
+
+	if deviceName == "" {
+		deviceName, _ = os.Hostname()
+	}
+
+	// Detect local capabilities.
+	capabilities := detectCapabilities()
+
+	deviceID := fmt.Sprintf("%s-%s-%s", deviceName, runtime.GOOS, runtime.GOARCH)
+
+	fmt.Printf("%s Connecting to gateway at %s...\n", logo, server)
+
+	// Build WebSocket URL.
+	wsURL := fmt.Sprintf("ws://%s/api/v1/ws", server)
+	if apiKey != "" {
+		wsURL += "?api_key=" + apiKey
+	}
+
+	header := http.Header{}
+	if apiKey != "" {
+		header.Set("Authorization", "Bearer "+apiKey)
+	}
+
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, header)
+	if err != nil {
+		fmt.Printf("Error connecting to gateway: %v\n", err)
+		fmt.Println("\nTroubleshooting:")
+		fmt.Println("  - Is the gateway running? (v1claw gateway)")
+		fmt.Println("  - Is v1_api enabled in config? (\"v1_api\": {\"enabled\": true})")
+		fmt.Println("  - Is the address correct?")
+		fmt.Println("  - Check firewall / Tailscale connectivity")
+		os.Exit(1)
+	}
+	defer conn.Close()
+
+	// Read welcome message to get client ID.
+	var welcomeMsg struct {
+		Type string                 `json:"type"`
+		Data map[string]interface{} `json:"data"`
+	}
+	if err := conn.ReadJSON(&welcomeMsg); err != nil {
+		fmt.Printf("Error reading welcome: %v\n", err)
+		os.Exit(1)
+	}
+	wsClientID := ""
+	if welcomeMsg.Data != nil {
+		if cid, ok := welcomeMsg.Data["client_id"].(string); ok {
+			wsClientID = cid
+		}
+	}
+
+	fmt.Printf("%s Connected! (client: %s)\n", logo, wsClientID)
+
+	// Register this device with the gateway.
+	registerURL := fmt.Sprintf("http://%s/api/v1/devices", server)
+	regBody := map[string]interface{}{
+		"id":           deviceID,
+		"name":         deviceName,
+		"host":         getOutboundIP(),
+		"platform":     runtime.GOOS,
+		"capabilities": capabilities,
+		"version":      version,
+		"ws_client_id": wsClientID,
+	}
+	regData, _ := json.Marshal(regBody)
+
+	regReq, _ := http.NewRequest("POST", registerURL, strings.NewReader(string(regData)))
+	regReq.Header.Set("Content-Type", "application/json")
+	if apiKey != "" {
+		regReq.Header.Set("Authorization", "Bearer "+apiKey)
+	}
+	regResp, err := http.DefaultClient.Do(regReq)
+	if err != nil {
+		fmt.Printf("⚠ Could not register device: %v\n", err)
+	} else {
+		regResp.Body.Close()
+		if len(capabilities) > 0 {
+			fmt.Printf("✓ Device registered as %s (capabilities: %v)\n", deviceID, capabilities)
+		} else {
+			fmt.Printf("✓ Device registered as %s\n", deviceID)
+		}
+	}
+
+	// Start background goroutine to handle incoming messages (including capability requests).
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	responseCh := make(chan string, 16)
+
+	go clientReadPump(ctx, conn, responseCh, capabilities)
+
+	// Send periodic heartbeats.
+	go func() {
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				msg := map[string]interface{}{"type": "ping", "timestamp": time.Now()}
+				data, _ := json.Marshal(msg)
+				conn.WriteMessage(websocket.TextMessage, data)
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+
+	if message != "" {
+		// One-shot mode.
+		sendChat(conn, message, "client:"+deviceID)
+		select {
+		case resp := <-responseCh:
+			fmt.Printf("\n%s %s\n", logo, resp)
+		case <-time.After(120 * time.Second):
+			fmt.Println("Timeout waiting for response")
+		}
+	} else {
+		// Interactive mode.
+		fmt.Printf("%s Interactive mode (Ctrl+C to exit)\n\n", logo)
+		clientInteractiveMode(conn, responseCh, deviceID)
+	}
+
+	// Deregister on exit.
+	deregURL := fmt.Sprintf("http://%s/api/v1/devices/%s", server, deviceID)
+	deregReq, _ := http.NewRequest("DELETE", deregURL, nil)
+	if apiKey != "" {
+		deregReq.Header.Set("Authorization", "Bearer "+apiKey)
+	}
+	http.DefaultClient.Do(deregReq)
+	fmt.Println("\n✓ Disconnected from gateway")
+}
+
+func clientReadPump(ctx context.Context, conn *websocket.Conn, responseCh chan<- string, capabilities []string) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+
+		_, message, err := conn.ReadMessage()
+		if err != nil {
+			if !websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
+				logger.DebugC("client", fmt.Sprintf("Read error: %v", err))
+			}
+			return
+		}
+
+		var msg struct {
+			Type string          `json:"type"`
+			Data json.RawMessage `json:"data"`
+		}
+		if err := json.Unmarshal(message, &msg); err != nil {
+			continue
+		}
+
+		switch msg.Type {
+		case "chat_response":
+			var resp struct {
+				Response string `json:"response"`
+			}
+			if err := json.Unmarshal(msg.Data, &resp); err == nil {
+				select {
+				case responseCh <- resp.Response:
+				default:
+				}
+			}
+
+		case "capability_request":
+			// Handle capability requests from the gateway.
+			var req struct {
+				RequestID  string                 `json:"request_id"`
+				Capability string                 `json:"capability"`
+				Action     string                 `json:"action"`
+				Params     map[string]interface{} `json:"params"`
+			}
+			if err := json.Unmarshal(msg.Data, &req); err != nil {
+				continue
+			}
+			go handleCapabilityRequest(conn, req.RequestID, req.Capability, req.Action, req.Params)
+
+		case "pong":
+			// Heartbeat acknowledged.
+
+		case "error":
+			var errMsg string
+			json.Unmarshal(msg.Data, &errMsg)
+			fmt.Printf("\n⚠ Server error: %s\n", errMsg)
+		}
+	}
+}
+
+func handleCapabilityRequest(conn *websocket.Conn, requestID, capability, action string, params map[string]interface{}) {
+	logger.InfoCF("client", "Capability request received", map[string]interface{}{
+		"request_id": requestID, "capability": capability, "action": action,
+	})
+
+	var result interface{}
+	var capErr string
+
+	switch capability {
+	case "camera":
+		result, capErr = executeLocalCapability("camera", action, params)
+	case "microphone":
+		result, capErr = executeLocalCapability("microphone", action, params)
+	case "screen":
+		result, capErr = executeLocalCapability("screen", action, params)
+	default:
+		capErr = fmt.Sprintf("unsupported capability: %s", capability)
+	}
+
+	resp := map[string]interface{}{
+		"type": "capability_response",
+		"data": map[string]interface{}{
+			"request_id": requestID,
+			"success":    capErr == "",
+			"data":       result,
+			"error":      capErr,
+		},
+		"timestamp": time.Now(),
+	}
+	data, _ := json.Marshal(resp)
+	conn.WriteMessage(websocket.TextMessage, data)
+}
+
+func executeLocalCapability(capability, action string, params map[string]interface{}) (interface{}, string) {
+	// Check if we're on Termux (Android).
+	isTermux := false
+	if _, err := os.Stat("/data/data/com.termux"); err == nil {
+		isTermux = true
+	}
+
+	switch capability {
+	case "camera":
+		if isTermux {
+			outFile := filepath.Join(os.TempDir(), fmt.Sprintf("v1claw_cap_%d.jpg", time.Now().UnixNano()))
+			cmd := fmt.Sprintf("termux-camera-photo -c 0 %s", outFile)
+			output, err := execCommand(cmd)
+			if err != nil {
+				return nil, fmt.Sprintf("camera capture failed: %v (%s)", err, output)
+			}
+			imgData, err := os.ReadFile(outFile)
+			os.Remove(outFile)
+			if err != nil {
+				return nil, fmt.Sprintf("failed to read capture: %v", err)
+			}
+			return map[string]interface{}{
+				"format": "jpeg",
+				"base64": base64Encode(imgData),
+			}, ""
+		}
+		return nil, "camera not available on this platform without Termux"
+
+	case "microphone":
+		if isTermux {
+			outFile := filepath.Join(os.TempDir(), fmt.Sprintf("v1claw_mic_%d.wav", time.Now().UnixNano()))
+			duration := "5"
+			if d, ok := params["duration"].(string); ok {
+				duration = d
+			}
+			cmd := fmt.Sprintf("termux-microphone-record -f %s -l %s", outFile, duration)
+			if _, err := execCommand(cmd); err != nil {
+				return nil, fmt.Sprintf("mic record failed: %v", err)
+			}
+			time.Sleep(time.Duration(5) * time.Second)
+			execCommand("termux-microphone-record -q")
+			audioData, err := os.ReadFile(outFile)
+			os.Remove(outFile)
+			if err != nil {
+				return nil, fmt.Sprintf("failed to read recording: %v", err)
+			}
+			return map[string]interface{}{
+				"format": "wav",
+				"base64": base64Encode(audioData),
+			}, ""
+		}
+		return nil, "microphone not available on this platform without Termux"
+
+	case "screen":
+		if isTermux {
+			outFile := filepath.Join(os.TempDir(), fmt.Sprintf("v1claw_screen_%d.png", time.Now().UnixNano()))
+			cmd := fmt.Sprintf("termux-screenshot %s", outFile)
+			if _, err := execCommand(cmd); err != nil {
+				return nil, fmt.Sprintf("screenshot failed: %v", err)
+			}
+			imgData, err := os.ReadFile(outFile)
+			os.Remove(outFile)
+			if err != nil {
+				return nil, fmt.Sprintf("failed to read screenshot: %v", err)
+			}
+			return map[string]interface{}{
+				"format": "png",
+				"base64": base64Encode(imgData),
+			}, ""
+		}
+		return nil, "screen capture not available on this platform"
+	}
+
+	return nil, fmt.Sprintf("unknown capability: %s", capability)
+}
+
+func execCommand(cmd string) (string, error) {
+	out, err := exec.Command("sh", "-c", cmd).CombinedOutput()
+	return string(out), err
+}
+
+func base64Encode(data []byte) string {
+	return base64.StdEncoding.EncodeToString(data)
+}
+
+func sendChat(conn *websocket.Conn, message, sessionKey string) {
+	msg := map[string]interface{}{
+		"type": "chat",
+		"data": map[string]interface{}{
+			"message":     message,
+			"session_key": sessionKey,
+		},
+		"timestamp": time.Now(),
+	}
+	data, _ := json.Marshal(msg)
+	conn.WriteMessage(websocket.TextMessage, data)
+}
+
+func clientInteractiveMode(conn *websocket.Conn, responseCh <-chan string, deviceID string) {
+	prompt := fmt.Sprintf("%s You: ", logo)
+	sessionKey := "client:" + deviceID
+
+	rl, err := readline.NewEx(&readline.Config{
+		Prompt:          prompt,
+		HistoryFile:     filepath.Join(os.TempDir(), ".v1claw_client_history"),
+		HistoryLimit:    100,
+		InterruptPrompt: "^C",
+		EOFPrompt:       "exit",
+	})
+
+	if err != nil {
+		fmt.Printf("Error initializing readline: %v\n", err)
+		return
+	}
+	defer rl.Close()
+
+	for {
+		line, err := rl.Readline()
+		if err != nil {
+			if err == readline.ErrInterrupt || err == io.EOF {
+				return
+			}
+			continue
+		}
+
+		input := strings.TrimSpace(line)
+		if input == "" {
+			continue
+		}
+		if input == "exit" || input == "quit" {
+			return
+		}
+
+		sendChat(conn, input, sessionKey)
+
+		select {
+		case resp := <-responseCh:
+			fmt.Printf("\n%s %s\n\n", logo, resp)
+		case <-time.After(120 * time.Second):
+			fmt.Println("\n⚠ Timeout waiting for response")
+		}
+	}
+}
+
+func detectCapabilities() []string {
+	var caps []string
+
+	// Check if on Termux (Android) with hardware access.
+	isTermux := false
+	if _, err := os.Stat("/data/data/com.termux"); err == nil {
+		isTermux = true
+	}
+
+	if isTermux {
+		// Check for termux-api commands.
+		if _, err := exec.LookPath("termux-camera-photo"); err == nil {
+			caps = append(caps, "camera")
+		}
+		if _, err := exec.LookPath("termux-microphone-record"); err == nil {
+			caps = append(caps, "microphone")
+		}
+		if _, err := exec.LookPath("termux-media-player"); err == nil {
+			caps = append(caps, "speaker")
+		}
+		if _, err := exec.LookPath("termux-screenshot"); err == nil {
+			caps = append(caps, "screen")
+		}
+	} else {
+		// Desktop detection.
+		if _, err := exec.LookPath("ffmpeg"); err == nil {
+			caps = append(caps, "camera")
+			caps = append(caps, "microphone")
+		}
+		if _, err := exec.LookPath("arecord"); err == nil {
+			caps = append(caps, "microphone")
+		}
+		if runtime.GOOS == "darwin" {
+			// macOS always has screen capture via screencapture.
+			caps = append(caps, "screen")
+			caps = append(caps, "speaker")
+		}
+	}
+
+	// Deduplicate.
+	seen := make(map[string]bool)
+	var unique []string
+	for _, c := range caps {
+		if !seen[c] {
+			seen[c] = true
+			unique = append(unique, c)
+		}
+	}
+	return unique
+}
+
+func getOutboundIP() string {
+	conn, err := net.Dial("udp", "8.8.8.8:80")
+	if err != nil {
+		return "unknown"
+	}
+	defer conn.Close()
+	localAddr := conn.LocalAddr().(*net.UDPAddr)
+	return localAddr.IP.String()
+}
+
 func gatewayCmd() {
 	// Check for --debug flag
 	args := os.Args[2:]
@@ -786,13 +1275,42 @@ func gatewayCmd() {
 		fmt.Println("✓ V1 job queue started")
 	}
 
+	// Device Registry
+	hostname, _ := os.Hostname()
+	selfDevice := devsync.DeviceInfo{
+		ID:       hostname,
+		Name:     hostname,
+		Host:     cfg.Gateway.Host,
+		Port:     cfg.Gateway.Port,
+		Platform: runtime.GOOS,
+		Version:  version,
+	}
+	registry := devsync.NewRegistry(selfDevice)
+
+	// Prune stale devices periodically.
+	go func() {
+		ticker := time.NewTicker(60 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				if pruned := registry.PruneStale(3 * time.Minute); pruned > 0 {
+					logger.InfoCF("sync", "Pruned stale devices", map[string]interface{}{"count": pruned})
+				}
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+	fmt.Printf("✓ Device registry started (self: %s/%s)\n", selfDevice.ID, selfDevice.Platform)
+
 	// V1 API Server
 	var apiServer *api.Server
 	if cfg.V1API.Enabled {
 		apiServer = api.NewServer(api.Config{
 			Addr:   cfg.V1API.Addr,
 			APIKey: cfg.V1API.APIKey,
-		}, msgBus, eventRouter, stateManager)
+		}, msgBus, eventRouter, stateManager, registry)
 
 		apiServer.SetChatHandler(func(ctx context.Context, message, sessionKey string) (string, error) {
 			return agentLoop.ProcessDirectWithChannel(ctx, message, sessionKey, "api", sessionKey)

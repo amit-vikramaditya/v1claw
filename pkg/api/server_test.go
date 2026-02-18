@@ -22,7 +22,7 @@ func newTestServer(t *testing.T) (*Server, *state.Manager) {
 	stateMgr := state.NewManager(tmpDir)
 	router := events.NewRouter()
 
-	srv := NewServer(Config{Addr: ":0"}, nil, router, stateMgr)
+	srv := NewServer(Config{Addr: ":0"}, nil, router, stateMgr, nil)
 	return srv, stateMgr
 }
 
@@ -307,12 +307,12 @@ func TestWebSocketOriginPolicy(t *testing.T) {
 }
 
 func TestNewServer_DefaultAddr(t *testing.T) {
-	srv := NewServer(Config{}, nil, nil, nil)
+	srv := NewServer(Config{}, nil, nil, nil, nil)
 	assert.Equal(t, ":18791", srv.addr)
 }
 
 func TestNewServer_CustomAddr(t *testing.T) {
-	srv := NewServer(Config{Addr: ":9090"}, nil, nil, nil)
+	srv := NewServer(Config{Addr: ":9090"}, nil, nil, nil, nil)
 	assert.Equal(t, ":9090", srv.addr)
 }
 

@@ -14,6 +14,7 @@ import (
 	"github.com/amit-vikramaditya/v1claw/pkg/events"
 	"github.com/amit-vikramaditya/v1claw/pkg/logger"
 	"github.com/amit-vikramaditya/v1claw/pkg/state"
+	devsync "github.com/amit-vikramaditya/v1claw/pkg/sync"
 )
 
 // Server provides HTTP and WebSocket API endpoints for V1Claw.
@@ -24,6 +25,7 @@ type Server struct {
 	msgBus      *bus.MessageBus
 	router      *events.Router
 	stateMgr    *state.Manager
+	registry    *devsync.Registry
 	httpServer  *http.Server
 	wsClients   map[string]*wsClient
 	chatHandler ChatHandler
@@ -41,7 +43,7 @@ type Config struct {
 }
 
 // NewServer creates a new API server.
-func NewServer(cfg Config, msgBus *bus.MessageBus, router *events.Router, stateMgr *state.Manager) *Server {
+func NewServer(cfg Config, msgBus *bus.MessageBus, router *events.Router, stateMgr *state.Manager, registry *devsync.Registry) *Server {
 	if cfg.Addr == "" {
 		cfg.Addr = ":18791"
 	}
@@ -51,6 +53,7 @@ func NewServer(cfg Config, msgBus *bus.MessageBus, router *events.Router, stateM
 		msgBus:    msgBus,
 		router:    router,
 		stateMgr:  stateMgr,
+		registry:  registry,
 		wsClients: make(map[string]*wsClient),
 	}
 }
@@ -72,6 +75,10 @@ func (s *Server) Start(ctx context.Context) error {
 	mux.HandleFunc("/api/v1/users", s.authMiddleware(s.handleUsers))
 	mux.HandleFunc("/api/v1/events", s.authMiddleware(s.handleEvents))
 	mux.HandleFunc("/api/v1/ws", s.authMiddleware(s.handleWebSocket))
+
+	// Device registration routes
+	mux.HandleFunc("/api/v1/devices", s.authMiddleware(s.handleDevices))
+	mux.HandleFunc("/api/v1/devices/", s.authMiddleware(s.handleDeviceByID))
 
 	// Health endpoints (no auth)
 	mux.HandleFunc("/health", s.handleHealth)
@@ -222,6 +229,10 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	status.WebSocketClients = len(s.wsClients)
 	s.mu.RUnlock()
 
+	if s.registry != nil {
+		status.RegisteredDevices = s.registry.Count()
+	}
+
 	writeJSON(w, http.StatusOK, status)
 }
 
@@ -298,6 +309,107 @@ func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
 	} else {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"status": "not ready"})
 	}
+}
+
+// --- Device Registration Handlers ---
+
+func (s *Server) handleDevices(w http.ResponseWriter, r *http.Request) {
+	if s.registry == nil {
+		writeJSON(w, http.StatusServiceUnavailable, ErrorResponse{Error: "device registry not configured"})
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		// GET /api/v1/devices — list all devices
+		capFilter := r.URL.Query().Get("capability")
+		var devices []devsync.DeviceInfo
+		if capFilter != "" {
+			devices = s.registry.WithCapability(devsync.DeviceCapability(capFilter))
+		} else {
+			devices = s.registry.All()
+		}
+		writeJSON(w, http.StatusOK, DevicesResponse{Devices: devices})
+
+	case http.MethodPost:
+		// POST /api/v1/devices — register a device
+		var req DeviceRegisterRequest
+		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSON(w, http.StatusBadRequest, ErrorResponse{Error: "invalid request body"})
+			return
+		}
+		if req.ID == "" || req.Name == "" {
+			writeJSON(w, http.StatusBadRequest, ErrorResponse{Error: "id and name are required"})
+			return
+		}
+
+		device := devsync.DeviceInfo{
+			ID:           req.ID,
+			Name:         req.Name,
+			Host:         req.Host,
+			Port:         req.Port,
+			Platform:     req.Platform,
+			Capabilities: req.Capabilities,
+			Location:     req.Location,
+			Version:      req.Version,
+		}
+		s.registry.Register(device)
+
+		// Associate WS client ID with device ID for capability routing.
+		if req.WSClientID != "" {
+			s.mu.Lock()
+			if client, ok := s.wsClients[req.WSClientID]; ok {
+				client.deviceID = req.ID
+			}
+			s.mu.Unlock()
+		}
+
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"status":  "registered",
+			"device":  device.ID,
+			"devices": s.registry.Count(),
+		})
+
+	default:
+		writeJSON(w, http.StatusMethodNotAllowed, ErrorResponse{Error: "method not allowed"})
+	}
+}
+
+func (s *Server) handleDeviceByID(w http.ResponseWriter, r *http.Request) {
+	if s.registry == nil {
+		writeJSON(w, http.StatusServiceUnavailable, ErrorResponse{Error: "device registry not configured"})
+		return
+	}
+
+	// Extract device ID from path: /api/v1/devices/{id}
+	deviceID := strings.TrimPrefix(r.URL.Path, "/api/v1/devices/")
+	if deviceID == "" {
+		writeJSON(w, http.StatusBadRequest, ErrorResponse{Error: "device ID is required"})
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		device := s.registry.Get(deviceID)
+		if device == nil {
+			writeJSON(w, http.StatusNotFound, ErrorResponse{Error: "device not found"})
+			return
+		}
+		writeJSON(w, http.StatusOK, device)
+
+	case http.MethodDelete:
+		s.registry.Unregister(deviceID)
+		writeJSON(w, http.StatusOK, map[string]string{"status": "unregistered", "device": deviceID})
+
+	default:
+		writeJSON(w, http.StatusMethodNotAllowed, ErrorResponse{Error: "method not allowed"})
+	}
+}
+
+// Registry returns the device registry (used by client mode).
+func (s *Server) Registry() *devsync.Registry {
+	return s.registry
 }
 
 // --- Helpers ---

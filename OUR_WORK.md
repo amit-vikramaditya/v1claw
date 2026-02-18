@@ -115,12 +115,48 @@ Ran 7 parallel adversarial audit agents examining every source file. Found 43 vu
 - Contributing section inviting developers
 
 ### Phase 8: Termux Build Fixes
-**Commits**: `3e3b2e5`, `45ed612`
+**Commits**: `3e3b2e5`, `45ed612`, `2a4a041`, `e2f9da6`, `7c8cacb`
 
 - Termux reports `GOOS=android` but Go has no `android/arm64` toolchain
-- Makefile auto-detects Termux via `/data/data/com.termux`
-- Sets `GOOS=linux` and `GOTOOLCHAIN=local` automatically
+- Makefile auto-detects Termux via `/data/data/com.termux` and `$TERMUX_VERSION`
+- Sets `GOTOOLCHAIN=local` and `CGO_ENABLED=0` automatically
+- Kept `GOOS=android` for native binary compatibility (Linux ELF rejected by Termux linker)
+- Lowered go directive to 1.25.6 for Android/Termux compatibility
 - `make build` now works out-of-the-box on Termux
+
+### Phase 9: Multi-Device Architecture (One Brain, Many Bodies)
+**Core feature**: Any user with multiple devices can run one gateway (brain) and connect clients from other devices. Each client shares its hardware capabilities (camera, mic, screen) with the brain.
+
+#### 9a. Device Registration API
+- Wired `pkg/sync/registry.go` into the API server
+- Added `POST /api/v1/devices` — register a device with ID, name, platform, capabilities
+- Added `GET /api/v1/devices` — list all registered devices (with optional `?capability=` filter)
+- Added `GET /api/v1/devices/{id}` — get a specific device
+- Added `DELETE /api/v1/devices/{id}` — unregister a device
+- Registry created in gateway startup with self-device info
+- Background goroutine prunes stale devices every 60 seconds
+- Status endpoint now includes `registered_devices` count
+
+#### 9b. Client Mode Command
+- Added `v1claw client --server <host:port>` subcommand
+- Connects to remote gateway via WebSocket (`/api/v1/ws`)
+- Auto-detects local hardware capabilities:
+  - Termux: `termux-camera-photo`, `termux-microphone-record`, `termux-media-player`, `termux-screenshot`
+  - Desktop: `ffmpeg`, `arecord`, macOS `screencapture`
+- Registers device with gateway on connect, deregisters on disconnect
+- Interactive REPL mode with readline history
+- One-shot mode: `v1claw client -s host:port -m "Hello"`
+- Periodic heartbeat via WebSocket ping (every 30s)
+- Full help text with examples
+
+#### 9c. Capability Routing
+- Added `capability_request` / `capability_response` WebSocket message types
+- Gateway can send capability requests to connected client devices
+- Client handles requests locally (camera capture, mic record, screenshot)
+- `RequestCapability(ctx, deviceID, req)` — sends request to device, waits for response with timeout
+- `FindDeviceForCapability(cap)` — finds best connected device for a capability
+- WebSocket clients track associated device ID for routing
+- Device marked offline automatically when WebSocket disconnects
 
 ---
 
@@ -139,20 +175,34 @@ Ran 7 parallel adversarial audit agents examining every source file. Found 43 vu
 | 9 | `9d623ba` | docs: rewrite README with beginner-friendly per-platform setup guides |
 | 10 | `3e3b2e5` | fix: Makefile auto-detects Termux and sets GOOS=linux |
 | 11 | `45ed612` | fix: add GOTOOLCHAIN=local for Termux builds |
+| 12 | `2a4a041` | fix: lower go directive to 1.25.6 for Android/Termux compatibility |
+| 13 | `e2f9da6` | fix: disable CGO on Termux to avoid missing clang compiler |
+| 14 | `7c8cacb` | fix: keep GOOS=android on Termux for native binary compatibility |
+| 15 | *(pending)* | feat: multi-device architecture — client mode, device registration, capability routing |
 
 ---
 
-## 📱 Current Status: Android Deployment In Progress
+## 📱 Current Status: Multi-Device Ready
 
-**Where we left off**: Building V1Claw directly on Android/Termux phone.
+All Phase B features are implemented. V1Claw now supports:
 
-The Makefile Termux fixes have been pushed. User needs to:
-1. `cd V1Claw && git pull`
-2. `make build`
-3. `./build/v1claw-linux-arm64 onboard`
-4. Edit `~/.v1claw/config.json` — add Gemini API key
-5. `./build/v1claw-linux-arm64 agent -m "Hello!"`
-6. Screenshot the result for Twitter/LinkedIn post
+1. **Standalone mode** — `v1claw agent` or `v1claw gateway` on any single device
+2. **Multi-device mode** — run `v1claw gateway` on one machine, connect from others with `v1claw client`
+3. **Capability sharing** — phone's camera/mic available to desktop's brain via WebSocket routing
+
+### To test multi-device:
+
+**On the server (Mac/Linux/desktop):**
+```bash
+# Enable the API in config.json:
+# "v1_api": {"enabled": true, "addr": ":18791", "api_key": "your-secret-key"}
+v1claw gateway
+```
+
+**On the client (Android/another machine):**
+```bash
+v1claw client --server <server-ip>:18791 --api-key your-secret-key
+```
 
 **Android environment** (discovered via SSH):
 - Device: Samsung tablet
@@ -166,13 +216,13 @@ The Makefile Termux fixes have been pushed. User needs to:
 
 ## 🔮 What's Left To Do
 
-### Pending Todos (3 remaining)
+### Completed Phase B Todos ✅
 
-| ID | Task | Description |
-|----|------|-------------|
-| `b1-client-mode` | Client Mode Command | Add `v1claw client --server <host:port>` — thin client connecting to remote gateway over Tailscale WebSocket |
-| `b2-device-reg` | Device Registration | Wire `pkg/sync/registry.go` to announce capabilities via API |
-| `b3-cap-routing` | Capability Routing | Cross-device capability routing via WebSocket commands ("use phone's camera from desktop") |
+| ID | Task | Status |
+|----|------|--------|
+| `b1-client-mode` | Client Mode Command | ✅ Done |
+| `b2-device-reg` | Device Registration | ✅ Done |
+| `b3-cap-routing` | Capability Routing | ✅ Done |
 
 ### Medium-Priority Audit Items (not done, not blocking)
 
@@ -194,10 +244,13 @@ The Makefile Termux fixes have been pushed. User needs to:
 Channels (10) ─┐
 Voice Pipeline ─┼──→ Agent Loop ──→ Providers (13)
 Vision/Camera  ─┘         │
-                           ├──→ Tools (14)
-                           ├──→ Skills System
-                           ├──→ Cron/Proactive
-                           └──→ Memory/State
+Client Devices ─┐         ├──→ Tools (14)
+                 │         ├──→ Skills System
+  Device ────────┤         ├──→ Cron/Proactive
+  Registry       │         └──→ Memory/State
+                 │
+  Capability ────┘
+  Routing (WS)
 ```
 
 ### Key Files & What They Do
@@ -281,5 +334,5 @@ GOOS=windows GOARCH=amd64 make build  # Windows
 
 ---
 
-*Last updated: 2026-02-18T08:23Z*
+*Last updated: 2026-02-18T10:45Z*
 *Session ID: f3288e45-08a8-4361-bf0f-03f8a6fbda23*

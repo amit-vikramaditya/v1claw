@@ -654,15 +654,25 @@ Want V1Claw on multiple devices sharing one brain? Use [Tailscale](https://tails
 1. Install Tailscale on all your devices
 2. Run V1Claw gateway on your main machine (server/desktop):
    ```bash
-   # Edit config — set gateway.host to "0.0.0.0" (safe behind Tailscale)
+   # Edit config — set gateway.host to "0.0.0.0" and enable the API:
+   # "v1_api": {"enabled": true, "addr": ":18791", "api_key": "your-secret-key"}
    v1claw gateway
    ```
 3. From any other device on your Tailscale network:
    ```bash
-   curl http://your-server.tail1234.ts.net:18790/api/v1/chat \
-     -H "Authorization: Bearer your-api-key" \
+   # Interactive mode — full chat with the gateway's brain
+   v1claw client --server your-server.tail1234.ts.net:18791 --api-key your-secret-key
+
+   # One-shot message
+   v1claw client -s your-server.tail1234.ts.net:18791 -k your-secret-key -m "Hello from my phone"
+
+   # Or use the REST API directly
+   curl http://your-server.tail1234.ts.net:18791/api/v1/chat \
+     -H "Authorization: Bearer your-secret-key" \
      -d '{"message": "Hello from my phone"}'
    ```
+
+The client auto-detects local hardware (camera, mic, screen) and registers it with the gateway. When the AI needs to take a photo but the server has no camera, it routes the request to your phone's camera automatically.
 
 ---
 
@@ -709,8 +719,9 @@ Permissions are **frozen after startup** — the AI cannot escalate its own acce
 ```
 v1claw onboard              # First-time setup
 v1claw agent                # Interactive chat
-v1claw agent "your query"   # One-shot query
+v1claw agent -m "query"     # One-shot query
 v1claw gateway              # Start 24/7 daemon
+v1claw client -s host:port  # Connect to a remote gateway
 v1claw auth login           # Authenticate
 v1claw auth status          # Check auth status
 v1claw status               # Show system status
@@ -781,11 +792,11 @@ V1Claw works today as a powerful single-device assistant. Here's what's next to 
 - [x] Cron scheduling and proactive tasks
 - [x] Skills system (installable agent extensions)
 - [x] Docker and cross-platform builds
+- [x] Multi-device sync — device registration, discovery, and heartbeat
+- [x] Client mode — `v1claw client --server host:port` connects to remote gateway
+- [x] Device capability routing — use phone's camera/mic from desktop via WebSocket
 
 ### 🚧 In Progress
-- [ ] Multi-device sync — share one brain across phone, laptop, and server
-- [ ] Client mode — thin client connecting to a remote V1Claw brain over Tailscale/LAN
-- [ ] Device capability routing — "use the phone's camera" from desktop
 - [ ] Always-on wake word — persistent low-power listening mode
 
 ### 🔮 Future
