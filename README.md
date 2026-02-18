@@ -120,25 +120,130 @@ Extend V1Claw with installable skills:
 
 ---
 
-## Quick Start
+## Setup Guide
 
-### 1. Build
+Pick your device. Follow the steps. You'll have a working AI assistant in under 10 minutes.
+
+> **You need one thing before you start:** an API key from any AI provider.
+> The easiest free option is **Google Gemini** — get a key at [aistudio.google.com/apikey](https://aistudio.google.com/apikey).
+> Other options: [OpenAI](https://platform.openai.com/api-keys), [Anthropic](https://console.anthropic.com/), [Groq](https://console.groq.com/keys), [OpenRouter](https://openrouter.ai/keys).
+
+---
+
+### 📱 Android (Termux)
+
+<details>
+<summary><b>Click to expand — full step-by-step Android setup</b></summary>
+
+#### Step 1: Install two apps from F-Droid
+
+You need two apps. Install both from [F-Droid](https://f-droid.org/) (NOT from Play Store — the Play Store versions are outdated and broken):
+
+1. **[Termux](https://f-droid.org/en/packages/com.termux/)** — a Linux terminal for Android
+2. **[Termux:API](https://f-droid.org/en/packages/com.termux.api/)** — lets V1Claw use your phone's mic, camera, GPS, etc.
+
+> 💡 If you don't have F-Droid, download it first from [f-droid.org](https://f-droid.org/).
+
+#### Step 2: Grant permissions to Termux:API
+
+Open your phone **Settings → Apps → Termux:API → Permissions** and turn on:
+- ✅ Microphone
+- ✅ Camera
+- ✅ Location (optional)
+
+#### Step 3: Install developer tools in Termux
+
+Open **Termux** and type these commands one at a time. Press Enter after each one:
+
+```bash
+pkg update
+```
+
+It may ask "Do you want to continue?" — type `y` and press Enter.
+
+```bash
+pkg upgrade -y
+```
+
+```bash
+pkg install -y git golang make termux-api
+```
+
+This installs Git, Go (the programming language), Make, and the Termux API tools. It takes about 2-3 minutes.
+
+#### Step 4: Download V1Claw
 
 ```bash
 git clone https://github.com/amit-vikramaditya/V1Claw.git
+```
+
+```bash
 cd V1Claw
+```
+
+#### Step 5: Build V1Claw
+
+```bash
 make build
 ```
 
-The binary will be at `build/v1claw-<os>-<arch>` (e.g., `build/v1claw-darwin-arm64`).
+This compiles V1Claw into a single file. It takes 2-5 minutes on a phone. When it finishes, you'll see a file at `build/v1claw-linux-arm64`.
 
-### 2. Configure
+#### Step 6: Run first-time setup
 
 ```bash
-./build/v1claw-* onboard
+./build/v1claw-linux-arm64 onboard
 ```
 
-This creates `~/.v1claw/config.json`. Edit it to add your API key:
+This creates your config file at `~/.v1claw/config.json`.
+
+#### Step 7: Add your API key
+
+Open the config file in a text editor:
+
+```bash
+nano ~/.v1claw/config.json
+```
+
+Find the `"agents"` section and change the model name. Find the `"providers"` section and add your API key.
+
+**If you're using Google Gemini** (free), change it to look like this:
+
+```json
+{
+  "agents": [
+    {
+      "name": "v1claw",
+      "model": "gemini-2.0-flash"
+    }
+  ],
+  "providers": {
+    "gemini": {
+      "api_key": "YOUR_GEMINI_API_KEY_HERE"
+    }
+  }
+}
+```
+
+**If you're using OpenAI:**
+
+```json
+{
+  "agents": [
+    {
+      "name": "v1claw",
+      "model": "gpt-4o"
+    }
+  ],
+  "providers": {
+    "openai": {
+      "api_key": "sk-YOUR_OPENAI_KEY_HERE"
+    }
+  }
+}
+```
+
+**If you're using Anthropic Claude:**
 
 ```json
 {
@@ -148,124 +253,250 @@ This creates `~/.v1claw/config.json`. Edit it to add your API key:
       "model": "claude-sonnet-4-20250514"
     }
   ],
-  "providers": [
-    {
-      "kind": "anthropic",
-      "api_key": "sk-ant-your-key-here"
+  "providers": {
+    "anthropic": {
+      "api_key": "sk-ant-YOUR_KEY_HERE"
     }
-  ]
+  }
 }
 ```
 
-### 3. Run
+Save the file: press `Ctrl+O`, then `Enter`, then `Ctrl+X`.
+
+#### Step 8: Test it!
 
 ```bash
-# Interactive CLI
-./build/v1claw-* agent
-
-# One-shot query
-./build/v1claw-* agent "What's the weather in Tokyo?"
-
-# Start as a 24/7 daemon (Telegram, Discord, etc.)
-./build/v1claw-* gateway
+./build/v1claw-linux-arm64 agent -m "Hello! What can you do?"
 ```
+
+You should see the AI respond. **If it does — congratulations, V1Claw is working on your phone!** 🎉
+
+#### Step 9: Start chatting
+
+```bash
+./build/v1claw-linux-arm64 agent
+```
+
+This opens an interactive chat. Type anything and press Enter. Type `exit` or press `Ctrl+C` to quit.
+
+#### Step 10: Enable phone hardware (optional)
+
+Want V1Claw to use your mic, camera, or read notifications? Edit the config again:
+
+```bash
+nano ~/.v1claw/config.json
+```
+
+Add a `"permissions"` section (you can turn each feature on or off individually):
+
+```json
+{
+  "permissions": {
+    "microphone": true,
+    "camera": true,
+    "clipboard": true,
+    "notifications": true,
+    "location": false,
+    "sms": false,
+    "phone_calls": false,
+    "sensors": false,
+    "shell_hardware": true
+  }
+}
+```
+
+> 🔒 **Every feature is OFF by default.** Only turn on what you need. You can change these anytime by editing the config and restarting.
+
+#### Step 11: Run V1Claw 24/7 in the background (optional)
+
+```bash
+nohup ./build/v1claw-linux-arm64 gateway > v1claw.log 2>&1 &
+```
+
+This runs V1Claw as a background service that keeps working even if you close Termux.
+
+To check if it's running:
+
+```bash
+curl http://127.0.0.1:18790/health
+```
+
+To see what it's doing:
+
+```bash
+tail -f v1claw.log
+```
+
+To stop it:
+
+```bash
+kill $(cat v1claw.pid 2>/dev/null || pgrep v1claw)
+```
+
+</details>
 
 ---
 
-## Deployment
+### 🍎 macOS
 
-### Standalone Binary (Recommended)
+<details>
+<summary><b>Click to expand — full step-by-step macOS setup</b></summary>
 
-Works on any machine — no dependencies, no Docker needed.
+#### Step 1: Install Go (if you don't have it)
+
+Open **Terminal** (press `Cmd+Space`, type "Terminal", press Enter).
+
+Check if Go is installed:
 
 ```bash
-# Build for your platform
+go version
+```
+
+If it says "command not found", install it:
+
+```bash
+# Using Homebrew (recommended)
+brew install go
+
+# Or download from https://go.dev/dl/
+```
+
+Also make sure you have Git and Make (these come pre-installed on most Macs):
+
+```bash
+git --version
+make --version
+```
+
+#### Step 2: Download V1Claw
+
+```bash
+git clone https://github.com/amit-vikramaditya/V1Claw.git
+cd V1Claw
+```
+
+#### Step 3: Build
+
+```bash
 make build
+```
 
-# Or cross-compile for another platform
-GOOS=linux GOARCH=amd64 make build    # Linux x86_64
-GOOS=linux GOARCH=arm64 make build    # Linux ARM64 / Android
-GOOS=darwin GOARCH=arm64 make build   # macOS Apple Silicon
-GOOS=windows GOARCH=amd64 make build  # Windows
+The binary will appear at `build/v1claw-darwin-arm64` (Apple Silicon) or `build/v1claw-darwin-amd64` (Intel Mac).
 
-# Install to ~/.local/bin
+#### Step 4: Run first-time setup
+
+```bash
+./build/v1claw-darwin-* onboard
+```
+
+#### Step 5: Add your API key
+
+```bash
+nano ~/.v1claw/config.json
+```
+
+Change the model and add your API key (see the Android Step 7 above for examples with Gemini, OpenAI, or Claude).
+
+Save: `Ctrl+O` → Enter → `Ctrl+X`.
+
+#### Step 6: Test it
+
+```bash
+./build/v1claw-darwin-* agent -m "Hello! Tell me a fun fact."
+```
+
+If you see a response — **it's working!** 🎉
+
+#### Step 7: Interactive chat
+
+```bash
+./build/v1claw-darwin-* agent
+```
+
+#### Step 8: Run as a 24/7 service (optional)
+
+```bash
+# Quick background mode
+nohup ./build/v1claw-darwin-* gateway > v1claw.log 2>&1 &
+
+# Or install to your PATH and use it anywhere
 make install
+v1claw gateway
 ```
 
-### Docker
+</details>
 
+---
+
+### 🐧 Linux
+
+<details>
+<summary><b>Click to expand — full step-by-step Linux setup</b></summary>
+
+#### Step 1: Install Go, Git, and Make
+
+**Ubuntu/Debian:**
 ```bash
-# Copy and edit the example config
-cp config/config.example.json config/config.json
-
-# Run as a 24/7 gateway
-docker compose --profile gateway up -d
-
-# Or run a one-shot query
-docker compose run --rm v1claw-agent -m "Hello V1Claw"
+sudo apt update && sudo apt install -y golang git make
 ```
 
-### Android (Termux)
+**Fedora:**
+```bash
+sudo dnf install -y golang git make
+```
 
-1. **Install Termux** from [F-Droid](https://f-droid.org/en/packages/com.termux/) (not Play Store)
+**Arch Linux:**
+```bash
+sudo pacman -S go git make
+```
 
-2. **Install Termux:API** from F-Droid (for mic, camera, GPS, etc.)
+Verify Go is installed:
+```bash
+go version
+```
 
-3. **Set up Termux:**
-   ```bash
-   pkg update && pkg install termux-api golang git make
-   ```
-
-4. **Build V1Claw:**
-   ```bash
-   git clone https://github.com/amit-vikramaditya/V1Claw.git
-   cd V1Claw
-   make build
-   ```
-
-   Or cross-compile on your PC and transfer:
-   ```bash
-   GOOS=linux GOARCH=arm64 make build
-   # Transfer build/v1claw-linux-arm64 to your phone
-   ```
-
-5. **Configure and run:**
-   ```bash
-   ./build/v1claw-linux-arm64 onboard
-   # Edit ~/.v1claw/config.json — add API key and enable permissions
-   ./build/v1claw-linux-arm64 gateway
-   ```
-
-6. **Enable hardware features** in config:
-   ```json
-   {
-     "permissions": {
-       "microphone": true,
-       "camera": true,
-       "location": true,
-       "sms": false,
-       "phone_calls": false,
-       "clipboard": true,
-       "sensors": true,
-       "shell_hardware": true,
-       "notifications": true
-     },
-     "voice": {
-       "enabled": true,
-       "mode": "wake-word",
-       "wake_phrases": ["hey v1claw", "hey jarvis"],
-       "tts_provider": "edge",
-       "recorder_backend": "termux",
-       "player_backend": "termux"
-     }
-   }
-   ```
-
-### Linux Server (24/7 Daemon)
+#### Step 2: Download V1Claw
 
 ```bash
-# Build
+git clone https://github.com/amit-vikramaditya/V1Claw.git
+cd V1Claw
+```
+
+#### Step 3: Build
+
+```bash
 make build
+```
+
+The binary will appear at `build/v1claw-linux-amd64` or `build/v1claw-linux-arm64`.
+
+#### Step 4: Run first-time setup
+
+```bash
+./build/v1claw-linux-* onboard
+```
+
+#### Step 5: Add your API key
+
+```bash
+nano ~/.v1claw/config.json
+```
+
+Change the model and add your API key (see the Android Step 7 above for examples with Gemini, OpenAI, or Claude).
+
+Save: `Ctrl+O` → Enter → `Ctrl+X`.
+
+#### Step 6: Test it
+
+```bash
+./build/v1claw-linux-* agent -m "Hello! What can you do?"
+```
+
+#### Step 7: Run as a 24/7 system service (optional)
+
+```bash
+# Install the binary
+make install
 
 # Create a systemd service
 sudo tee /etc/systemd/system/v1claw.service << 'EOF'
@@ -275,8 +506,8 @@ After=network.target
 
 [Service]
 Type=simple
-User=v1claw
-ExecStart=/home/v1claw/.local/bin/v1claw gateway
+User=YOUR_USERNAME
+ExecStart=/home/YOUR_USERNAME/.local/bin/v1claw gateway
 Restart=always
 RestartSec=5
 
@@ -284,24 +515,152 @@ RestartSec=5
 WantedBy=multi-user.target
 EOF
 
+# Replace YOUR_USERNAME with your actual username, then:
+sudo systemctl daemon-reload
 sudo systemctl enable --now v1claw
+
+# Check status
+sudo systemctl status v1claw
 ```
 
-### Multi-Device via Tailscale
+</details>
 
-If you have a Tailscale mesh network, run V1Claw on multiple devices:
+---
+
+### 🪟 Windows
+
+<details>
+<summary><b>Click to expand — full step-by-step Windows setup</b></summary>
+
+#### Step 1: Install Go and Git
+
+1. Download and install **Go** from [go.dev/dl](https://go.dev/dl/) — pick the Windows `.msi` installer
+2. Download and install **Git** from [git-scm.com](https://git-scm.com/download/win)
+3. Download and install **Make** via [GnuWin32](http://gnuwin32.sourceforge.net/packages/make.htm) or use `choco install make` if you have Chocolatey
+
+Open **Command Prompt** or **PowerShell** and verify:
 
 ```bash
-# On your main server (the "brain"):
-# Edit config to bind to Tailscale interface
-# Set gateway.host to "0.0.0.0" (safe behind Tailscale)
-./v1claw gateway
-
-# From any other device on your Tailscale network:
-curl http://your-server.tail1234.ts.net:18790/api/v1/chat \
-  -H "Authorization: Bearer your-api-key" \
-  -d '{"message": "Hello from my phone"}'
+go version
+git --version
 ```
+
+#### Step 2: Download V1Claw
+
+```bash
+git clone https://github.com/amit-vikramaditya/V1Claw.git
+cd V1Claw
+```
+
+#### Step 3: Build
+
+```bash
+make build
+```
+
+Or if Make doesn't work on Windows:
+
+```bash
+go build -o build/v1claw.exe ./cmd/v1claw
+```
+
+#### Step 4: Run first-time setup
+
+```bash
+build\v1claw.exe onboard
+```
+
+#### Step 5: Add your API key
+
+Open the config file at `%USERPROFILE%\.v1claw\config.json` in Notepad or any text editor.
+
+Change the model and add your API key (see the Android Step 7 above for examples with Gemini, OpenAI, or Claude).
+
+#### Step 6: Test it
+
+```bash
+build\v1claw.exe agent -m "Hello! What can you do?"
+```
+
+#### Step 7: Interactive chat
+
+```bash
+build\v1claw.exe agent
+```
+
+</details>
+
+---
+
+### 🐳 Docker (any platform)
+
+<details>
+<summary><b>Click to expand — Docker setup</b></summary>
+
+If you have Docker installed, this is the fastest way:
+
+```bash
+# Clone the project
+git clone https://github.com/amit-vikramaditya/V1Claw.git
+cd V1Claw
+
+# Copy the example config and edit it
+cp config/config.example.json config/config.json
+nano config/config.json   # Add your API key (see Android Step 7 above)
+
+# Run a one-shot query
+docker compose run --rm v1claw-agent -m "Hello V1Claw!"
+
+# Or run as a 24/7 background service
+docker compose --profile gateway up -d
+```
+
+</details>
+
+---
+
+### 🔗 Cross-Compile for Another Device
+
+Have a fast PC and want to build V1Claw for a different device (e.g., build on your Mac for your Android phone)?
+
+```bash
+# On your PC:
+git clone https://github.com/amit-vikramaditya/V1Claw.git
+cd V1Claw
+
+# Build for Android (ARM64)
+GOOS=linux GOARCH=arm64 make build
+
+# Build for Linux server (x86_64)
+GOOS=linux GOARCH=amd64 make build
+
+# Build for Windows
+GOOS=windows GOARCH=amd64 make build
+
+# Build for Raspberry Pi
+GOOS=linux GOARCH=arm GOARM=7 make build
+```
+
+Then transfer the binary to your target device (via USB, `scp`, `adb push`, or any file sharing method) and follow from **Step 4** of the relevant guide above.
+
+---
+
+### 🌐 Multi-Device Setup (Tailscale)
+
+Want V1Claw on multiple devices sharing one brain? Use [Tailscale](https://tailscale.com/) (free for personal use):
+
+1. Install Tailscale on all your devices
+2. Run V1Claw gateway on your main machine (server/desktop):
+   ```bash
+   # Edit config — set gateway.host to "0.0.0.0" (safe behind Tailscale)
+   v1claw gateway
+   ```
+3. From any other device on your Tailscale network:
+   ```bash
+   curl http://your-server.tail1234.ts.net:18790/api/v1/chat \
+     -H "Authorization: Bearer your-api-key" \
+     -d '{"message": "Hello from my phone"}'
+   ```
 
 ---
 
@@ -434,6 +793,22 @@ V1Claw works today as a powerful single-device assistant. Here's what's next to 
 - [ ] End-to-end encryption for multi-device communication
 - [ ] Web dashboard with real-time status and conversation history
 - [ ] Plugin marketplace for community-built skills
+
+---
+
+## Troubleshooting
+
+| Problem | Solution |
+|---------|----------|
+| `command not found: go` | Install Go — see setup guide for your platform above |
+| `command not found: make` | Linux: `sudo apt install make` / Mac: `xcode-select --install` / Windows: `choco install make` |
+| `permission denied` | Run `chmod +x build/v1claw-*` to make the binary executable |
+| Build fails with "out of memory" | Close other apps. On Android, phones have limited RAM — try closing background apps |
+| `termux-microphone-record: not found` | Install Termux:API app from F-Droid AND run `pkg install termux-api` in Termux |
+| API key error / "unauthorized" | Double-check your API key in `~/.v1claw/config.json`. Make sure there are no extra spaces |
+| `connection refused` on port 18790 | The gateway isn't running. Start it with `v1claw gateway` first |
+| AI doesn't use my camera/mic | Enable the permission in config: `"microphone": true` or `"camera": true` and restart |
+| `go version` shows old version | V1Claw needs Go 1.25+. Update Go from [go.dev/dl](https://go.dev/dl/) |
 
 ---
 
