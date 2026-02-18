@@ -63,9 +63,11 @@ else
 	ARCH=$(UNAME_M)
 endif
 
-# On Termux, force GOOS=linux (Go has no android/arm64 toolchain)
+# On Termux, force GOOS=linux and use local toolchain
+# (Go has no android/arm64 toolchain for auto-download)
 ifeq ($(IS_TERMUX),yes)
 	export GOOS=linux
+	export GOTOOLCHAIN=local
 	PLATFORM=linux
 endif
 
