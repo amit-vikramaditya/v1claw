@@ -11,6 +11,7 @@ import (
 
 	"github.com/amit-vikramaditya/v1claw/pkg/bus"
 	"github.com/amit-vikramaditya/v1claw/pkg/logger"
+	"github.com/amit-vikramaditya/v1claw/pkg/permissions"
 )
 
 // PipelineMode controls how the voice pipeline listens.
@@ -93,6 +94,9 @@ func (p *Pipeline) Start(ctx context.Context) error {
 
 	if !p.recorder.IsAvailable() {
 		return fmt.Errorf("audio recorder (%s) not available", p.recorder.Name())
+	}
+	if err := permissions.Global().Check(permissions.Microphone, "voice.Pipeline"); err != nil {
+		return fmt.Errorf("voice pipeline requires microphone permission: %w", err)
 	}
 	if p.transcriber == nil || !p.transcriber.IsAvailable() {
 		return fmt.Errorf("speech-to-text transcriber not available")

@@ -11,6 +11,8 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/amit-vikramaditya/v1claw/pkg/permissions"
 )
 
 type ExecTool struct {
@@ -165,6 +167,11 @@ func (t *ExecTool) guardCommand(command, cwd string) string {
 		}
 	}
 
+	// Block hardware commands unless the corresponding permission is enabled.
+	if msg := guardHardwareCommands(lower); msg != "" {
+		return msg
+	}
+
 	if len(t.allowPatterns) > 0 {
 		allowed := false
 		for _, pattern := range t.allowPatterns {
@@ -229,4 +236,35 @@ func (t *ExecTool) SetAllowPatterns(patterns []string) error {
 		t.allowPatterns = append(t.allowPatterns, re)
 	}
 	return nil
+}
+
+// hardwareGuard maps command prefixes to the permission feature they require.
+var hardwareGuards = []struct {
+	pattern *regexp.Regexp
+	feature permissions.Feature
+	desc    string
+}{
+	{regexp.MustCompile(`\btermux-camera-photo\b`), permissions.Camera, "camera capture"},
+	{regexp.MustCompile(`\btermux-microphone-record\b`), permissions.Microphone, "microphone recording"},
+	{regexp.MustCompile(`\btermux-sms-(send|list)\b`), permissions.SMS, "SMS access"},
+	{regexp.MustCompile(`\btermux-telephony-call\b`), permissions.PhoneCalls, "phone call"},
+	{regexp.MustCompile(`\btermux-location\b`), permissions.Location, "location access"},
+	{regexp.MustCompile(`\btermux-clipboard-(get|set)\b`), permissions.Clipboard, "clipboard access"},
+	{regexp.MustCompile(`\btermux-sensor\b`), permissions.Sensors, "sensor access"},
+	// Catch-all for any termux-* hardware command not explicitly listed.
+	{regexp.MustCompile(`\btermux-(vibrate|torch|volume|notification|toast|wifi|battery|usb|fingerprint|wallpaper|dialog|download|media-player|media-scan|storage-get|tts-speak)\b`), permissions.ShellHardware, "hardware command"},
+}
+
+// guardHardwareCommands checks if a shell command invokes hardware APIs
+// and verifies the corresponding permission is enabled.
+func guardHardwareCommands(lower string) string {
+	reg := permissions.Global()
+	for _, g := range hardwareGuards {
+		if g.pattern.MatchString(lower) {
+			if !reg.IsAllowed(g.feature) {
+				return fmt.Sprintf("Command blocked: %s requires permissions.%s=true in config", g.desc, g.feature)
+			}
+		}
+	}
+	return ""
 }

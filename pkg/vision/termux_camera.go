@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/amit-vikramaditya/v1claw/pkg/logger"
+	"github.com/amit-vikramaditya/v1claw/pkg/permissions"
 )
 
 // TermuxCamera implements CameraProvider using termux-camera-photo.
@@ -58,6 +59,10 @@ func (c *TermuxCamera) IsAvailable() bool {
 
 // Capture takes a photo using termux-camera-photo and returns JPEG bytes.
 func (c *TermuxCamera) Capture(ctx context.Context) ([]byte, error) {
+	if err := permissions.Global().Check(permissions.Camera, "vision.TermuxCamera"); err != nil {
+		return nil, err
+	}
+
 	outPath := filepath.Join(c.tempDir, fmt.Sprintf("v1claw-cam-%d-%d.jpg", c.cameraID, time.Now().UnixNano()))
 
 	logger.InfoCF("vision", "Capturing photo via Termux", map[string]interface{}{

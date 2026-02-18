@@ -36,6 +36,7 @@ import (
 	"github.com/amit-vikramaditya/v1claw/pkg/heartbeat"
 	"github.com/amit-vikramaditya/v1claw/pkg/logger"
 	"github.com/amit-vikramaditya/v1claw/pkg/migrate"
+	"github.com/amit-vikramaditya/v1claw/pkg/permissions"
 	"github.com/amit-vikramaditya/v1claw/pkg/providers"
 	"github.com/amit-vikramaditya/v1claw/pkg/queue"
 	"github.com/amit-vikramaditya/v1claw/pkg/skills"
@@ -543,6 +544,29 @@ func gatewayCmd() {
 	if err := validateGatewaySecurity(cfg); err != nil {
 		fmt.Printf("Security configuration error: %v\n", err)
 		os.Exit(1)
+	}
+
+	// Load hardware permissions from config into global registry.
+	perms := permissions.Global()
+	perms.SetAll(map[permissions.Feature]bool{
+		permissions.Camera:        cfg.Permissions.Camera,
+		permissions.Microphone:    cfg.Permissions.Microphone,
+		permissions.SMS:           cfg.Permissions.SMS,
+		permissions.PhoneCalls:    cfg.Permissions.PhoneCalls,
+		permissions.Location:      cfg.Permissions.Location,
+		permissions.Clipboard:     cfg.Permissions.Clipboard,
+		permissions.Sensors:       cfg.Permissions.Sensors,
+		permissions.ShellHardware: cfg.Permissions.ShellHardware,
+	})
+	enabledPerms := perms.EnabledFeatures()
+	if len(enabledPerms) > 0 {
+		names := make([]string, len(enabledPerms))
+		for i, f := range enabledPerms {
+			names[i] = string(f)
+		}
+		fmt.Printf("🔓 Permissions enabled: %s\n", strings.Join(names, ", "))
+	} else {
+		fmt.Println("🔒 All hardware permissions blocked (default-deny)")
 	}
 
 	provider, err := providers.CreateProvider(cfg)

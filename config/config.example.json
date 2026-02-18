@@ -152,5 +152,15 @@
     "player_backend": "auto",
     "tts_provider": "auto",
     "wake_word_phrases": ["hello v1", "hey v1", "hi v1"]
+  },
+  "permissions": {
+    "camera": false,
+    "microphone": false,
+    "sms": false,
+    "phone_calls": false,
+    "location": false,
+    "clipboard": false,
+    "sensors": false,
+    "shell_hardware": false
   }
 }

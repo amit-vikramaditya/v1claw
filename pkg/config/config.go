@@ -44,16 +44,31 @@ func (f *FlexibleStringSlice) UnmarshalJSON(data []byte) error {
 }
 
 type Config struct {
-	Agents    AgentsConfig    `json:"agents"`
-	Channels  ChannelsConfig  `json:"channels"`
-	Providers ProvidersConfig `json:"providers"`
-	Gateway   GatewayConfig   `json:"gateway"`
-	Tools     ToolsConfig     `json:"tools"`
-	Heartbeat HeartbeatConfig `json:"heartbeat"`
-	Devices   DevicesConfig   `json:"devices"`
-	V1API     V1APIConfig     `json:"v1_api"`
-	Voice     VoiceConfig     `json:"voice"`
-	mu        sync.RWMutex
+	Agents      AgentsConfig      `json:"agents"`
+	Channels    ChannelsConfig    `json:"channels"`
+	Providers   ProvidersConfig   `json:"providers"`
+	Gateway     GatewayConfig     `json:"gateway"`
+	Tools       ToolsConfig       `json:"tools"`
+	Heartbeat   HeartbeatConfig   `json:"heartbeat"`
+	Devices     DevicesConfig     `json:"devices"`
+	V1API       V1APIConfig       `json:"v1_api"`
+	Voice       VoiceConfig       `json:"voice"`
+	Permissions PermissionsConfig `json:"permissions"`
+	mu          sync.RWMutex
+}
+
+// PermissionsConfig controls access to sensitive hardware and system features.
+// All permissions default to false (blocked) for security. Users must
+// explicitly enable features they need via config.json or env vars.
+type PermissionsConfig struct {
+	Camera      bool `json:"camera" env:"V1CLAW_PERMISSIONS_CAMERA"`           // Allow camera capture
+	Microphone  bool `json:"microphone" env:"V1CLAW_PERMISSIONS_MICROPHONE"`   // Allow mic recording
+	SMS         bool `json:"sms" env:"V1CLAW_PERMISSIONS_SMS"`                 // Allow reading/sending SMS
+	PhoneCalls  bool `json:"phone_calls" env:"V1CLAW_PERMISSIONS_PHONE_CALLS"` // Allow making phone calls
+	Location    bool `json:"location" env:"V1CLAW_PERMISSIONS_LOCATION"`       // Allow GPS/location access
+	Clipboard   bool `json:"clipboard" env:"V1CLAW_PERMISSIONS_CLIPBOARD"`     // Allow clipboard read/write
+	Sensors     bool `json:"sensors" env:"V1CLAW_PERMISSIONS_SENSORS"`         // Allow sensor access
+	ShellHardware bool `json:"shell_hardware" env:"V1CLAW_PERMISSIONS_SHELL_HARDWARE"` // Allow shell exec of hardware commands (termux-*)
 }
 
 // VoiceConfig configures the voice I/O pipeline.

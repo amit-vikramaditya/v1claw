@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/amit-vikramaditya/v1claw/pkg/logger"
+	"github.com/amit-vikramaditya/v1claw/pkg/permissions"
 )
 
 // TermuxAPI provides access to Android hardware via Termux:API package.
@@ -111,6 +112,9 @@ type Location struct {
 
 // GetLocation returns current device location.
 func (t *TermuxAPI) GetLocation(ctx context.Context, provider string) (*Location, error) {
+	if err := permissions.Global().Check(permissions.Location, "termux.GetLocation"); err != nil {
+		return nil, err
+	}
 	if provider == "" {
 		provider = "gps"
 	}
@@ -173,6 +177,9 @@ func (t *TermuxAPI) GetWifiInfo(ctx context.Context) (*WifiInfo, error) {
 
 // ClipboardGet returns the current clipboard contents.
 func (t *TermuxAPI) ClipboardGet(ctx context.Context) (string, error) {
+	if err := permissions.Global().Check(permissions.Clipboard, "termux.ClipboardGet"); err != nil {
+		return "", err
+	}
 	out, err := t.output(ctx, "termux-clipboard-get")
 	if err != nil {
 		return "", err
@@ -182,6 +189,9 @@ func (t *TermuxAPI) ClipboardGet(ctx context.Context) (string, error) {
 
 // ClipboardSet sets the clipboard contents.
 func (t *TermuxAPI) ClipboardSet(ctx context.Context, text string) error {
+	if err := permissions.Global().Check(permissions.Clipboard, "termux.ClipboardSet"); err != nil {
+		return err
+	}
 	cmd := exec.CommandContext(ctx, "termux-clipboard-set", text)
 	cmd.Stdin = strings.NewReader(text)
 	return cmd.Run()
@@ -191,6 +201,9 @@ func (t *TermuxAPI) ClipboardSet(ctx context.Context, text string) error {
 
 // CameraPhoto takes a photo and saves to the given path.
 func (t *TermuxAPI) CameraPhoto(ctx context.Context, outputPath string, cameraID int) error {
+	if err := permissions.Global().Check(permissions.Camera, "termux.CameraPhoto"); err != nil {
+		return err
+	}
 	return t.run(ctx, "termux-camera-photo", "-c", fmt.Sprintf("%d", cameraID), outputPath)
 }
 
@@ -206,11 +219,17 @@ type SMSMessage struct {
 
 // SendSMS sends a text message.
 func (t *TermuxAPI) SendSMS(ctx context.Context, number, message string) error {
+	if err := permissions.Global().Check(permissions.SMS, "termux.SendSMS"); err != nil {
+		return err
+	}
 	return t.run(ctx, "termux-sms-send", "-n", number, message)
 }
 
 // GetSMS retrieves recent SMS messages.
 func (t *TermuxAPI) GetSMS(ctx context.Context, limit int) ([]SMSMessage, error) {
+	if err := permissions.Global().Check(permissions.SMS, "termux.GetSMS"); err != nil {
+		return nil, err
+	}
 	out, err := t.output(ctx, "termux-sms-list", "-l", fmt.Sprintf("%d", limit))
 	if err != nil {
 		return nil, err
@@ -226,6 +245,9 @@ func (t *TermuxAPI) GetSMS(ctx context.Context, limit int) ([]SMSMessage, error)
 
 // CallPhone initiates a phone call.
 func (t *TermuxAPI) CallPhone(ctx context.Context, number string) error {
+	if err := permissions.Global().Check(permissions.PhoneCalls, "termux.CallPhone"); err != nil {
+		return err
+	}
 	return t.run(ctx, "termux-telephony-call", number)
 }
 
@@ -233,6 +255,9 @@ func (t *TermuxAPI) CallPhone(ctx context.Context, number string) error {
 
 // SensorInfo lists available sensors.
 func (t *TermuxAPI) ListSensors(ctx context.Context) ([]string, error) {
+	if err := permissions.Global().Check(permissions.Sensors, "termux.ListSensors"); err != nil {
+		return nil, err
+	}
 	out, err := t.output(ctx, "termux-sensor", "-l")
 	if err != nil {
 		return nil, err
