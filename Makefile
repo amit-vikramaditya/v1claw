@@ -64,13 +64,12 @@ else
 	ARCH=$(UNAME_M)
 endif
 
-# On Termux, force GOOS=linux and use local toolchain
-# (Go has no android/arm64 toolchain for auto-download)
+# On Termux, use local toolchain and disable CGO
+# Keep GOOS=android so the binary runs natively on Android
 ifeq ($(IS_TERMUX),yes)
-	export GOOS=linux
 	export GOTOOLCHAIN=local
 	export CGO_ENABLED=0
-	PLATFORM=linux
+	PLATFORM=android
 endif
 
 BINARY_PATH=$(BUILD_DIR)/$(BINARY_NAME)-$(PLATFORM)-$(ARCH)
