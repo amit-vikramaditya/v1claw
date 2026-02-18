@@ -288,7 +288,7 @@ func onboard() {
 	}
 
 	providerMap := map[string]providerInfo{
-		"1": {name: "gemini", models: "gemini-1.5-flash, gemini-1.5-pro, gemini-2.0-flash", keyHint: "Gemini API key", keyURL: "https://aistudio.google.com/apikey"},
+		"1": {name: "gemini", models: "gemini-2.0-flash-lite, gemini-2.0-flash, gemini-2.5-flash", keyHint: "Gemini API key", keyURL: "https://aistudio.google.com/apikey"},
 		"2": {name: "openai", models: "gpt-4o, gpt-4o-mini, gpt-5, o1", keyHint: "OpenAI API key (starts with sk-)", keyURL: "https://platform.openai.com/api-keys"},
 		"3": {name: "anthropic", models: "claude-sonnet-4-20250514, claude-3.5-haiku-20241022", keyHint: "Anthropic API key (starts with sk-ant-)", keyURL: "https://console.anthropic.com/keys"},
 		"4": {name: "groq", models: "llama-3.3-70b-versatile, mixtral-8x7b-32768, gemma2-9b-it", keyHint: "Groq API key", keyURL: "https://console.groq.com/keys"},
