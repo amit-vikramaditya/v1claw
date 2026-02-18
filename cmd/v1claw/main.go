@@ -281,10 +281,10 @@ func onboard() {
 	}
 
 	type providerInfo struct {
-		name      string
-		models    string // example model names shown to user
-		keyHint   string
-		keyURL    string
+		name    string
+		models  string // example model names shown to user
+		keyHint string
+		keyURL  string
 	}
 
 	providerMap := map[string]providerInfo{
