@@ -32,6 +32,9 @@ BUILTIN_SKILLS_DIR=$(CURDIR)/skills
 UNAME_S:=$(shell uname -s)
 UNAME_M:=$(shell uname -m)
 
+# Termux detection: Termux reports GOOS=android but is effectively Linux
+IS_TERMUX:=$(shell test -d /data/data/com.termux && echo yes)
+
 # Platform-specific settings
 ifeq ($(UNAME_S),Linux)
 	PLATFORM=linux
@@ -58,6 +61,12 @@ else ifeq ($(UNAME_S),Darwin)
 else
 	PLATFORM=$(UNAME_S)
 	ARCH=$(UNAME_M)
+endif
+
+# On Termux, force GOOS=linux (Go has no android/arm64 toolchain)
+ifeq ($(IS_TERMUX),yes)
+	export GOOS=linux
+	PLATFORM=linux
 endif
 
 BINARY_PATH=$(BUILD_DIR)/$(BINARY_NAME)-$(PLATFORM)-$(ARCH)

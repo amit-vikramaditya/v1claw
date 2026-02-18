@@ -189,6 +189,8 @@ make build
 
 This compiles V1Claw into a single file. It takes 2-5 minutes on a phone. When it finishes, you'll see a file at `build/v1claw-linux-arm64`.
 
+> 💡 The Makefile auto-detects Termux and handles everything for you. No extra flags needed.
+
 #### Step 6: Run first-time setup
 
 ```bash
