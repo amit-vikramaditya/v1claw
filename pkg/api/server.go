@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -136,7 +137,7 @@ func (s *Server) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 		}
 
 		token := strings.TrimPrefix(auth, "Bearer ")
-		if token != s.apiKey {
+		if subtle.ConstantTimeCompare([]byte(token), []byte(s.apiKey)) != 1 {
 			writeJSON(w, http.StatusUnauthorized, ErrorResponse{Error: "invalid or missing API key"})
 			return
 		}

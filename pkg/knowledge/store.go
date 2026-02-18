@@ -194,5 +194,7 @@ func (s *Store) save() {
 		logger.ErrorC("knowledge", fmt.Sprintf("Failed to write knowledge store: %v", err))
 		return
 	}
-	os.Rename(tmpPath, s.path)
+	if err := os.Rename(tmpPath, s.path); err != nil {
+		logger.ErrorC("knowledge", fmt.Sprintf("Failed to rename knowledge store file: %v", err))
+	}
 }

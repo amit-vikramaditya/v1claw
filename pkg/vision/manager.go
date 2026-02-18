@@ -96,7 +96,10 @@ func (m *Manager) CaptureAndAnalyze(ctx context.Context, cameraName, prompt stri
 	m.mu.RUnlock()
 
 	if !ok {
-		// Try first available camera.
+		if cameraName != "" {
+			return nil, fmt.Errorf("camera %q not found", cameraName)
+		}
+		// No name specified; try first available camera.
 		m.mu.RLock()
 		for _, c := range m.cameras {
 			cam = c

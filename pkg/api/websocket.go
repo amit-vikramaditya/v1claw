@@ -1,30 +1,42 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
+	"strings"
 	"sync"
 	"time"
 
-	"github.com/gorilla/websocket"
 	"github.com/amit-vikramaditya/v1claw/pkg/events"
 	"github.com/amit-vikramaditya/v1claw/pkg/logger"
+	"github.com/gorilla/websocket"
 )
 
 var upgrader = websocket.Upgrader{
 	ReadBufferSize:  1024,
 	WriteBufferSize: 1024,
 	CheckOrigin: func(r *http.Request) bool {
-		return true // Allow all origins for now; configurable later.
+		origin := strings.TrimSpace(r.Header.Get("Origin"))
+		if origin == "" {
+			return true // Non-browser clients usually don't send Origin.
+		}
+		u, err := url.Parse(origin)
+		if err != nil || u.Host == "" {
+			return false
+		}
+		return strings.EqualFold(u.Host, r.Host)
 	},
 }
 
 type wsClient struct {
-	id   string
-	conn *websocket.Conn
-	send chan []byte
-	mu   sync.Mutex
+	id       string
+	conn     *websocket.Conn
+	send     chan []byte
+	mu       sync.Mutex
+	closeOnce sync.Once
 }
 
 func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
@@ -136,7 +148,10 @@ func (s *Server) handleWSChat(client *wsClient, msg WSMessage) {
 	}
 
 	go func() {
-		response, err := handler(nil, text, sessionKey)
+		ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+		defer cancel()
+
+		response, err := handler(ctx, text, sessionKey)
 		if err != nil {
 			s.sendToClient(client, WSMessage{
 				Type:      "error",
@@ -194,11 +209,16 @@ func (s *Server) broadcastEvent(event events.Event) {
 
 func (s *Server) removeWSClient(id string) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if client, ok := s.wsClients[id]; ok {
-		close(client.send)
+	client, ok := s.wsClients[id]
+	if ok {
 		delete(s.wsClients, id)
+	}
+	s.mu.Unlock()
+
+	if ok {
+		client.closeOnce.Do(func() {
+			close(client.send)
+		})
 		logger.DebugC("api", fmt.Sprintf("WebSocket client disconnected: %s", id))
 	}
 }
@@ -209,7 +229,9 @@ func (s *Server) closeAllWS() {
 
 	for id, client := range s.wsClients {
 		client.conn.Close()
-		close(client.send)
+		client.closeOnce.Do(func() {
+			close(client.send)
+		})
 		delete(s.wsClients, id)
 	}
 }

@@ -4,8 +4,6 @@ import (
 	"context"
 	"fmt"
 
-	json "encoding/json"
-
 	copilot "github.com/github/copilot-sdk/go"
 )
 
@@ -17,57 +15,67 @@ type GitHubCopilotProvider struct {
 }
 
 func NewGitHubCopilotProvider(uri string, connectMode string, model string) (*GitHubCopilotProvider, error) {
-
-	var session *copilot.Session
 	if connectMode == "" {
 		connectMode = "grpc"
 	}
-	switch connectMode {
 
+	if model == "" {
+		model = "gpt-4.1"
+	}
+
+	switch connectMode {
 	case "stdio":
-		//todo
+		return nil, fmt.Errorf("github copilot connect_mode=stdio is not implemented")
 	case "grpc":
 		client := copilot.NewClient(&copilot.ClientOptions{
 			CLIUrl: uri,
 		})
 		if err := client.Start(context.Background()); err != nil {
-			return nil, fmt.Errorf("Can't connect to Github Copilot, https://github.com/github/copilot-sdk/blob/main/docs/getting-started.md#connecting-to-an-external-cli-server for details")
+			return nil, fmt.Errorf("can't connect to github copilot: %w", err)
 		}
-		defer client.Stop()
-		session, _ = client.CreateSession(context.Background(), &copilot.SessionConfig{
+
+		session, err := client.CreateSession(context.Background(), &copilot.SessionConfig{
 			Model: model,
 			Hooks: &copilot.SessionHooks{},
 		})
+		if err != nil {
+			client.Stop()
+			return nil, fmt.Errorf("create github copilot session: %w", err)
+		}
 
+		return &GitHubCopilotProvider{
+			uri:         uri,
+			connectMode: connectMode,
+			session:     session,
+		}, nil
+	default:
+		return nil, fmt.Errorf("unsupported github copilot connect mode: %s", connectMode)
 	}
-
-	return &GitHubCopilotProvider{
-		uri:         uri,
-		connectMode: connectMode,
-		session:     session,
-	}, nil
 }
 
 // Chat sends a chat request to GitHub Copilot
 func (p *GitHubCopilotProvider) Chat(ctx context.Context, messages []Message, tools []ToolDefinition, model string, options map[string]interface{}) (*LLMResponse, error) {
-	type tempMessage struct {
-		Role    string `json:"role"`
-		Content string `json:"content"`
+	if p.session == nil {
+		return nil, fmt.Errorf("github copilot session is not initialized")
 	}
-	out := make([]tempMessage, 0, len(messages))
 
+	// Build the prompt from message history.
+	var prompt string
 	for _, msg := range messages {
-		out = append(out, tempMessage{
-			Role:    msg.Role,
-			Content: msg.Content,
-		})
+		if msg.Role == "user" {
+			prompt = msg.Content
+		}
+	}
+	if prompt == "" && len(messages) > 0 {
+		prompt = messages[len(messages)-1].Content
 	}
 
-	fullcontent, _ := json.Marshal(out)
-
-	content, _ := p.session.Send(ctx, copilot.MessageOptions{
-		Prompt: string(fullcontent),
+	content, err := p.session.Send(ctx, copilot.MessageOptions{
+		Prompt: prompt,
 	})
+	if err != nil {
+		return nil, fmt.Errorf("github copilot send: %w", err)
+	}
 
 	return &LLMResponse{
 		FinishReason: "stop",

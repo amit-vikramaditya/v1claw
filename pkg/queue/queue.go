@@ -58,6 +58,7 @@ type Queue struct {
 	ticker   *time.Ticker
 	stopCh   chan struct{}
 	running  bool
+	runID    uint64
 }
 
 // NewQueue creates a new persistent queue stored at the given directory.
@@ -124,7 +125,12 @@ func (q *Queue) Start(ctx context.Context, interval time.Duration) {
 		return
 	}
 	q.running = true
+	q.runID++
+	currentRunID := q.runID
+	q.stopCh = make(chan struct{})
+	stopCh := q.stopCh
 	q.ticker = time.NewTicker(interval)
+	ticker := q.ticker
 	q.mu.Unlock()
 
 	logger.InfoC("queue", fmt.Sprintf("Job queue started (poll interval: %s, pending: %d)", interval, q.PendingCount()))
@@ -133,11 +139,11 @@ func (q *Queue) Start(ctx context.Context, interval time.Duration) {
 		for {
 			select {
 			case <-ctx.Done():
-				q.stop()
+				q.stopWithRunID(currentRunID)
 				return
-			case <-q.stopCh:
+			case <-stopCh:
 				return
-			case <-q.ticker.C:
+			case <-ticker.C:
 				q.processNext(ctx)
 			}
 		}
@@ -146,18 +152,29 @@ func (q *Queue) Start(ctx context.Context, interval time.Duration) {
 
 // Stop halts job processing.
 func (q *Queue) Stop() {
-	q.stop()
+	q.stopWithRunID(0)
 }
 
-func (q *Queue) stop() {
+func (q *Queue) stopWithRunID(runID uint64) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	if !q.running {
 		return
 	}
+	if runID != 0 && q.runID != runID {
+		return
+	}
 	q.running = false
 	if q.ticker != nil {
 		q.ticker.Stop()
+		q.ticker = nil
+	}
+	if q.stopCh != nil {
+		select {
+		case <-q.stopCh:
+		default:
+			close(q.stopCh)
+		}
 	}
 	logger.InfoC("queue", "Job queue stopped")
 }
@@ -325,5 +342,7 @@ func (q *Queue) save() {
 		logger.ErrorC("queue", fmt.Sprintf("Failed to write queue: %v", err))
 		return
 	}
-	os.Rename(tmpPath, q.path)
+	if err := os.Rename(tmpPath, q.path); err != nil {
+		logger.ErrorC("queue", fmt.Sprintf("Failed to rename queue file: %v", err))
+	}
 }

@@ -318,5 +318,7 @@ func (e *Engine) save() {
 	if err := os.WriteFile(tmpPath, data, 0644); err != nil {
 		return
 	}
-	os.Rename(tmpPath, path)
+	if err := os.Rename(tmpPath, path); err != nil {
+		logger.ErrorC("proactive", fmt.Sprintf("Failed to rename proactive data file: %v", err))
+	}
 }

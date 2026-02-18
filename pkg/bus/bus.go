@@ -9,8 +9,9 @@ type MessageBus struct {
 	inbound  chan InboundMessage
 	outbound chan OutboundMessage
 	handlers map[string]MessageHandler
-	closed   bool
 	mu       sync.RWMutex
+	once     sync.Once
+	done     chan struct{}
 }
 
 func NewMessageBus() *MessageBus {
@@ -18,22 +19,28 @@ func NewMessageBus() *MessageBus {
 		inbound:  make(chan InboundMessage, 100),
 		outbound: make(chan OutboundMessage, 100),
 		handlers: make(map[string]MessageHandler),
+		done:     make(chan struct{}),
 	}
 }
 
 func (mb *MessageBus) PublishInbound(msg InboundMessage) {
 	mb.mu.RLock()
 	defer mb.mu.RUnlock()
-	if mb.closed {
+	select {
+	case <-mb.done:
 		return
+	default:
 	}
-	mb.inbound <- msg
+	select {
+	case mb.inbound <- msg:
+	case <-mb.done:
+	}
 }
 
 func (mb *MessageBus) ConsumeInbound(ctx context.Context) (InboundMessage, bool) {
 	select {
-	case msg := <-mb.inbound:
-		return msg, true
+	case msg, ok := <-mb.inbound:
+		return msg, ok
 	case <-ctx.Done():
 		return InboundMessage{}, false
 	}
@@ -42,16 +49,21 @@ func (mb *MessageBus) ConsumeInbound(ctx context.Context) (InboundMessage, bool)
 func (mb *MessageBus) PublishOutbound(msg OutboundMessage) {
 	mb.mu.RLock()
 	defer mb.mu.RUnlock()
-	if mb.closed {
+	select {
+	case <-mb.done:
 		return
+	default:
 	}
-	mb.outbound <- msg
+	select {
+	case mb.outbound <- msg:
+	case <-mb.done:
+	}
 }
 
 func (mb *MessageBus) SubscribeOutbound(ctx context.Context) (OutboundMessage, bool) {
 	select {
-	case msg := <-mb.outbound:
-		return msg, true
+	case msg, ok := <-mb.outbound:
+		return msg, ok
 	case <-ctx.Done():
 		return OutboundMessage{}, false
 	}
@@ -71,12 +83,9 @@ func (mb *MessageBus) GetHandler(channel string) (MessageHandler, bool) {
 }
 
 func (mb *MessageBus) Close() {
-	mb.mu.Lock()
-	defer mb.mu.Unlock()
-	if mb.closed {
-		return
-	}
-	mb.closed = true
-	close(mb.inbound)
-	close(mb.outbound)
+	mb.once.Do(func() {
+		close(mb.done)
+		close(mb.inbound)
+		close(mb.outbound)
+	})
 }

@@ -28,8 +28,9 @@ func NewMemoryStore(workspace string) *MemoryStore {
 	memoryDir := filepath.Join(workspace, "memory")
 	memoryFile := filepath.Join(memoryDir, "MEMORY.md")
 
-	// Ensure memory directory exists
-	os.MkdirAll(memoryDir, 0755)
+	if err := os.MkdirAll(memoryDir, 0755); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: failed to create memory directory: %v\n", err)
+	}
 
 	return &MemoryStore{
 		workspace:  workspace,
@@ -77,7 +78,9 @@ func (ms *MemoryStore) AppendToday(content string) error {
 
 	// Ensure month directory exists
 	monthDir := filepath.Dir(todayFile)
-	os.MkdirAll(monthDir, 0755)
+	if err := os.MkdirAll(monthDir, 0755); err != nil {
+		return fmt.Errorf("create month directory: %w", err)
+	}
 
 	var existingContent string
 	if data, err := os.ReadFile(todayFile); err == nil {

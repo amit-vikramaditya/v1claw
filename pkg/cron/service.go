@@ -145,19 +145,19 @@ func (cs *CronService) checkJobs() {
 	// Collect jobs that are due (we need to copy them to execute outside lock)
 	for i := range cs.store.Jobs {
 		job := &cs.store.Jobs[i]
-		if job.Enabled && job.State.NextRunAtMS != nil && *job.State.NextRunAtMS <= now {
+		if job.Enabled && job.State.NextRunAtMS != nil && *job.State.NextRunAtMS <= now && job.State.LastStatus != "running" {
 			dueJobIDs = append(dueJobIDs, job.ID)
 		}
 	}
 
-	// Reset next run for due jobs before unlocking to avoid duplicate execution.
+	// Mark due jobs as running to prevent duplicate execution.
 	dueMap := make(map[string]bool, len(dueJobIDs))
 	for _, jobID := range dueJobIDs {
 		dueMap[jobID] = true
 	}
 	for i := range cs.store.Jobs {
 		if dueMap[cs.store.Jobs[i].ID] {
-			cs.store.Jobs[i].State.NextRunAtMS = nil
+			cs.store.Jobs[i].State.LastStatus = "running"
 		}
 	}
 

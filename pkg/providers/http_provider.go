@@ -410,14 +410,12 @@ func CreateProvider(cfg *config.Config) (LLMProvider, error) {
 				apiBase = "https://integrate.api.nvidia.com/v1"
 			}
 		case (strings.Contains(lowerModel, "ollama") || strings.HasPrefix(model, "ollama/")) && cfg.Providers.Ollama.APIKey != "":
-			fmt.Println("Ollama provider selected based on model name prefix")
 			apiKey = cfg.Providers.Ollama.APIKey
 			apiBase = cfg.Providers.Ollama.APIBase
 			proxy = cfg.Providers.Ollama.Proxy
 			if apiBase == "" {
 				apiBase = "http://localhost:11434/v1"
 			}
-			fmt.Println("Ollama apiBase:", apiBase)
 		case cfg.Providers.VLLM.APIBase != "":
 			apiKey = cfg.Providers.VLLM.APIKey
 			apiBase = cfg.Providers.VLLM.APIBase
