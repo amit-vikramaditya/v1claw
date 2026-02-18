@@ -187,14 +187,14 @@ cd V1Claw
 make build
 ```
 
-This compiles V1Claw into a single file. It takes 2-5 minutes on a phone. When it finishes, you'll see a file at `build/v1claw-linux-arm64`.
+This compiles V1Claw into a single file. It takes 2-5 minutes on a phone. When it finishes, you'll see a file at `build/v1claw-android-arm64`.
 
 > 💡 The Makefile auto-detects Termux and handles everything for you. No extra flags needed.
 
 #### Step 6: Run first-time setup
 
 ```bash
-./build/v1claw-linux-arm64 onboard
+./build/v1claw-android-arm64 onboard
 ```
 
 The setup wizard will ask you to:
@@ -208,7 +208,7 @@ That's it — your config is ready at `~/.v1claw/config.json`.
 #### Step 7: Test it!
 
 ```bash
-./build/v1claw-linux-arm64 agent -m "Hello! What can you do?"
+./build/v1claw-android-arm64 agent -m "Hello! What can you do?"
 ```
 
 You should see the AI respond. **If it does — congratulations, V1Claw is working on your phone!** 🎉
@@ -216,7 +216,7 @@ You should see the AI respond. **If it does — congratulations, V1Claw is worki
 #### Step 8: Start chatting
 
 ```bash
-./build/v1claw-linux-arm64 agent
+./build/v1claw-android-arm64 agent
 ```
 
 This opens an interactive chat. Type anything and press Enter. Type `exit` or press `Ctrl+C` to quit.
@@ -252,7 +252,7 @@ Add a `"permissions"` section (you can turn each feature on or off individually)
 #### Step 10: Run V1Claw 24/7 in the background (optional)
 
 ```bash
-nohup ./build/v1claw-linux-arm64 gateway > v1claw.log 2>&1 &
+nohup ./build/v1claw-android-arm64 gateway > v1claw.log 2>&1 &
 ```
 
 This runs V1Claw as a background service that keeps working even if you close Termux.

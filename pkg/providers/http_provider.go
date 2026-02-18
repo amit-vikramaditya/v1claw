@@ -117,10 +117,45 @@ func (p *HTTPProvider) Chat(ctx context.Context, messages []Message, tools []Too
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("API request failed:\n  Status: %d\n  Body:   %s", resp.StatusCode, string(body))
+		return nil, formatAPIError(resp.StatusCode, body)
 	}
 
 	return p.parseResponse(body)
+}
+
+// formatAPIError turns raw API error responses into human-readable messages.
+func formatAPIError(statusCode int, body []byte) error {
+	var apiErr struct {
+		Error struct {
+			Message string `json:"message"`
+			Status  string `json:"status"`
+			Code    any    `json:"code"`
+		} `json:"error"`
+	}
+
+	if err := json.Unmarshal(body, &apiErr); err == nil && apiErr.Error.Message != "" {
+		msg := apiErr.Error.Message
+
+		switch statusCode {
+		case 429:
+			// Extract the core message, drop the verbose details
+			if idx := strings.Index(msg, "\n*"); idx > 0 {
+				msg = msg[:idx]
+			}
+			return fmt.Errorf("Rate limit exceeded (HTTP 429): %s\n\n  This usually means your free tier quota is used up.\n  Wait a few minutes, or check your plan at the provider's dashboard.", msg)
+		case 401:
+			return fmt.Errorf("Authentication failed (HTTP 401): Your API key is invalid or expired.\n  Check your key in ~/.v1claw/config.json or re-run: v1claw onboard")
+		case 403:
+			return fmt.Errorf("Access denied (HTTP 403): %s\n  Your API key may not have access to this model.", msg)
+		case 404:
+			return fmt.Errorf("Model not found (HTTP 404): %s\n  Check the model name in ~/.v1claw/config.json", msg)
+		default:
+			return fmt.Errorf("API error (HTTP %d): %s", statusCode, msg)
+		}
+	}
+
+	// Fallback for non-JSON or unexpected format
+	return fmt.Errorf("API error (HTTP %d): %s", statusCode, string(body))
 }
 
 func (p *HTTPProvider) parseResponse(body []byte) (*LLMResponse, error) {

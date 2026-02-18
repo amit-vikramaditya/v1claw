@@ -261,7 +261,8 @@ func onboard() {
 	fmt.Println("  5. DeepSeek")
 	fmt.Println("  6. OpenRouter     (100+ models)")
 	fmt.Println("  7. Ollama         (local, no API key)")
-	fmt.Println("  8. Skip           (configure later)")
+	fmt.Println("  8. LM Studio / Custom API  (OpenAI-compatible)")
+	fmt.Println("  9. Skip           (configure later)")
 	fmt.Print("\nEnter number [1]: ")
 
 	choice := "1"
@@ -289,7 +290,48 @@ func onboard() {
 		"7": {name: "ollama", model: "llama3.2"},
 	}
 
-	if info, ok := providerMap[choice]; ok {
+	if choice == "8" {
+		// LM Studio / Custom OpenAI-compatible API
+		fmt.Println("\n  Enter the base URL of your OpenAI-compatible API.")
+		fmt.Println("  Examples:")
+		fmt.Println("    LM Studio:  http://localhost:1234/v1")
+		fmt.Println("    vLLM:       http://localhost:8000/v1")
+		fmt.Println("    Other:      http://your-server:port/v1")
+		fmt.Print("\nBase URL: ")
+
+		apiBase := ""
+		if scanner.Scan() {
+			apiBase = strings.TrimSpace(scanner.Text())
+		}
+		if apiBase == "" {
+			apiBase = "http://localhost:1234/v1"
+			fmt.Printf("  Using default: %s\n", apiBase)
+		}
+
+		fmt.Print("API key (press Enter if none): ")
+		apiKey := ""
+		if scanner.Scan() {
+			apiKey = strings.TrimSpace(scanner.Text())
+		}
+
+		fmt.Print("Model name (e.g. local-model): ")
+		modelName := ""
+		if scanner.Scan() {
+			modelName = strings.TrimSpace(scanner.Text())
+		}
+		if modelName == "" {
+			modelName = "local-model"
+		}
+
+		cfg.Agents.Defaults.Provider = "openai"
+		cfg.Agents.Defaults.Model = modelName
+		cfg.Providers.OpenAI.APIBase = apiBase
+		cfg.Providers.OpenAI.APIKey = apiKey
+
+		fmt.Println("\n✓ Custom API configured.")
+		fmt.Printf("  Base URL: %s\n", apiBase)
+		fmt.Printf("  Model: %s\n", modelName)
+	} else if info, ok := providerMap[choice]; ok {
 		cfg.Agents.Defaults.Model = info.model
 
 		if info.name == "ollama" {
@@ -313,7 +355,7 @@ func onboard() {
 			}
 			fmt.Printf("  Model: %s\n", cfg.Agents.Defaults.Model)
 		}
-	} else if choice != "8" {
+	} else if choice != "9" {
 		fmt.Println("\n⚠ Invalid choice. You can configure manually in:", configPath)
 	} else {
 		fmt.Println("\n⚠ Skipped. Add your provider and API key in:", configPath)
