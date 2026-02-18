@@ -475,6 +475,21 @@ func (al *AgentLoop) runLLMIteration(ctx context.Context, messages []providers.M
 			}
 
 			errMsg := strings.ToLower(err.Error())
+
+			// Check if model doesn't support tool calling — retry without tools
+			isToolError := strings.Contains(errMsg, "tool calling is not supported") ||
+				strings.Contains(errMsg, "tools are not supported") ||
+				strings.Contains(errMsg, "does not support tools") ||
+				strings.Contains(errMsg, "does not support function")
+			if isToolError && retry < maxRetries {
+				logger.WarnCF("agent", "Model does not support tool calling, retrying without tools", map[string]interface{}{
+					"error": err.Error(),
+					"retry": retry,
+				})
+				providerToolDefs = nil
+				continue
+			}
+
 			// Check for context window errors (provider specific, but usually contain "token" or "invalid")
 			isContextError := strings.Contains(errMsg, "token") ||
 				strings.Contains(errMsg, "context") ||
