@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/amit-vikramaditya/v1claw/pkg/config"
@@ -61,3 +63,32 @@ func TestValidateGatewaySecurity_SafePublicConfigPasses(t *testing.T) {
 	err := validateGatewaySecurity(cfg)
 	require.NoError(t, err)
 }
+
+func TestExecuteLocalCapability_Microphone_CommandInjection(t *testing.T) {
+	// Temporarily set up a fake Termux environment to allow executeLocalCapability to run
+	oldPath := os.Getenv("PATH")
+	tempDir := t.TempDir()
+	os.Setenv("PATH", tempDir+":"+oldPath)
+
+	// Create a dummy termux-microphone-record executable
+	err := os.WriteFile(filepath.Join(tempDir, "termux-microphone-record"), []byte(`#!/bin/sh
+	echo "Mock termux-microphone-record $*"
+	`), 0755)
+	require.NoError(t, err)
+
+	// Create a dummy file to simulate Termux environment in the temporary directory
+	termuxRoot := filepath.Join(t.TempDir(), "data", "data", "com.termux")
+	err = os.MkdirAll(termuxRoot, 0755)
+	require.NoError(t, err)
+
+	params := map[string]interface{}{
+		"duration": "5; malicious_command", // Attempt to inject a command
+	}
+
+	_, capErr := executeLocalCapability("microphone", "record", params, termuxRoot)
+	assert.Contains(t, capErr, "invalid duration parameter")
+
+	// Restore original PATH
+	os.Setenv("PATH", oldPath)
+}
+

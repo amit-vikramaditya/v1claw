@@ -26,6 +26,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"strconv"
 
 	"github.com/amit-vikramaditya/v1claw/pkg/agent"
 	"github.com/amit-vikramaditya/v1claw/pkg/api"
@@ -992,11 +993,11 @@ func handleCapabilityRequest(conn *websocket.Conn, requestID, capability, action
 
 	switch capability {
 	case "camera":
-		result, capErr = executeLocalCapability("camera", action, params)
+		result, capErr = executeLocalCapability("camera", action, params, "")
 	case "microphone":
-		result, capErr = executeLocalCapability("microphone", action, params)
+		result, capErr = executeLocalCapability("microphone", action, params, "")
 	case "screen":
-		result, capErr = executeLocalCapability("screen", action, params)
+		result, capErr = executeLocalCapability("screen", action, params, "")
 	default:
 		capErr = fmt.Sprintf("unsupported capability: %s", capability)
 	}
@@ -1015,10 +1016,14 @@ func handleCapabilityRequest(conn *websocket.Conn, requestID, capability, action
 	conn.WriteMessage(websocket.TextMessage, data)
 }
 
-func executeLocalCapability(capability, action string, params map[string]interface{}) (interface{}, string) {
+func executeLocalCapability(capability, action string, params map[string]interface{}, termuxRootOverride string) (interface{}, string) {
 	// Check if we're on Termux (Android).
 	isTermux := false
-	if _, err := os.Stat("/data/data/com.termux"); err == nil {
+	termuxPath := "/data/data/com.termux"
+	if termuxRootOverride != "" {
+		termuxPath = termuxRootOverride
+	}
+	if _, err := os.Stat(termuxPath); err == nil {
 		isTermux = true
 	}
 
@@ -1026,8 +1031,7 @@ func executeLocalCapability(capability, action string, params map[string]interfa
 	case "camera":
 		if isTermux {
 			outFile := filepath.Join(os.TempDir(), fmt.Sprintf("v1claw_cap_%d.jpg", time.Now().UnixNano()))
-			cmd := fmt.Sprintf("termux-camera-photo -c 0 %s", outFile)
-			output, err := execCommand(cmd)
+			output, err := execCommand("termux-camera-photo", "-c", "0", outFile)
 			if err != nil {
 				return nil, fmt.Sprintf("camera capture failed: %v (%s)", err, output)
 			}
@@ -1046,16 +1050,18 @@ func executeLocalCapability(capability, action string, params map[string]interfa
 	case "microphone":
 		if isTermux {
 			outFile := filepath.Join(os.TempDir(), fmt.Sprintf("v1claw_mic_%d.wav", time.Now().UnixNano()))
-			duration := "5"
+			durationStr := "5"
 			if d, ok := params["duration"].(string); ok {
-				duration = d
+				if _, err := strconv.Atoi(d); err != nil {
+					return nil, fmt.Sprintf("invalid duration parameter: %v", err)
+				}
+				durationStr = d
 			}
-			cmd := fmt.Sprintf("termux-microphone-record -f %s -l %s", outFile, duration)
-			if _, err := execCommand(cmd); err != nil {
+			if _, err := execCommand("termux-microphone-record", "-f", outFile, "-l", durationStr); err != nil {
 				return nil, fmt.Sprintf("mic record failed: %v", err)
 			}
 			time.Sleep(time.Duration(5) * time.Second)
-			execCommand("termux-microphone-record -q")
+			execCommand("termux-microphone-record", "-q")
 			audioData, err := os.ReadFile(outFile)
 			os.Remove(outFile)
 			if err != nil {
@@ -1071,8 +1077,7 @@ func executeLocalCapability(capability, action string, params map[string]interfa
 	case "screen":
 		if isTermux {
 			outFile := filepath.Join(os.TempDir(), fmt.Sprintf("v1claw_screen_%d.png", time.Now().UnixNano()))
-			cmd := fmt.Sprintf("termux-screenshot %s", outFile)
-			if _, err := execCommand(cmd); err != nil {
+			if _, err := execCommand("termux-screenshot", outFile); err != nil {
 				return nil, fmt.Sprintf("screenshot failed: %v", err)
 			}
 			imgData, err := os.ReadFile(outFile)
@@ -1091,8 +1096,8 @@ func executeLocalCapability(capability, action string, params map[string]interfa
 	return nil, fmt.Sprintf("unknown capability: %s", capability)
 }
 
-func execCommand(cmd string) (string, error) {
-	out, err := exec.Command("sh", "-c", cmd).CombinedOutput()
+func execCommand(name string, arg ...string) (string, error) {
+	out, err := exec.Command(name, arg...).CombinedOutput()
 	return string(out), err
 }
 
