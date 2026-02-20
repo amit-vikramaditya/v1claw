@@ -10,6 +10,8 @@ import (
 	"sync"
 	"time"
 
+	"golang.org/x/time/rate"
+
 	"github.com/amit-vikramaditya/v1claw/pkg/bus"
 	"github.com/amit-vikramaditya/v1claw/pkg/events"
 	"github.com/amit-vikramaditya/v1claw/pkg/logger"
@@ -29,6 +31,7 @@ type Server struct {
 	httpServer  *http.Server
 	wsClients   map[string]*wsClient
 	chatHandler ChatHandler
+	rateLimiter *rate.Limiter
 }
 
 // ChatHandler processes chat messages from the API and returns responses.
@@ -40,6 +43,8 @@ type Config struct {
 	Addr string `json:"addr"`
 	// APIKey is the authentication key for API access. Empty disables auth.
 	APIKey string `json:"api_key"`
+	// RateLimit is the maximum requests per second allowed for the API. 0 disables rate limiting.
+	RateLimit float64 `json:"rate_limit"`
 }
 
 // NewServer creates a new API server.
@@ -47,7 +52,7 @@ func NewServer(cfg Config, msgBus *bus.MessageBus, router *events.Router, stateM
 	if cfg.Addr == "" {
 		cfg.Addr = ":18791"
 	}
-	return &Server{
+	srv := &Server{
 		addr:      cfg.Addr,
 		apiKey:    cfg.APIKey,
 		msgBus:    msgBus,
@@ -56,6 +61,15 @@ func NewServer(cfg Config, msgBus *bus.MessageBus, router *events.Router, stateM
 		registry:  registry,
 		wsClients: make(map[string]*wsClient),
 	}
+
+	if cfg.RateLimit > 0 {
+		srv.rateLimiter = rate.NewLimiter(rate.Limit(cfg.RateLimit), int(cfg.RateLimit))
+		logger.InfoC("api", fmt.Sprintf("API rate limit enabled: %.2f req/s", cfg.RateLimit))
+	} else {
+		logger.InfoC("api", "API rate limiting disabled")
+	}
+
+	return srv
 }
 
 // SetChatHandler sets the function that processes chat messages.
@@ -70,15 +84,15 @@ func (s *Server) Start(ctx context.Context) error {
 	mux := http.NewServeMux()
 
 	// API routes
-	mux.HandleFunc("/api/v1/chat", s.authMiddleware(s.handleChat))
-	mux.HandleFunc("/api/v1/status", s.authMiddleware(s.handleStatus))
-	mux.HandleFunc("/api/v1/users", s.authMiddleware(s.handleUsers))
-	mux.HandleFunc("/api/v1/events", s.authMiddleware(s.handleEvents))
-	mux.HandleFunc("/api/v1/ws", s.authMiddleware(s.handleWebSocket))
+	mux.HandleFunc("/api/v1/chat", s.rateLimitMiddleware(s.authMiddleware(s.handleChat)))
+	mux.HandleFunc("/api/v1/status", s.rateLimitMiddleware(s.authMiddleware(s.handleStatus)))
+	mux.HandleFunc("/api/v1/users", s.rateLimitMiddleware(s.authMiddleware(s.handleUsers)))
+	mux.HandleFunc("/api/v1/events", s.rateLimitMiddleware(s.authMiddleware(s.handleEvents)))
+	mux.HandleFunc("/api/v1/ws", s.rateLimitMiddleware(s.authMiddleware(s.handleWebSocket)))
 
 	// Device registration routes
-	mux.HandleFunc("/api/v1/devices", s.authMiddleware(s.handleDevices))
-	mux.HandleFunc("/api/v1/devices/", s.authMiddleware(s.handleDeviceByID))
+	mux.HandleFunc("/api/v1/devices", s.rateLimitMiddleware(s.authMiddleware(s.handleDevices)))
+	mux.HandleFunc("/api/v1/devices/", s.rateLimitMiddleware(s.authMiddleware(s.handleDeviceByID)))
 
 	// Health endpoints (no auth)
 	mux.HandleFunc("/health", s.handleHealth)
@@ -147,6 +161,22 @@ func (s *Server) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 		token := strings.TrimPrefix(auth, "Bearer ")
 		if subtle.ConstantTimeCompare([]byte(token), []byte(s.apiKey)) != 1 {
 			writeJSON(w, http.StatusUnauthorized, ErrorResponse{Error: "invalid or missing API key"})
+			return
+		}
+
+		next(w, r)
+	}
+}
+
+func (s *Server) rateLimitMiddleware(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if s.rateLimiter == nil {
+			next(w, r)
+			return
+		}
+
+		if !s.rateLimiter.Allow() {
+			writeJSON(w, http.StatusTooManyRequests, ErrorResponse{Error: "rate limit exceeded"})
 			return
 		}
 

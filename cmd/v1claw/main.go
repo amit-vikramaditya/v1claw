@@ -23,10 +23,10 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
-	"strconv"
 
 	"github.com/amit-vikramaditya/v1claw/pkg/agent"
 	"github.com/amit-vikramaditya/v1claw/pkg/api"
@@ -66,6 +66,8 @@ var (
 )
 
 const logo = "🤖"
+
+var microphoneSleep = time.Sleep
 
 // formatVersion returns the version string with optional git commit
 func formatVersion() string {
@@ -1050,17 +1052,23 @@ func executeLocalCapability(capability, action string, params map[string]interfa
 	case "microphone":
 		if isTermux {
 			outFile := filepath.Join(os.TempDir(), fmt.Sprintf("v1claw_mic_%d.wav", time.Now().UnixNano()))
-			durationStr := "5"
-			if d, ok := params["duration"].(string); ok {
-				if _, err := strconv.Atoi(d); err != nil {
+			duration := 5 // Default to 5 seconds
+			if dStr, ok := params["duration"].(string); ok {
+				if parsedDuration, err := strconv.Atoi(dStr); err != nil {
 					return nil, fmt.Sprintf("invalid duration parameter: %v", err)
+				} else {
+					duration = parsedDuration
 				}
-				durationStr = d
 			}
-			if _, err := execCommand("termux-microphone-record", "-f", outFile, "-l", durationStr); err != nil {
+			// Clamp duration to a reasonable maximum to prevent DoS (e.g., 5 minutes)
+			if duration > 300 {
+				duration = 300
+			}
+
+			if _, err := execCommand("termux-microphone-record", "-f", outFile, "-l", strconv.Itoa(duration)); err != nil {
 				return nil, fmt.Sprintf("mic record failed: %v", err)
 			}
-			time.Sleep(time.Duration(5) * time.Second)
+			microphoneSleep(time.Duration(duration) * time.Second)
 			execCommand("termux-microphone-record", "-q")
 			audioData, err := os.ReadFile(outFile)
 			os.Remove(outFile)

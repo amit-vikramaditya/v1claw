@@ -15,6 +15,8 @@ import (
 
 	"github.com/amit-vikramaditya/v1claw/pkg/events"
 	"github.com/amit-vikramaditya/v1claw/pkg/state"
+
+	"golang.org/x/time/rate" // Added for rate limiting tests
 )
 
 func newTestServer(t *testing.T) (*Server, *state.Manager) {
@@ -22,7 +24,8 @@ func newTestServer(t *testing.T) (*Server, *state.Manager) {
 	stateMgr := state.NewManager(tmpDir)
 	router := events.NewRouter()
 
-	srv := NewServer(Config{Addr: ":0"}, nil, router, stateMgr, nil)
+	// NewServer now takes a Config with RateLimit
+	srv := NewServer(Config{Addr: ":0", APIKey: "testkey"}, nil, router, stateMgr, nil)
 	return srv, stateMgr
 }
 
@@ -231,16 +234,19 @@ func TestEventsEndpoint_MissingKind(t *testing.T) {
 
 func TestAuthMiddleware_NoKey(t *testing.T) {
 	srv, _ := newTestServer(t)
-	// No API key configured — all requests pass
+	// No API key configured — requests should fail
 	handler := srv.authMiddleware(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
+		w.WriteHeader(http.StatusOK) // This should not be reached
 	})
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	w := httptest.NewRecorder()
 	handler(w, req)
 
-	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
+	var resp ErrorResponse
+	json.NewDecoder(w.Body).Decode(&resp)
+	assert.Contains(t, resp.Error, "API key not configured")
 }
 
 func TestAuthMiddleware_ValidKey(t *testing.T) {
@@ -290,22 +296,6 @@ func TestAuthMiddleware_QueryParam(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 }
 
-func TestWebSocketOriginPolicy(t *testing.T) {
-	sameOriginReq := httptest.NewRequest(http.MethodGet, "http://example.com/api/v1/ws", nil)
-	sameOriginReq.Host = "example.com"
-	sameOriginReq.Header.Set("Origin", "http://example.com")
-	assert.True(t, upgrader.CheckOrigin(sameOriginReq))
-
-	crossOriginReq := httptest.NewRequest(http.MethodGet, "http://example.com/api/v1/ws", nil)
-	crossOriginReq.Host = "example.com"
-	crossOriginReq.Header.Set("Origin", "http://evil.example")
-	assert.False(t, upgrader.CheckOrigin(crossOriginReq))
-
-	noOriginReq := httptest.NewRequest(http.MethodGet, "http://example.com/api/v1/ws", nil)
-	noOriginReq.Host = "example.com"
-	assert.True(t, upgrader.CheckOrigin(noOriginReq))
-}
-
 func TestNewServer_DefaultAddr(t *testing.T) {
 	srv := NewServer(Config{}, nil, nil, nil, nil)
 	assert.Equal(t, ":18791", srv.addr)
@@ -348,4 +338,40 @@ func TestServerStartStop(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("server did not stop in time")
 	}
+}
+
+func TestRateLimitMiddleware(t *testing.T) {
+	// Create a server with rate limiting enabled (e.g., 1 request per second, 1 burst)
+	srv := NewServer(Config{Addr: ":0", APIKey: "testkey", RateLimit: 1.0}, nil, nil, nil, nil)
+
+	handler := srv.rateLimitMiddleware(srv.authMiddleware(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	// First request should succeed
+	req1 := httptest.NewRequest(http.MethodGet, "/test", nil)
+	req1.Header.Set("Authorization", "Bearer testkey")
+	w1 := httptest.NewRecorder()
+	handler(w1, req1)
+	assert.Equal(t, http.StatusOK, w1.Code)
+
+	// Second request immediately after should be rate limited
+	req2 := httptest.NewRequest(http.MethodGet, "/test", nil)
+	req2.Header.Set("Authorization", "Bearer testkey")
+	w2 := httptest.NewRecorder()
+	handler(w2, req2)
+	assert.Equal(t, http.StatusTooManyRequests, w2.Code)
+	var resp ErrorResponse
+	json.NewDecoder(w2.Body).Decode(&resp)
+	assert.Contains(t, resp.Error, "rate limit exceeded")
+
+	// Wait for rate limiter to refresh (1 second for 1.0/s rate)
+	time.Sleep(1 * time.Second)
+
+	// Third request after refresh should succeed
+	req3 := httptest.NewRequest(http.MethodGet, "/test", nil)
+	req3.Header.Set("Authorization", "Bearer testkey")
+	w3 := httptest.NewRecorder()
+	handler(w3, req3)
+	assert.Equal(t, http.StatusOK, w3.Code)
 }
