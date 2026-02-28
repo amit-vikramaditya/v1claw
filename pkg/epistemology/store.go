@@ -50,7 +50,7 @@ func (s *JSONGraphStore) AssertFact(subject, predicate, object, source string, c
 		if strings.EqualFold(fact.Subject, subject) &&
 			strings.EqualFold(fact.Predicate, predicate) &&
 			strings.EqualFold(fact.Object, object) {
-			
+
 			// Update confidence and source if needed
 			fact.Confidence = confidence
 			fact.Source = source
@@ -64,7 +64,7 @@ func (s *JSONGraphStore) AssertFact(subject, predicate, object, source string, c
 	// Create new fact
 	id := fmt.Sprintf("fact_%d", time.Now().UnixNano())
 	now := time.Now()
-	
+
 	newFact := Fact{
 		ID:         id,
 		Subject:    subject,
@@ -78,11 +78,11 @@ func (s *JSONGraphStore) AssertFact(subject, predicate, object, source string, c
 
 	s.facts[id] = newFact
 	s.save()
-	
+
 	logger.DebugCF("epistemology", "Fact asserted", map[string]interface{}{
 		"id": id, "subject": subject, "predicate": predicate, "object": object,
 	})
-	
+
 	return id, nil
 }
 
@@ -97,7 +97,7 @@ func (s *JSONGraphStore) Query(q Query) ([]Fact, error) {
 		if fact.RefutedBy != "" {
 			continue
 		}
-		
+
 		if fact.Confidence < q.MinConf {
 			continue
 		}
@@ -145,7 +145,7 @@ func (s *JSONGraphStore) RefuteFact(targetID, refutingID string) error {
 	if !exists {
 		return fmt.Errorf("target fact %s not found", targetID)
 	}
-	
+
 	if _, exists := s.facts[refutingID]; !exists {
 		return fmt.Errorf("refuting fact %s not found", refutingID)
 	}

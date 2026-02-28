@@ -8,11 +8,11 @@ import (
 // It follows a Subject-Predicate-Object structure.
 type Fact struct {
 	ID         string    `json:"id"`
-	Subject    string    `json:"subject"`   // e.g., "User"
-	Predicate  string    `json:"predicate"` // e.g., "prefers"
-	Object     string    `json:"object"`    // e.g., "concise answers"
+	Subject    string    `json:"subject"`    // e.g., "User"
+	Predicate  string    `json:"predicate"`  // e.g., "prefers"
+	Object     string    `json:"object"`     // e.g., "concise answers"
 	Confidence float64   `json:"confidence"` // 0.0 to 1.0
-	Source     string    `json:"source"`    // How this was learned (e.g., "chat_inference", "user_explicit")
+	Source     string    `json:"source"`     // How this was learned (e.g., "chat_inference", "user_explicit")
 	CreatedAt  time.Time `json:"created_at"`
 	UpdatedAt  time.Time `json:"updated_at"`
 	RefutedBy  string    `json:"refuted_by,omitempty"` // ID of another fact that contradicts this one

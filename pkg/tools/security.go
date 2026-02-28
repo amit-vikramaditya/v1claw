@@ -53,7 +53,7 @@ func (m *SandboxMiddleware) VerifyCommand(command string) (string, error) {
 		"command": command,
 		"image":   m.ContainerImage,
 	})
-	
+
 	// Example transformation: "docker run --rm -v ... image /bin/sh -c 'command'"
 	return command, nil
 }

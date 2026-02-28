@@ -22,7 +22,7 @@ type CLIInteractionProfile struct {
 // LoadProfilesFromConfig converts user config workers into interaction profiles.
 func LoadProfilesFromConfig(workers []config.CLIWorkerConfig) map[string]CLIInteractionProfile {
 	profiles := make(map[string]CLIInteractionProfile)
-	
+
 	// Add built-ins first
 	for k, v := range BuiltinProfiles {
 		profiles[k] = v
@@ -128,7 +128,7 @@ func (w *AutonomousCLIWorker) Execute(ctx context.Context, task string) (string,
 
 	cmd := exec.CommandContext(ctx, w.Profile.Command, args...)
 	output, err := cmd.CombinedOutput()
-	
+
 	// We return output even on error as it often contains the AI's explanation of the failure
 	return string(output), err
 }
