@@ -14,10 +14,10 @@ func TestFilesystemTool_ReadFile_Success(t *testing.T) {
 	testFile := filepath.Join(tmpDir, "test.txt")
 	os.WriteFile(testFile, []byte("test content"), 0644)
 
-	tool := &ReadFileTool{}
+	tool := NewReadFileTool(tmpDir, true, nil) // Updated: Use NewReadFileTool with workspace, allowFsAccess, and nil bus
 	ctx := context.Background()
 	args := map[string]interface{}{
-		"path": testFile,
+		"path": "test.txt", // Updated: Path relative to workspace
 	}
 
 	result := tool.Execute(ctx, ToolContext{}, args)
@@ -41,7 +41,8 @@ func TestFilesystemTool_ReadFile_Success(t *testing.T) {
 
 // TestFilesystemTool_ReadFile_NotFound verifies error handling for missing file
 func TestFilesystemTool_ReadFile_NotFound(t *testing.T) {
-	tool := &ReadFileTool{}
+	tmpDir := t.TempDir()                      // Added: Create a temporary directory for the workspace
+	tool := NewReadFileTool(tmpDir, true, nil) // Updated: Use NewReadFileTool with workspace, allowFsAccess, and nil bus
 	ctx := context.Background()
 	args := map[string]interface{}{
 		"path": "/nonexistent_file_12345.txt",
@@ -62,7 +63,8 @@ func TestFilesystemTool_ReadFile_NotFound(t *testing.T) {
 
 // TestFilesystemTool_ReadFile_MissingPath verifies error handling for missing path
 func TestFilesystemTool_ReadFile_MissingPath(t *testing.T) {
-	tool := &ReadFileTool{}
+	tmpDir := t.TempDir()                      // Added: Create a temporary directory for the workspace
+	tool := NewReadFileTool(tmpDir, true, nil) // Updated: Use NewReadFileTool with workspace, allowFsAccess, and nil bus
 	ctx := context.Background()
 	args := map[string]interface{}{}
 
@@ -82,9 +84,9 @@ func TestFilesystemTool_ReadFile_MissingPath(t *testing.T) {
 // TestFilesystemTool_WriteFile_Success verifies successful file writing
 func TestFilesystemTool_WriteFile_Success(t *testing.T) {
 	tmpDir := t.TempDir()
-	testFile := filepath.Join(tmpDir, "newfile.txt")
+	testFile := "newfile.txt" // Updated: Path relative to workspace
 
-	tool := &WriteFileTool{}
+	tool := NewWriteFileTool(tmpDir, true, nil) // Updated: Use NewWriteFileTool with workspace, allowFsAccess, and nil bus
 	ctx := context.Background()
 	args := map[string]interface{}{
 		"path":    testFile,
@@ -109,7 +111,7 @@ func TestFilesystemTool_WriteFile_Success(t *testing.T) {
 	}
 
 	// Verify file was actually written
-	content, err := os.ReadFile(testFile)
+	content, err := os.ReadFile(filepath.Join(tmpDir, testFile)) // Updated: Read from tmpDir
 	if err != nil {
 		t.Fatalf("Failed to read written file: %v", err)
 	}
@@ -121,9 +123,9 @@ func TestFilesystemTool_WriteFile_Success(t *testing.T) {
 // TestFilesystemTool_WriteFile_CreateDir verifies directory creation
 func TestFilesystemTool_WriteFile_CreateDir(t *testing.T) {
 	tmpDir := t.TempDir()
-	testFile := filepath.Join(tmpDir, "subdir", "newfile.txt")
+	testFile := filepath.Join("subdir", "newfile.txt") // Updated: Path relative to workspace
 
-	tool := &WriteFileTool{}
+	tool := NewWriteFileTool(tmpDir, true, nil) // Updated: Use NewWriteFileTool with workspace, allowFsAccess, and nil bus
 	ctx := context.Background()
 	args := map[string]interface{}{
 		"path":    testFile,
@@ -138,7 +140,7 @@ func TestFilesystemTool_WriteFile_CreateDir(t *testing.T) {
 	}
 
 	// Verify directory was created and file written
-	content, err := os.ReadFile(testFile)
+	content, err := os.ReadFile(filepath.Join(tmpDir, testFile)) // Updated: Read from tmpDir
 	if err != nil {
 		t.Fatalf("Failed to read written file: %v", err)
 	}
@@ -149,7 +151,8 @@ func TestFilesystemTool_WriteFile_CreateDir(t *testing.T) {
 
 // TestFilesystemTool_WriteFile_MissingPath verifies error handling for missing path
 func TestFilesystemTool_WriteFile_MissingPath(t *testing.T) {
-	tool := &WriteFileTool{}
+	tmpDir := t.TempDir()                       // Added: Create a temporary directory for the workspace
+	tool := NewWriteFileTool(tmpDir, true, nil) // Updated: Use NewWriteFileTool with workspace, allowFsAccess, and nil bus
 	ctx := context.Background()
 	args := map[string]interface{}{
 		"content": "test",
@@ -165,7 +168,8 @@ func TestFilesystemTool_WriteFile_MissingPath(t *testing.T) {
 
 // TestFilesystemTool_WriteFile_MissingContent verifies error handling for missing content
 func TestFilesystemTool_WriteFile_MissingContent(t *testing.T) {
-	tool := &WriteFileTool{}
+	tmpDir := t.TempDir()                       // Added: Create a temporary directory for the workspace
+	tool := NewWriteFileTool(tmpDir, true, nil) // Updated: Use NewWriteFileTool with workspace, allowFsAccess, and nil bus
 	ctx := context.Background()
 	args := map[string]interface{}{
 		"path": "/tmp/test.txt",
@@ -191,10 +195,10 @@ func TestFilesystemTool_ListDir_Success(t *testing.T) {
 	os.WriteFile(filepath.Join(tmpDir, "file2.txt"), []byte("content"), 0644)
 	os.Mkdir(filepath.Join(tmpDir, "subdir"), 0755)
 
-	tool := &ListDirTool{}
+	tool := NewListDirTool(tmpDir, true, nil) // Updated: Use NewListDirTool with workspace, allowFsAccess, and nil bus
 	ctx := context.Background()
 	args := map[string]interface{}{
-		"path": tmpDir,
+		"path": ".", // Updated: Path relative to workspace
 	}
 
 	result := tool.Execute(ctx, ToolContext{}, args)
@@ -215,7 +219,8 @@ func TestFilesystemTool_ListDir_Success(t *testing.T) {
 
 // TestFilesystemTool_ListDir_NotFound verifies error handling for non-existent directory
 func TestFilesystemTool_ListDir_NotFound(t *testing.T) {
-	tool := &ListDirTool{}
+	tmpDir := t.TempDir()                     // Added: Create a temporary directory for the workspace
+	tool := NewListDirTool(tmpDir, true, nil) // Updated: Use NewListDirTool with workspace, allowFsAccess, and nil bus
 	ctx := context.Background()
 	args := map[string]interface{}{
 		"path": "/nonexistent_directory_12345",
@@ -236,7 +241,8 @@ func TestFilesystemTool_ListDir_NotFound(t *testing.T) {
 
 // TestFilesystemTool_ListDir_DefaultPath verifies default to current directory
 func TestFilesystemTool_ListDir_DefaultPath(t *testing.T) {
-	tool := &ListDirTool{}
+	tmpDir := t.TempDir()                     // Added: Create a temporary directory for the workspace
+	tool := NewListDirTool(tmpDir, true, nil) // Updated: Use NewListDirTool with workspace, allowFsAccess, and nil bus
 	ctx := context.Background()
 	args := map[string]interface{}{}
 
@@ -267,9 +273,9 @@ func TestFilesystemTool_ReadFile_RejectsSymlinkEscape(t *testing.T) {
 		t.Skipf("symlink not supported in this environment: %v", err)
 	}
 
-	tool := NewReadFileTool(workspace, true)
+	tool := NewReadFileTool(workspace, true, nil) // Updated: Added nil for bus parameter
 	result := tool.Execute(context.Background(), ToolContext{}, map[string]interface{}{
-		"path": link,
+		"path": "leak.txt", // Updated: Path relative to workspace
 	})
 
 	if !result.IsError {

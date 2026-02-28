@@ -632,6 +632,74 @@ func onboard() {
 		}
 	}
 
+	// --- PHASE 4: WORKSPACE & SANDBOX SECURITY ---
+	fmt.Println("\n📁 Phase 4: Workspace & Security")
+
+	cwd, _ := os.Getwd()
+	defaultWorkspace := config.DefaultWorkspaceDir()
+
+	workspaceOpts := []string{
+		fmt.Sprintf("Default (%s)", defaultWorkspace),
+		fmt.Sprintf("Current Directory (%s)", cwd),
+		"Custom Path...",
+	}
+
+	workspaceChoice := ""
+	promptWorkspace := &survey.Select{
+		Message: "Where should V1Claw create its project workspace?",
+		Options: workspaceOpts,
+	}
+	survey.AskOne(promptWorkspace, &workspaceChoice)
+
+	if workspaceChoice == workspaceOpts[0] {
+		cfg.Workspace.Path = defaultWorkspace
+	} else if workspaceChoice == workspaceOpts[1] {
+		cfg.Workspace.Path = cwd
+	} else {
+		// Custom path
+		customPath := ""
+		promptCustom := &survey.Input{
+			Message: "Enter absolute path to workspace:",
+		}
+		survey.AskOne(promptCustom, &customPath)
+		if customPath != "" {
+			customPath = filepath.Clean(customPath)
+			if strings.HasPrefix(customPath, "~/") {
+				home, _ := os.UserHomeDir()
+				customPath = filepath.Join(home, customPath[2:])
+			}
+			cfg.Workspace.Path = customPath
+		} else {
+			cfg.Workspace.Path = defaultWorkspace // fallback
+		}
+	}
+
+	// Sync the legacy context defaults to match the new Workspace schema
+	cfg.Agents.Defaults.Workspace = cfg.Workspace.Path
+
+	fmt.Printf("✓ Workspace configured at: %s\n", cfg.Workspace.Path)
+
+	securityChoice := ""
+	promptSecurity := &survey.Select{
+		Message: "Security Configuration: How much of your machine can I see?",
+		Options: []string{
+			fmt.Sprintf("Strict Sandbox (Recommended) - Restricted only to %s", cfg.Workspace.Path),
+			"Global OS Access (Danger Zone) - I can read/edit ANY file on your disk.",
+		},
+	}
+	survey.AskOne(promptSecurity, &securityChoice)
+
+	if strings.HasPrefix(securityChoice, "Strict Sandbox") {
+		cfg.Workspace.Sandboxed = true
+		cfg.Agents.Defaults.RestrictToWorkspace = true // Sync legacy rules
+		fmt.Println("✓ Sandbox Enabled. Agent cannot escape the workspace directory.")
+	} else {
+		cfg.Workspace.Sandboxed = false
+		cfg.Agents.Defaults.RestrictToWorkspace = false
+		fmt.Println("⚠️  Warning: Global Access granted. Agent has root visibility.")
+	}
+	// --- END PHASE 4 ---
+
 	if err := config.SaveConfig(configPath, cfg); err != nil {
 		fmt.Printf("Error saving config: %v\n", err)
 		os.Exit(1)

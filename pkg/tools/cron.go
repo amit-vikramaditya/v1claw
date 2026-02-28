@@ -31,7 +31,7 @@ type CronTool struct {
 // NewCronTool creates a new CronTool
 // execTimeout: 0 means no timeout, >0 sets the timeout duration
 func NewCronTool(cronService *cron.CronService, executor JobExecutor, msgBus *bus.MessageBus, workspace string, restrict bool, execTimeout time.Duration) *CronTool {
-	execTool := NewExecTool(workspace, restrict)
+	execTool := NewExecTool(workspace, restrict, nil)
 	execTool.SetTimeout(execTimeout) // 0 means no timeout
 	return &CronTool{
 		cronService: cronService,

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/amit-vikramaditya/v1claw/pkg/bus"
 	"github.com/amit-vikramaditya/v1claw/pkg/permissions"
 )
 
@@ -21,9 +22,10 @@ type ExecTool struct {
 	allowPatterns       []*regexp.Regexp
 	restrictToWorkspace bool
 	securityMiddleware  SecurityMiddleware
+	bus                 *bus.MessageBus
 }
 
-func NewExecTool(workingDir string, restrict bool) *ExecTool {
+func NewExecTool(workingDir string, restrict bool, msgBus *bus.MessageBus) *ExecTool {
 	// ... (retain existing denyPatterns for layered security)
 	denyPatterns := []*regexp.Regexp{
 		// ... existing code ...
@@ -37,6 +39,7 @@ func NewExecTool(workingDir string, restrict bool) *ExecTool {
 		allowPatterns:       nil,
 		restrictToWorkspace: restrict,
 		securityMiddleware:  &AllowlistMiddleware{Allowed: DefaultAllowlist},
+		bus:                 msgBus,
 	}
 }
 
@@ -94,6 +97,13 @@ func (t *ExecTool) Execute(ctx context.Context, tc ToolContext, args map[string]
 			}
 
 			if !strings.HasPrefix(cwdReal, absWD+string(filepath.Separator)) && cwdReal != absWD {
+				if t.bus != nil && tc.Channel != "" {
+					t.bus.PublishOutbound(bus.OutboundMessage{
+						Channel: tc.Channel,
+						ChatID:  tc.ChatID,
+						Content: fmt.Sprintf("⚠️ **Security Alert**: I attempted to execute a command in `%s` but was blocked by your Strict Sandbox configuration. I am restricted to `%s`.", cwdReal, t.workingDir),
+					})
+				}
 				return ErrorResult("working_dir must be within the workspace directory")
 			}
 		}

@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/amit-vikramaditya/v1claw/pkg/bus"
 )
 
 // validatePath ensures the given path is within the workspace if restrict is true.
@@ -63,10 +65,11 @@ func isWithinWorkspace(candidate, workspace string) bool {
 type ReadFileTool struct {
 	workspace string
 	restrict  bool
+	bus       *bus.MessageBus
 }
 
-func NewReadFileTool(workspace string, restrict bool) *ReadFileTool {
-	return &ReadFileTool{workspace: workspace, restrict: restrict}
+func NewReadFileTool(workspace string, restrict bool, msgBus *bus.MessageBus) *ReadFileTool {
+	return &ReadFileTool{workspace: workspace, restrict: restrict, bus: msgBus}
 }
 
 func (t *ReadFileTool) Name() string {
@@ -102,6 +105,13 @@ func (t *ReadFileTool) Execute(ctx context.Context, tc ToolContext, args map[str
 
 	resolvedPath, err := validatePath(path, t.workspace, t.restrict)
 	if err != nil {
+		if t.bus != nil && tc.Channel != "" {
+			t.bus.PublishOutbound(bus.OutboundMessage{
+				Channel: tc.Channel,
+				ChatID:  tc.ChatID,
+				Content: fmt.Sprintf("⚠️ **Security Alert**: I attempted to read `%s` but was blocked by your Strict Sandbox configuration. I am restricted to `%s`.", path, t.workspace),
+			})
+		}
 		return ErrorResult(err.Error())
 	}
 
@@ -143,10 +153,11 @@ func (t *ReadFileTool) Execute(ctx context.Context, tc ToolContext, args map[str
 type WriteFileTool struct {
 	workspace string
 	restrict  bool
+	bus       *bus.MessageBus
 }
 
-func NewWriteFileTool(workspace string, restrict bool) *WriteFileTool {
-	return &WriteFileTool{workspace: workspace, restrict: restrict}
+func NewWriteFileTool(workspace string, restrict bool, msgBus *bus.MessageBus) *WriteFileTool {
+	return &WriteFileTool{workspace: workspace, restrict: restrict, bus: msgBus}
 }
 
 func (t *WriteFileTool) Name() string {
@@ -187,6 +198,13 @@ func (t *WriteFileTool) Execute(ctx context.Context, tc ToolContext, args map[st
 
 	resolvedPath, err := validatePath(path, t.workspace, t.restrict)
 	if err != nil {
+		if t.bus != nil && tc.Channel != "" {
+			t.bus.PublishOutbound(bus.OutboundMessage{
+				Channel: tc.Channel,
+				ChatID:  tc.ChatID,
+				Content: fmt.Sprintf("⚠️ **Security Alert**: I attempted to write to `%s` but was blocked by your Strict Sandbox configuration. I am restricted to `%s`.", path, t.workspace),
+			})
+		}
 		return ErrorResult(err.Error())
 	}
 
@@ -222,10 +240,11 @@ func (t *WriteFileTool) Execute(ctx context.Context, tc ToolContext, args map[st
 type ListDirTool struct {
 	workspace string
 	restrict  bool
+	bus       *bus.MessageBus
 }
 
-func NewListDirTool(workspace string, restrict bool) *ListDirTool {
-	return &ListDirTool{workspace: workspace, restrict: restrict}
+func NewListDirTool(workspace string, restrict bool, msgBus *bus.MessageBus) *ListDirTool {
+	return &ListDirTool{workspace: workspace, restrict: restrict, bus: msgBus}
 }
 
 func (t *ListDirTool) Name() string {
@@ -257,6 +276,13 @@ func (t *ListDirTool) Execute(ctx context.Context, tc ToolContext, args map[stri
 
 	resolvedPath, err := validatePath(path, t.workspace, t.restrict)
 	if err != nil {
+		if t.bus != nil && tc.Channel != "" {
+			t.bus.PublishOutbound(bus.OutboundMessage{
+				Channel: tc.Channel,
+				ChatID:  tc.ChatID,
+				Content: fmt.Sprintf("⚠️ **Security Alert**: I attempted to browse `%s` but was blocked by your Strict Sandbox configuration. I am restricted to `%s`.", path, t.workspace),
+			})
+		}
 		return ErrorResult(err.Error())
 	}
 

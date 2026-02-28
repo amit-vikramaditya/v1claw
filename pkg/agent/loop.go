@@ -66,9 +66,9 @@ func createToolRegistry(workspace string, restrict bool, cfg *config.Config, msg
 	registry := tools.NewToolRegistry()
 
 	// File system tools
-	registry.Register(tools.NewReadFileTool(workspace, restrict))
-	registry.Register(tools.NewWriteFileTool(workspace, restrict))
-	registry.Register(tools.NewListDirTool(workspace, restrict))
+	registry.Register(tools.NewReadFileTool(workspace, restrict, msgBus))
+	registry.Register(tools.NewWriteFileTool(workspace, restrict, msgBus))
+	registry.Register(tools.NewListDirTool(workspace, restrict, msgBus))
 	registry.Register(tools.NewEditFileTool(workspace, restrict))
 	registry.Register(tools.NewAppendFileTool(workspace, restrict))
 
@@ -79,7 +79,8 @@ func createToolRegistry(workspace string, restrict bool, cfg *config.Config, msg
 	}
 
 	// Shell execution
-	registry.Register(tools.NewExecTool(workspace, restrict))
+	execTool := tools.NewExecTool(workspace, restrict, msgBus)
+	registry.Register(execTool)
 
 	if searchTool := tools.NewWebSearchTool(tools.WebSearchToolOptions{
 		BraveAPIKey:          cfg.Tools.Web.Brave.APIKey,

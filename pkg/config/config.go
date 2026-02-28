@@ -44,6 +44,7 @@ func (f *FlexibleStringSlice) UnmarshalJSON(data []byte) error {
 }
 
 type Config struct {
+	Workspace   WorkspaceConfig   `json:"workspace"`
 	Agents      AgentsConfig      `json:"agents"`
 	Channels    ChannelsConfig    `json:"channels"`
 	Providers   ProvidersConfig   `json:"providers"`
@@ -56,6 +57,12 @@ type Config struct {
 	Voice       VoiceConfig       `json:"voice"`
 	Permissions PermissionsConfig `json:"permissions"`
 	mu          sync.RWMutex
+}
+
+// WorkspaceConfig manages the designated file-system paths and security sandbox posture.
+type WorkspaceConfig struct {
+	Path      string `json:"path"`
+	Sandboxed bool   `json:"sandboxed"`
 }
 
 // CouncilConfig controls the dynamic multi-agent fallback routing system.
@@ -275,11 +282,23 @@ type ToolsConfig struct {
 	Cron CronToolsConfig `json:"cron"`
 }
 
+func DefaultWorkspaceDir() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "." // fallback to current dir if no home available
+	}
+	return filepath.Join(home, ".v1claw", "workspace")
+}
+
 func DefaultConfig() *Config {
 	return &Config{
+		Workspace: WorkspaceConfig{
+			Path:      DefaultWorkspaceDir(),
+			Sandboxed: true, // Default to strict security
+		},
 		Agents: AgentsConfig{
 			Defaults: AgentDefaults{
-				Workspace:           "~/.v1claw/workspace",
+				Workspace:           DefaultWorkspaceDir(),
 				RestrictToWorkspace: true,
 				Provider:            "",
 				Model:               "",
