@@ -28,6 +28,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/AlecAivazis/survey/v2"
 	"github.com/amit-vikramaditya/v1claw/pkg/agent"
 	"github.com/amit-vikramaditya/v1claw/pkg/api"
 	"github.com/amit-vikramaditya/v1claw/pkg/auth"
@@ -352,187 +353,282 @@ func onboard() {
 			userPrefs = strings.TrimSpace(scanner.Text())
 		}
 
-		fmt.Println("\n🔧 Let's set up your AI provider.")
-		fmt.Println("")
-		fmt.Println("  Cloud providers:")
-		fmt.Println("    1. Google Gemini    (free tier available — recommended)")
-		fmt.Println("    2. OpenAI           (GPT-5, GPT-4)")
-		fmt.Println("    3. Anthropic        (Claude)")
-		fmt.Println("    4. Groq             (fast inference, free tier)")
-		fmt.Println("    5. DeepSeek         (DeepSeek V3, Coder)")
-		fmt.Println("    6. OpenRouter       (100+ models, single API key)")
-		fmt.Println("    7. NVIDIA NIM       (NVIDIA hosted models)")
-		fmt.Println("    8. GitHub Copilot   (use your Copilot subscription)")
-		fmt.Println("")
-		fmt.Println("  Local / self-hosted:")
-		fmt.Println("    9. Ollama           (run models locally, no API key)")
-		fmt.Println("   10. LM Studio / Custom API  (any OpenAI-compatible server)")
-		fmt.Println("")
-		fmt.Println("  Other:")
-		fmt.Println("   11. Edit config manually  (open in nano/vim)")
-		fmt.Println("   12. Skip                  (configure later)")
-		fmt.Print("\nEnter number [1]: ")
+		fmt.Println("\n🔧 Let's set up your AI providers.")
 
-		choice := "1"
-		if scanner.Scan() {
-			t := strings.TrimSpace(scanner.Text())
-			if t != "" {
-				choice = t
-			}
-		}
-
+		// Map for our traditional providers
 		type providerInfo struct {
+			id      string
 			name    string
-			models  string // example model names shown to user
+			desc    string
 			keyHint string
 			keyURL  string
 		}
 
-		providerMap := map[string]providerInfo{
-			"1": {name: "gemini", models: "gemini-2.0-flash-lite, gemini-2.0-flash, gemini-2.5-flash", keyHint: "Gemini API key", keyURL: "https://aistudio.google.com/apikey"},
-			"2": {name: "openai", models: "gpt-4o, gpt-4o-mini, gpt-5, o1", keyHint: "OpenAI API key (starts with sk-)", keyURL: "https://platform.openai.com/api-keys"},
-			"3": {name: "anthropic", models: "claude-sonnet-4-20250514, claude-3.5-haiku-20241022", keyHint: "Anthropic API key (starts with sk-ant-)", keyURL: "https://console.anthropic.com/keys"},
-			"4": {name: "groq", models: "llama-3.3-70b-versatile, mixtral-8x7b-32768, gemma2-9b-it", keyHint: "Groq API key", keyURL: "https://console.groq.com/keys"},
-			"5": {name: "deepseek", models: "deepseek-chat, deepseek-coder, deepseek-reasoner", keyHint: "DeepSeek API key", keyURL: "https://platform.deepseek.com/api_keys"},
-			"6": {name: "openrouter", models: "google/gemini-2.0-flash-exp:free, meta-llama/llama-3-8b-instruct:free", keyHint: "OpenRouter API key", keyURL: "https://openrouter.ai/keys"},
-			"7": {name: "nvidia", models: "meta/llama-3.1-70b-instruct, nvidia/nemotron-4-340b-instruct", keyHint: "NVIDIA API key", keyURL: "https://build.nvidia.com"},
-			"8": {name: "github_copilot", models: "gpt-4o, gpt-4o-mini", keyHint: "GitHub Copilot token", keyURL: "https://github.com/settings/copilot"},
+		traditional := []providerInfo{
+			{id: "gemini", name: "Google Gemini", desc: "Free tier available — recommended", keyHint: "Gemini API key", keyURL: "https://aistudio.google.com/apikey"},
+			{id: "openai", name: "OpenAI", desc: "GPT-5, GPT-4o, o3", keyHint: "OpenAI API key (starts with sk-)", keyURL: "https://platform.openai.com/api-keys"},
+			{id: "anthropic", name: "Anthropic", desc: "Claude Opus 4.6, Sonnet", keyHint: "Anthropic API key (starts with sk-ant-)", keyURL: "https://console.anthropic.com/keys"},
+			{id: "groq", name: "Groq", desc: "Llama 3.3, Fast inference, free tier", keyHint: "Groq API key", keyURL: "https://console.groq.com/keys"},
+			{id: "deepseek", name: "DeepSeek", desc: "DeepSeek V3, Coder", keyHint: "DeepSeek API key", keyURL: "https://platform.deepseek.com/api_keys"},
+			{id: "openrouter", name: "OpenRouter", desc: "100+ models, single API key", keyHint: "OpenRouter API key", keyURL: "https://openrouter.ai/keys"},
+			{id: "nvidia", name: "NVIDIA NIM", desc: "NVIDIA hosted models", keyHint: "NVIDIA API key", keyURL: "https://build.nvidia.com"},
 		}
 
-		switch {
-		case choice == "9":
-			// Ollama
-			fmt.Println("\n✓ Ollama selected. Make sure Ollama is running locally.")
-			fmt.Println("  Common models: llama3.2, mistral, codellama, phi3")
-			fmt.Print("Model name: ")
-			modelName := ""
-			if scanner.Scan() {
-				modelName = strings.TrimSpace(scanner.Text())
-			}
-			if modelName == "" {
-				modelName = "llama3.2"
-				fmt.Printf("  Using default: %s\n", modelName)
-			}
-			cfg.Agents.Defaults.Model = modelName
-			cfg.Providers.Ollama.APIBase = "http://localhost:11434/v1"
-			fmt.Printf("  Model: %s (install with: ollama pull %s)\n", modelName, modelName)
+		// Auto-discover CLIs
+		discoveredCLIs := config.DiscoverLocalCLIs()
 
-		case choice == "10":
-			// LM Studio / Custom OpenAI-compatible API
-			fmt.Println("\n  Enter the base URL of your OpenAI-compatible API.")
-			fmt.Println("  Examples:")
-			fmt.Println("    LM Studio:  http://localhost:1234/v1")
-			fmt.Println("    vLLM:       http://localhost:8000/v1")
-			fmt.Println("    Other:      http://your-server:port/v1")
-			fmt.Print("\nBase URL: ")
+		// Build the multi-select options
+		var options []string
+		optionMap := make(map[string]string) // Label -> ID mapping
 
-			apiBase := ""
-			if scanner.Scan() {
-				apiBase = strings.TrimSpace(scanner.Text())
-			}
-			if apiBase == "" {
-				apiBase = "http://localhost:1234/v1"
-				fmt.Printf("  Using default: %s\n", apiBase)
-			}
+		// Auto-detected ones first!
+		for _, tool := range discoveredCLIs {
+			label := fmt.Sprintf("%s (Auto-Detected: %s)", tool.DisplayName, tool.Description)
+			options = append(options, label)
+			optionMap[label] = tool.ID
+		}
 
-			fmt.Print("API key (press Enter if none): ")
-			apiKey := ""
-			if scanner.Scan() {
-				apiKey = strings.TrimSpace(scanner.Text())
-			}
+		// Then traditional ones
+		for _, p := range traditional {
+			label := fmt.Sprintf("%s (%s)", p.name, p.desc)
+			options = append(options, label)
+			optionMap[label] = p.id
+		}
 
-			fmt.Print("Model name (e.g. local-model): ")
-			modelName := ""
-			if scanner.Scan() {
-				modelName = strings.TrimSpace(scanner.Text())
-			}
-			if modelName == "" {
-				modelName = "local-model"
-			}
+		options = append(options, "Ollama (run local open-source models without an API key)")
+		optionMap["Ollama (run local open-source models without an API key)"] = "ollama"
 
-			cfg.Agents.Defaults.Provider = "openai"
-			cfg.Agents.Defaults.Model = modelName
-			cfg.Providers.OpenAI.APIBase = apiBase
-			cfg.Providers.OpenAI.APIKey = apiKey
+		options = append(options, "LM Studio / Custom API (any OpenAI-compatible server)")
+		optionMap["LM Studio / Custom API (any OpenAI-compatible server)"] = "custom_openai"
 
-			fmt.Println("\n✓ Custom API configured.")
-			fmt.Printf("  Base URL: %s\n", apiBase)
-			fmt.Printf("  Model: %s\n", modelName)
+		fmt.Println("🚀 Use Spacebar to select/deselect features. Press Enter to confirm.")
+		var selectedLabels []string
+		promptSurvey := &survey.MultiSelect{
+			Message: "Select the AI brains you want to enable:",
+			Options: options,
+		}
+		err := survey.AskOne(promptSurvey, &selectedLabels)
+		if err != nil || len(selectedLabels) == 0 {
+			fmt.Println("\n⚠ No providers selected. You can configure manually in:", configPath)
+		}
 
-		case choice == "11":
-			// Save default config first, then open in editor
-			if err := config.SaveConfig(configPath, cfg); err != nil {
-				fmt.Printf("Error saving config: %v\n", err)
-				os.Exit(1)
-			}
-			createWorkspaceTemplates(cfg.WorkspacePath())
-			initMemory(cfg.WorkspacePath(), aiName, aiRole, userName, userPrefs)
+		var selectedIDs []string
+		for _, label := range selectedLabels {
+			selectedIDs = append(selectedIDs, optionMap[label])
+		}
 
-			editor := "nano"
-			if v := os.Getenv("EDITOR"); v != "" {
-				editor = v
-			}
-			fmt.Printf("\nOpening %s in %s...\n", configPath, editor)
-			fmt.Println("  Set your provider API key and model, then save and exit.")
-			cmd := exec.Command(editor, configPath)
-			cmd.Stdin = os.Stdin
-			cmd.Stdout = os.Stdout
-			cmd.Stderr = os.Stderr
-			if err := cmd.Run(); err != nil {
-				fmt.Printf("Could not open editor: %v\n", err)
-				fmt.Println("  Edit manually: nano", configPath)
-			}
-			fmt.Printf("\n%s V1 is ready!\n", logo)
-			fmt.Println("\nTry it out:")
-			fmt.Println("  v1claw agent -m \"Hello!\"")
-			return
-
-		case choice == "12":
-			fmt.Println("\n⚠ Skipped. Add your provider and API key in:", configPath)
-
-		default:
-			if info, ok := providerMap[choice]; ok {
-				// Set the explicit provider so auto-detection isn't needed
-				cfg.Agents.Defaults.Provider = info.name
-
-				if info.name == "github_copilot" {
-					fmt.Println("\n  GitHub Copilot uses your existing subscription.")
-					fmt.Println("  Make sure you're logged in: v1claw auth login")
-					setProviderKey(cfg, info.name, "copilot")
-				} else {
-					fmt.Printf("\nGet your key at: %s\n", info.keyURL)
-					fmt.Printf("Enter your %s: ", info.keyHint)
-
-					apiKey := ""
-					if scanner.Scan() {
-						apiKey = strings.TrimSpace(scanner.Text())
-					}
-
-					if apiKey == "" {
-						fmt.Println("\n⚠ No API key entered. You can add it later in:", configPath)
-					} else {
-						setProviderKey(cfg, info.name, apiKey)
-						fmt.Println("\n✓ API key saved.")
-					}
+		// Process each selected provider individually for Keys and Models
+		for _, providerID := range selectedIDs {
+			// Find if it was auto-detected
+			isDiscovered := false
+			for _, tool := range discoveredCLIs {
+				if tool.ID == providerID {
+					isDiscovered = true
+					break
 				}
+			}
 
-				// Ask for model name
-				fmt.Printf("\n  Example models: %s\n", info.models)
+			if isDiscovered {
+				fmt.Printf("\n✓ Registered %s (CLI Tool found, zero-key bridging enabled).\n", providerID)
+				// CLI Tools don't need API keys, they use the OS!
+				cfg.Agents.Defaults.Provider = providerID // Temporarily set as primary
+				continue
+			}
+
+			if providerID == "ollama" {
+				fmt.Println("\n✓ Ollama selected. Make sure Ollama is running locally.")
+				fmt.Println("  Common models: llama3.2, mistral, codellama, deepseek-coder")
 				fmt.Print("Model name: ")
 				modelName := ""
 				if scanner.Scan() {
 					modelName = strings.TrimSpace(scanner.Text())
-					modelName = strings.Trim(modelName, "\"'") // strip accidental quotes
 				}
 				if modelName == "" {
-					fmt.Println("\n⚠ No model entered. You can set it later in:", configPath)
-				} else {
-					cfg.Agents.Defaults.Model = modelName
-					fmt.Printf("  Model: %s\n", modelName)
+					modelName = "llama3.2"
+					fmt.Printf("  Using default: %s\n", modelName)
 				}
-			} else {
-				fmt.Println("\n⚠ Invalid choice. You can configure manually in:", configPath)
+				cfg.Agents.Defaults.Provider = "ollama"
+				cfg.Agents.Defaults.Model = modelName
+				cfg.Providers.Ollama.APIBase = "http://localhost:11434/v1"
+				fmt.Printf("  Model: %s (install with: ollama pull %s)\n", modelName, modelName)
+				continue
 			}
+
+			if providerID == "custom_openai" {
+				fmt.Println("\n  Enter the base URL of your OpenAI-compatible API.")
+				fmt.Println("  Examples:")
+				fmt.Println("    LM Studio:  http://localhost:1234/v1")
+				fmt.Println("    vLLM:       http://localhost:8000/v1")
+				fmt.Print("\nBase URL: ")
+
+				apiBase := ""
+				if scanner.Scan() {
+					apiBase = strings.TrimSpace(scanner.Text())
+				}
+				if apiBase == "" {
+					apiBase = "http://localhost:1234/v1"
+					fmt.Printf("  Using default: %s\n", apiBase)
+				}
+
+				fmt.Print("API key (press Enter if none): ")
+				apiKey := ""
+				if scanner.Scan() {
+					apiKey = strings.TrimSpace(scanner.Text())
+				}
+
+				fmt.Print("Model name (e.g. local-model): ")
+				modelName := ""
+				if scanner.Scan() {
+					modelName = strings.TrimSpace(scanner.Text())
+				}
+				if modelName == "" {
+					modelName = "local-model"
+					fmt.Printf("  Using default: %s\n", modelName)
+				}
+
+				cfg.Agents.Defaults.Provider = "openai"
+				cfg.Agents.Defaults.Model = modelName
+				cfg.Providers.OpenAI.APIBase = apiBase
+				cfg.Providers.OpenAI.APIKey = apiKey
+				fmt.Printf("  Model: %s at %s\n", modelName, apiBase)
+				continue
+			}
+
+			// Standard Cloud Provider Form
+			var pInfo providerInfo
+			for _, p := range traditional {
+				if p.id == providerID {
+					pInfo = p
+					break
+				}
+			}
+
+			fmt.Printf("\n--- Configuring %s ---\n", pInfo.name)
+
+			if pInfo.id == "github_copilot" {
+				fmt.Println("\n  GitHub Copilot uses your existing subscription.")
+				fmt.Println("  Make sure you're logged in: v1claw auth login")
+				setProviderKey(cfg, pInfo.id, "copilot")
+			} else {
+				fmt.Printf("Get a key here: %s\n", pInfo.keyURL)
+
+				apiKey := ""
+				prompt := &survey.Password{
+					Message: fmt.Sprintf("Enter your %s:", pInfo.keyHint),
+				}
+				survey.AskOne(prompt, &apiKey)
+
+				if apiKey == "" {
+					fmt.Println("⚠ No API key entered. It will not function until configured in:", configPath)
+				} else {
+					setProviderKey(cfg, pInfo.id, apiKey)
+					fmt.Println("✓ API key securely saved.")
+				}
+			}
+
+			// Ask for model name using Survey with the provided defaults
+			modelSelection := ""
+			promptModel := &survey.Input{
+				Message: fmt.Sprintf("Model Name (Examples: %s) [Or type custom]: ", pInfo.desc),
+			}
+			survey.AskOne(promptModel, &modelSelection)
+
+			if modelSelection != "" {
+				cfg.Agents.Defaults.Model = modelSelection
+			}
+
+			// Save the first one as primary temporarily
+			if cfg.Agents.Defaults.Provider == "" {
+				cfg.Agents.Defaults.Provider = pInfo.id
+			}
+		}
+
+		// --- FALLBACK ENFORCER & COUNCIL LOGIC ---
+		fmt.Println("\n🛡️  Configuring Resilience (The Council)")
+		if len(selectedIDs) == 1 {
+			// SINGLE PROVIDER SELECTED: Soft recommend a fallback model from exactly that provider
+			fmt.Printf("⚠  You only enabled one provider (%s).\n", selectedIDs[0])
+			fmt.Println("    It is highly recommended to set a Fallback model in case of API rate limits or errors.")
+
+			fallbackModel := ""
+			promptFallback := &survey.Input{
+				Message: "Enter a lightweight fallback model (or press Enter to skip): ",
+			}
+			survey.AskOne(promptFallback, &fallbackModel)
+			if fallbackModel != "" {
+				cfg.Council.Enabled = true
+				cfg.Council.Primary = selectedIDs[0]
+				cfg.Council.PrimaryModel = cfg.Agents.Defaults.Model
+				cfg.Council.Fallback = selectedIDs[0]
+				cfg.Council.FallbackModel = fallbackModel
+				fmt.Printf("✓ Fallback securely configured: %s\n", fallbackModel)
+			} else {
+				fmt.Println("✓ Skipping Fallback. V1Claw will run solo.")
+			}
+		} else if len(selectedIDs) > 1 {
+			// MULTIPLE PROVIDERS SELECTED: Activate the Persona-based Council assembly
+			fmt.Println("✓ Multiple providers detected! Building your routing Council.")
+
+			persona := ""
+			promptPersona := &survey.Select{
+				Message: "How do you plan to use V1Claw the most? (Helps build the smartest routing engine)",
+				Options: []string{
+					"Software Engineer (High Code Accuracy, Multi-Agent)",
+					"Writer / Researcher (High Context, Better Prose)",
+					"General Assistant (Cost-Optimized, Fast)",
+				},
+			}
+			survey.AskOne(promptPersona, &persona)
+
+			// We save these to state so the Council executes dynamically based on priority
+			cfg.Council.Enabled = true
+			if strings.Contains(persona, "Software Engineer") {
+				cfg.Council.Persona = "coder"
+			} else if strings.Contains(persona, "Writer") {
+				cfg.Council.Persona = "writer"
+			} else {
+				cfg.Council.Persona = "speed"
+			}
+
+			// We need the user to pick which of their activated tools is the primary leader
+			primary := ""
+			promptPrimary := &survey.Select{
+				Message: "Which of your activated AI brains should be the Primary Leader?",
+				Options: selectedLabels, // Using labels so it looks nice
+			}
+			survey.AskOne(promptPrimary, &primary)
+
+			// And what is the fallback?
+			fallback := ""
+			promptFallback := &survey.Select{
+				Message: "If the Leader fails, who is the Fallback Council member?",
+				Options: selectedLabels,
+			}
+			survey.AskOne(promptFallback, &fallback)
+
+			for _, pInfo := range traditional {
+				label := fmt.Sprintf("%s (%s)", pInfo.name, pInfo.desc)
+				if primary == label {
+					cfg.Council.Primary = pInfo.id
+					cfg.Agents.Defaults.Provider = pInfo.id
+				}
+				if fallback == label {
+					cfg.Council.Fallback = pInfo.id
+				}
+			}
+
+			for _, tool := range discoveredCLIs {
+				label := fmt.Sprintf("%s (Auto-Detected: %s)", tool.DisplayName, tool.Description)
+				if primary == label {
+					cfg.Council.Primary = tool.ID
+					cfg.Agents.Defaults.Provider = tool.ID
+				}
+				if fallback == label {
+					cfg.Council.Fallback = tool.ID
+				}
+			}
+
+			fmt.Printf("✓ Council Architected! Leader: %s | Fallback: %s\n", cfg.Council.Primary, cfg.Council.Fallback)
 		}
 	}
 

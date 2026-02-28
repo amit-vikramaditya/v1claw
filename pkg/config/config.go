@@ -47,6 +47,7 @@ type Config struct {
 	Agents      AgentsConfig      `json:"agents"`
 	Channels    ChannelsConfig    `json:"channels"`
 	Providers   ProvidersConfig   `json:"providers"`
+	Council     CouncilConfig     `json:"council"`
 	Gateway     GatewayConfig     `json:"gateway"`
 	Tools       ToolsConfig       `json:"tools"`
 	Heartbeat   HeartbeatConfig   `json:"heartbeat"`
@@ -55,6 +56,16 @@ type Config struct {
 	Voice       VoiceConfig       `json:"voice"`
 	Permissions PermissionsConfig `json:"permissions"`
 	mu          sync.RWMutex
+}
+
+// CouncilConfig controls the dynamic multi-agent fallback routing system.
+type CouncilConfig struct {
+	Enabled       bool   `json:"enabled" env:"V1CLAW_COUNCIL_ENABLED"`
+	Persona       string `json:"persona" env:"V1CLAW_COUNCIL_PERSONA"` // coder, writer, speed
+	Primary       string `json:"primary_provider" env:"V1CLAW_COUNCIL_PRIMARY"`
+	PrimaryModel  string `json:"primary_model" env:"V1CLAW_COUNCIL_PRIMARY_MODEL"`
+	Fallback      string `json:"fallback_provider" env:"V1CLAW_COUNCIL_FALLBACK"`
+	FallbackModel string `json:"fallback_model" env:"V1CLAW_COUNCIL_FALLBACK_MODEL"`
 }
 
 // PermissionsConfig controls access to sensitive hardware and system features.
