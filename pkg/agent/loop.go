@@ -45,6 +45,7 @@ type AgentLoop struct {
 	running        atomic.Bool
 	summarizing    sync.Map // Tracks which sessions are currently being summarized
 	channelManager *channels.Manager
+	cooldowns      sync.Map // Tracks provider/model fatigue and cooldown expiration
 }
 
 // processOptions configures how a message is processed
@@ -176,6 +177,7 @@ func NewAgentLoop(cfg *config.Config, msgBus *bus.MessageBus, provider providers
 		contextBuilder: contextBuilder,
 		tools:          toolsRegistry,
 		summarizing:    sync.Map{},
+		cooldowns:      sync.Map{},
 	}
 }
 
@@ -493,16 +495,40 @@ func (al *AgentLoop) runLLMIteration(ctx context.Context, messages []providers.M
 			// in the stub we created, we will implement the retry logic inline here using the AgentLoop's
 			// access to the global provider factory.
 
-			response, err = al.provider.Chat(ctx, messages, providerToolDefs, al.model, map[string]interface{}{
-				"max_tokens":  8192,
-				"temperature": 0.7,
-			})
-
 			// --- Council Fallback Implementation ---
-			// If the standard call throws a rate limit or 503, attempt a Council recovery
+			// 1. Check Cooldown Cache BEFORE executing Primary
+			var skipPrimary bool
+			if cdTime, exists := al.cooldowns.Load(al.model); exists {
+				expiration, ok := cdTime.(time.Time)
+				if ok {
+					if expiration.IsZero() {
+						// Infinite Cooldown (401/403)
+						skipPrimary = true
+						logger.WarnCF("agent", fmt.Sprintf("Council: Skipping Primary %s due to Infinite Cooldown (Auth/Quota)", al.model), nil)
+					} else if time.Now().Before(expiration) {
+						// Temporal Cooldown (429/503)
+						skipPrimary = true
+						logger.WarnCF("agent", fmt.Sprintf("Council: Skipping Primary %s due to Temporal Cooldown (Expires in %v)", al.model, time.Until(expiration)), nil)
+					} else {
+						// Cooldown Expired
+						al.cooldowns.Delete(al.model)
+					}
+				}
+			}
+
+			if !skipPrimary {
+				response, err = al.provider.Chat(ctx, messages, providerToolDefs, al.model, map[string]interface{}{
+					"max_tokens":  8192,
+					"temperature": 0.7,
+				})
+			} else {
+				// Artificial error to force fallback execution since we skipped the Primary
+				err = fmt.Errorf("council: primary %s skipped due to active cooldown cache", al.model)
+			}
+
+			// 2. If the standard call throws an error (or we skipped it), attempt a Council recovery
 			if err != nil {
-				// We need to parse the physical config.json to check the user's latest Council state
-				// because the AgentLoop doesn't hold a direct reference to the *config.Config pointer.
+				// We parse config.json to check the real-time Council schema
 				configPath := filepath.Join(al.workspace, "config.json")
 				cfgBytes, loadErr := os.ReadFile(configPath)
 				if loadErr == nil {
@@ -510,33 +536,58 @@ func (al *AgentLoop) runLLMIteration(ctx context.Context, messages []providers.M
 					if json.Unmarshal(cfgBytes, &configMap) == nil {
 						if council, ok := configMap["council"].(map[string]interface{}); ok {
 							if enabled, _ := council["enabled"].(bool); enabled {
-								errStr := strings.ToLower(err.Error())
-								isRecoverable := strings.Contains(errStr, "429") ||
-									strings.Contains(errStr, "too many requests") ||
-									strings.Contains(errStr, "503") ||
-									strings.Contains(errStr, "timeout")
 
-								// Trigger the Fallback Routine!
+								// Parse HTTP Errors to define Cooldowns
+								errStr := strings.ToLower(err.Error())
+
+								isAuthError := strings.Contains(errStr, "401") || strings.Contains(errStr, "403") || strings.Contains(errStr, "unauthorized") || strings.Contains(errStr, "forbidden")
+								isRateLimit := strings.Contains(errStr, "429") || strings.Contains(errStr, "400") || strings.Contains(errStr, "too many requests") || strings.Contains(errStr, "quota") || strings.Contains(errStr, "exhausted")
+								isOverloaded := strings.Contains(errStr, "503") || strings.Contains(errStr, "timeout") || strings.Contains(errStr, "service unavailable")
+								isCacheSkip := strings.Contains(errStr, "active cooldown cache")
+
+								isRecoverable := isAuthError || isRateLimit || isOverloaded || isCacheSkip
+
 								if isRecoverable {
-									// In a full implementation we would dynamically swap the AL provider object here via providers.New(),
-									// but since V1Claw routes natively to the CLI or the OpenRouter abstraction,
-									// swapping the model name is often enough to save the run for the same provider.
 									fallbackModel, _ := council["fallback_model"].(string)
 
-									if fallbackModel != "" {
-										logger.WarnCF("agent", fmt.Sprintf("Council Activated: Primary %s failed. Rerouting prompt to Fallback: %s...", al.model, fallbackModel), map[string]interface{}{"error": err.Error()})
-
-										// We temporarily override the AgentLoop's model
+									if fallbackModel != "" && fallbackModel != al.model { // Prevent infinite loops
 										originalModel := al.model
+
+										// Apply Cooldowns and Surface Notifications for newly failed requests
+										if !isCacheSkip {
+											var msg string
+											if isAuthError {
+												al.cooldowns.Store(originalModel, time.Time{}) // Zero time = Infinite
+												msg = fmt.Sprintf("⚠️ The API key for my current brain (%s) is **unauthorized or expired** (401/403). I am shifting to your Fallback model (`%s`) for the remainder of this session. Please check your billing.", originalModel, fallbackModel)
+											} else if isRateLimit {
+												al.cooldowns.Store(originalModel, time.Now().Add(5*time.Minute)) // 5 Min
+												msg = fmt.Sprintf("⚠️ I've hit a **Rate Limit / Quota Exceeded** on `%s` (429). I am letting it cool down for 5 minutes and shifting to the Fallback Council member (`%s`).", originalModel, fallbackModel)
+											} else if isOverloaded {
+												al.cooldowns.Store(originalModel, time.Now().Add(1*time.Minute)) // 1 Min
+												msg = fmt.Sprintf("⚠️ The `%s` servers are currently **Overloaded** (503). Retrying your request on the Fallback model (`%s`).", originalModel, fallbackModel)
+											}
+
+											// Send explanation to the UI before shifting
+											if opts.SendResponse && !constants.IsInternalChannel(opts.Channel) {
+												al.bus.PublishOutbound(bus.OutboundMessage{
+													Channel: opts.Channel,
+													ChatID:  opts.ChatID,
+													Content: msg,
+												})
+											}
+											logger.WarnCF("agent", "Council Redirecting", map[string]interface{}{"primary": originalModel, "fallback": fallbackModel, "reason": errStr})
+										}
+
+										// 3. We temporarily override the AgentLoop's model
 										al.model = fallbackModel
 
-										// Attempt Fallback Execution
+										// Execute Fallback
 										response, err = al.provider.Chat(ctx, messages, providerToolDefs, al.model, map[string]interface{}{
 											"max_tokens":  8192,
 											"temperature": 0.7,
 										})
 
-										// Restore context
+										// Restore context mapping
 										al.model = originalModel
 									}
 								}
