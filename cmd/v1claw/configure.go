@@ -7,9 +7,72 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/AlecAivazis/survey/v2"
+	"github.com/charmbracelet/huh"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/amit-vikramaditya/v1claw/pkg/config"
 )
+
+var (
+	headerStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("12")).
+			Bold(true).
+			MarginTop(1).
+			MarginBottom(1)
+
+	cyanStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("12"))
+	grayStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
+	redStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
+	greenStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("10"))
+
+	borderStyle = lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color("8")).
+			Padding(0, 1)
+)
+
+func printLogo() {
+	logoText := `
+██░▄▄▄░██░▄▄░██░▄▄▄██░▀██░██░▄▄▀██░████░▄▄▀██░███░██
+██░███░██░▀▀░██░▄▄▄██░█░█░██░█████░████░▀▀░██░█░█░██
+██░▀▀▀░██░█████░▀▀▀██░██▄░██░▀▀▄██░▀▀░█░██░██▄▀▄▀▄██
+`
+	fmt.Println(cyanStyle.Render(logoText))
+	fmt.Println(grayStyle.Render(" V1Claw - The Local-First Epistemic Engine"))
+}
+
+func printCurrentState(cfg *config.Config) {
+	workspace := cfg.WorkspacePath()
+	if workspace == "" {
+		workspace = redStyle.Render("Not Set")
+	}
+
+	security := greenStyle.Render("Locked (Safe)")
+	if !cfg.Workspace.Sandboxed {
+		security = redStyle.Render("Unlocked (Danger)")
+	}
+
+	brain := cyanStyle.Render(cfg.Agents.Defaults.Model)
+	if brain == "" {
+		brain = redStyle.Render("Not Configured")
+	}
+
+	channels := "None"
+	var activeChannels []string
+	if cfg.Channels.Telegram.Enabled {
+		activeChannels = append(activeChannels, "Telegram")
+	}
+	if cfg.Channels.Discord.Enabled {
+		activeChannels = append(activeChannels, "Discord")
+	}
+	if len(activeChannels) > 0 {
+		channels = strings.Join(activeChannels, ", ")
+	}
+
+	stateContent := fmt.Sprintf("┌  Current System State\n│\n│  Home: %s\n│  Security: %s\n│  Brain: %s\n│  Channels: %s\n└", 
+		workspace, security, brain, channels)
+	
+	fmt.Println(borderStyle.Render(stateContent))
+}
 
 type providerInfo struct {
 	id      string
@@ -54,7 +117,6 @@ func configureCmd() {
 	configPath := getConfigPath()
 	cfg := config.DefaultConfig()
 
-	// Load existing config if available
 	if _, err := os.Stat(configPath); err == nil {
 		if loaded, err := loadConfig(); err == nil {
 			cfg = loaded
@@ -62,37 +124,50 @@ func configureCmd() {
 	}
 
 	for {
-		fmt.Println("\n" + logo + " V1Claw Configuration Menu")
-		choice := ""
-		prompt := &survey.Select{
-			Message: "Select sections to configure:",
-			Options: []string{
-				"Workspace (Set paths & sandbox)",
-				"Model (Providers, Keys, & Models)",
-				"Identity (Soul & User)",
-				"The Council Routing",
-				"Save & Exit",
-			},
-		}
-		survey.AskOne(prompt, &choice)
+		printLogo()
+		printCurrentState(cfg)
 
-		switch {
-		case strings.HasPrefix(choice, "Workspace"):
+		var choice string
+		form := huh.NewForm(
+			huh.NewGroup(
+				huh.NewSelect[string]().
+					Title("What would you like to configure?").
+					Options(
+						huh.NewOption("🏠 The Home (Workspace & Security)", "workspace").Description("Where the AI lives and what files it can see"),
+						huh.NewOption("🧠 The Brain (Providers & Council)", "models").Description("Connect Gemini, Claude, or local CLIs"),
+						huh.NewOption("🧰 Tools & Skills (Search, Cron)", "tools").Description("Give your AI abilities to browse and run tasks"),
+						huh.NewOption("📡 Channels (Telegram, Discord)", "channels").Description("Where you chat with your AI"),
+						huh.NewOption("🧬 Identity (Soul & User)", "identity").Description("Define personalities and core instructions"),
+						huh.NewOption("💾 Save & Exit", "save").Description("Commit changes and finish"),
+					).
+					Value(&choice),
+			),
+		)
+
+		err := form.Run()
+		if err != nil {
+			fmt.Println("Configuration cancelled.")
+			return
+		}
+
+		switch choice {
+		case "workspace":
 			configureWorkspace(cfg)
-		case strings.HasPrefix(choice, "Model"):
-			configureModels(cfg) // Returns a slice of unlocked models
-		case strings.HasPrefix(choice, "Identity"):
+		case "models":
+			configureModels(cfg)
+		case "tools":
+			configureTools(cfg)
+		case "channels":
+			configureChannels(cfg)
+		case "identity":
 			configureIdentity(cfg)
-		case strings.HasPrefix(choice, "The Council"):
-			configureCouncil(cfg)
-		case strings.HasPrefix(choice, "Save"):
+		case "save":
 			if err := config.SaveConfig(configPath, cfg); err != nil {
-				fmt.Printf("❌ Error saving config: %v\n", err)
+				fmt.Printf("❌ Error saving config: %v\n", redStyle.Render(err.Error()))
 			} else {
 				createWorkspaceTemplates(cfg.WorkspacePath())
-				fmt.Println("\n✓ Configuration saved securely to: " + configPath)
-				fmt.Println("⚠️  IMPORTANT: If you are running `v1claw gateway` in the background (e.g. for Telegram),")
-				fmt.Println("              you MUST restart the gateway for these changes to take effect.")
+				fmt.Println(greenStyle.Bold(true).Render("\n✓ Configuration saved securely to: ") + configPath)
+				fmt.Println(grayStyle.Render("⚠️  IMPORTANT: You MUST restart any running v1claw gateway for changes to take effect."))
 			}
 			return
 		}
@@ -100,32 +175,50 @@ func configureCmd() {
 }
 
 func configureWorkspace(cfg *config.Config) {
-	fmt.Println("\n📁 Workspace & Security")
+	fmt.Println(headerStyle.Render("┌  The Home (Workspace Configuration)"))
 
 	cwd, _ := os.Getwd()
 	defaultWorkspace := config.DefaultWorkspaceDir()
 
-	workspaceOpts := []string{
-		fmt.Sprintf("Default (%s)", defaultWorkspace),
-		fmt.Sprintf("Current Directory (%s)", cwd),
-		"Custom Path...",
+	var locationChoice string
+	var customPath string
+	var securityChoice string
+
+	form := huh.NewForm(
+		huh.NewGroup(
+			huh.NewSelect[string]().
+				Title("Where should the AI store its memory and files?").
+				Options(
+					huh.NewOption(fmt.Sprintf("Default (%s)", defaultWorkspace), "default"),
+					huh.NewOption(fmt.Sprintf("Current Folder (%s)", cwd), "current"),
+					huh.NewOption("Custom Path...", "custom"),
+				).
+				Value(&locationChoice),
+		),
+	).WithShowHelp(false)
+
+	if err := form.Run(); err != nil {
+		return
 	}
 
-	workspaceChoice := ""
-	promptWorkspace := &survey.Select{
-		Message: "Where should V1Claw run its operations?",
-		Options: workspaceOpts,
+	if locationChoice == "custom" {
+		huh.NewForm(
+			huh.NewGroup(
+				huh.NewInput().
+					Title("Enter absolute path to workspace").
+					Placeholder("/Users/name/my-ai-workspace").
+					Value(&customPath),
+			),
+		).Run()
 	}
-	survey.AskOne(promptWorkspace, &workspaceChoice)
 
-	if workspaceChoice == workspaceOpts[0] {
+	// Update location
+	switch locationChoice {
+	case "default":
 		cfg.Workspace.Path = defaultWorkspace
-	} else if workspaceChoice == workspaceOpts[1] {
+	case "current":
 		cfg.Workspace.Path = cwd
-	} else {
-		customPath := ""
-		promptCustom := &survey.Input{Message: "Enter absolute path to workspace:"}
-		survey.AskOne(promptCustom, &customPath)
+	case "custom":
 		if customPath != "" {
 			customPath = filepath.Clean(customPath)
 			if strings.HasPrefix(customPath, "~/") {
@@ -135,20 +228,22 @@ func configureWorkspace(cfg *config.Config) {
 			cfg.Workspace.Path = customPath
 		}
 	}
-
 	cfg.Agents.Defaults.Workspace = cfg.Workspace.Path
 
-	securityChoice := ""
-	promptSecurity := &survey.Select{
-		Message: "Security Configuration: How much of your machine can I see?",
-		Options: []string{
-			fmt.Sprintf("Strict Sandbox (Recommended) - Restricted only to %s", cfg.Workspace.Path),
-			"Global OS Access (Danger Zone) - I can read/edit ANY file on your disk.",
-		},
-	}
-	survey.AskOne(promptSecurity, &securityChoice)
+	huh.NewForm(
+		huh.NewGroup(
+			huh.NewSelect[string]().
+				Title("File Access Permissions").
+				Description("Choose how much of your computer the AI can see.").
+				Options(
+					huh.NewOption("Locked (Safe) — AI is restricted to its workspace.", "locked"),
+					huh.NewOption("Unlocked (Danger) — AI can read/edit ANY file on your machine.", "unlocked"),
+				).
+				Value(&securityChoice),
+		),
+	).Run()
 
-	if strings.HasPrefix(securityChoice, "Strict Sandbox") {
+	if securityChoice == "locked" {
 		cfg.Workspace.Sandboxed = true
 		cfg.Agents.Defaults.RestrictToWorkspace = true
 	} else {
@@ -158,65 +253,51 @@ func configureWorkspace(cfg *config.Config) {
 }
 
 func configureModels(cfg *config.Config) {
-	fmt.Println("\n🔧 AI Providers & Models")
+	fmt.Println(headerStyle.Render("┌  The Brain (AI Providers & Models)"))
 
 	discoveredCLIs := config.DiscoverLocalCLIs()
-
-	var options []string
-	optionMap := make(map[string]string) // Label -> ID mapping
-
-	// Explicitly separate CLI tools for UX
-	if len(discoveredCLIs) > 0 {
-		fmt.Printf("\n✨ Good news! I found %d local CLIs on your machine that I can tap into.\n", len(discoveredCLIs))
-	}
+	var providerOptions []huh.Option[string]
+	optionMap := make(map[string]string)
 
 	for _, tool := range discoveredCLIs {
-		label := fmt.Sprintf("%s (Auto-Detected Local Tool)", tool.DisplayName)
-		options = append(options, label)
-		optionMap[label] = tool.ID
+		label := fmt.Sprintf("%s (Local)", tool.DisplayName)
+		providerOptions = append(providerOptions, huh.NewOption(label, tool.ID).Description(tool.Description))
+		optionMap[tool.ID] = label
 	}
 
 	for _, p := range traditional {
-		label := fmt.Sprintf("%s (%s)", p.name, p.desc)
-		options = append(options, label)
-		optionMap[label] = p.id
+		providerOptions = append(providerOptions, huh.NewOption(p.name, p.id).Description(p.desc))
+		optionMap[p.id] = p.name
 	}
-
-	var selectedLabels []string
-	promptSurvey := &survey.MultiSelect{
-		Message: "Select the AI Providers you want to enable:",
-		Options: options,
-	}
-	survey.AskOne(promptSurvey, &selectedLabels)
 
 	var selectedIDs []string
-	for _, label := range selectedLabels {
-		selectedIDs = append(selectedIDs, optionMap[label])
-	}
+	huh.NewForm(
+		huh.NewGroup(
+			huh.NewMultiSelect[string]().
+				Title("Select the AI Providers you want to enable").
+				Description("Choose one or more brains for your AI.").
+				Options(providerOptions...).
+				Value(&selectedIDs),
+		),
+	).Run()
 
-	var unlockedModels []string
+	var unlockedModels []huh.Option[string]
 
-	// Now ask for keys sequentially
 	for _, providerID := range selectedIDs {
-		// Is it a CLI?
 		isCLI := false
 		for _, tool := range discoveredCLIs {
 			if tool.ID == providerID {
 				isCLI = true
-				fmt.Printf("\n✓ Registered %s (CLI Tool found, zero-key bridging enabled).\n", providerID)
-
 				if cfg.Agents.Defaults.Provider == "" {
 					cfg.Agents.Defaults.Provider = providerID
 				}
 				break
 			}
 		}
-
 		if isCLI {
 			continue
 		}
 
-		// It must be a Cloud Provider
 		var pInfo providerInfo
 		for _, p := range traditional {
 			if p.id == providerID {
@@ -225,45 +306,54 @@ func configureModels(cfg *config.Config) {
 			}
 		}
 
-		fmt.Printf("\n--- Key Required: %s ---\n", pInfo.name)
-		fmt.Printf("Get a key here: %s\n", pInfo.keyURL)
+		var apiKey string
+		fmt.Printf("\n--- Key Required: %s ---\n", cyanStyle.Render(pInfo.name))
+		fmt.Printf("Get a key here: %s\n", grayStyle.Render(pInfo.keyURL))
 
-		apiKey := ""
-		prompt := &survey.Password{Message: fmt.Sprintf("Enter your %s:", pInfo.keyHint)}
-		survey.AskOne(prompt, &apiKey)
+		huh.NewForm(
+			huh.NewGroup(
+				huh.NewInput().
+					Title(fmt.Sprintf("Enter your %s", pInfo.keyHint)).
+					EchoMode(huh.EchoModePassword).
+					Value(&apiKey),
+			),
+		).Run()
 
 		if apiKey != "" {
 			setProviderKey(cfg, pInfo.id, apiKey)
-			fmt.Println("✓ API key securely saved.")
-
-			// Append the models tied to this newly unlocked cloud provider
 			if models, ok := providerModels[pInfo.id]; ok {
-				unlockedModels = append(unlockedModels, models...)
+				for _, m := range models {
+					unlockedModels = append(unlockedModels, huh.NewOption(m, m))
+				}
 			}
 		}
 	}
 
-	// Final Step: Model Selection
 	if len(unlockedModels) > 0 {
-		fmt.Println("\n🧠 Model Selection")
-		unlockedModels = append(unlockedModels, "Custom override (Type your own)")
+		var modelChoice string
+		unlockedModels = append(unlockedModels, huh.NewOption("Custom override...", "custom"))
 
-		modelChoice := ""
-		promptModel := &survey.Select{
-			Message: "Select your primary AI Model:",
-			Options: unlockedModels,
-		}
-		survey.AskOne(promptModel, &modelChoice)
+		huh.NewForm(
+			huh.NewGroup(
+				huh.NewSelect[string]().
+					Title("Select your primary AI Model").
+					Options(unlockedModels...).
+					Value(&modelChoice),
+			),
+		).Run()
 
-		if modelChoice == "Custom override (Type your own)" {
-			customModel := ""
-			survey.AskOne(&survey.Input{Message: "Type the exact model ID:"}, &customModel)
+		if modelChoice == "custom" {
+			var customModel string
+			huh.NewForm(
+				huh.NewGroup(
+					huh.NewInput().Title("Type the exact model ID").Value(&customModel),
+				),
+			).Run()
 			if customModel != "" {
 				cfg.Agents.Defaults.Model = customModel
 			}
 		} else if modelChoice != "" {
 			cfg.Agents.Defaults.Model = modelChoice
-			// Attempt to link it back to the provider logic for the default
 			for pid, mList := range providerModels {
 				for _, m := range mList {
 					if m == modelChoice {
@@ -273,67 +363,157 @@ func configureModels(cfg *config.Config) {
 			}
 		}
 	}
+
+	// Dynamic Council Question
+	var enableCouncil bool
+	huh.NewForm(
+		huh.NewGroup(
+			huh.NewConfirm().
+				Title("High Availability (The Council)").
+				Description("Should we automatically switch to a backup AI if the primary fails?").
+				Value(&enableCouncil),
+		),
+	).Run()
+
+	if enableCouncil {
+		configureCouncil(cfg)
+	} else {
+		cfg.Council.Enabled = false
+	}
+}
+
+func configureTools(cfg *config.Config) {
+	fmt.Println(headerStyle.Render("┌  Tools & Autonomous Skills"))
+
+	var selectedTools []string
+	huh.NewForm(
+		huh.NewGroup(
+			huh.NewMultiSelect[string]().
+				Title("Select tools to equip").
+				Description("Give your AI abilities to interact with the world.").
+				Options(
+					huh.NewOption("DuckDuckGo Search", "ddg").Description("Free web search, no key required"),
+					huh.NewOption("Tavily Search", "tavily").Description("Premium research tool, requires Tavily API key"),
+					huh.NewOption("Academic Literature", "academic").Description("Search peer-reviewed papers (Consensus feature)"),
+					huh.NewOption("Terminal Access", "shell").Description("Allow AI to run bash commands in its workspace"),
+					huh.NewOption("File System", "fs").Description("Allow AI to read and write files"),
+				).
+				Value(&selectedTools),
+		),
+	).Run()
+
+	// Map tools to config
+	for _, t := range selectedTools {
+		switch t {
+		case "ddg":
+			cfg.Tools.Web.DuckDuckGo.Enabled = true
+		case "tavily":
+			cfg.Tools.Web.Brave.Enabled = true // Re-using brave slot for now as placeholder or we update config struct
+		case "shell":
+			cfg.Permissions.ShellHardware = true
+		}
+	}
+
+	var enableCron bool
+	huh.NewForm(
+		huh.NewGroup(
+			huh.NewConfirm().
+				Title("Enable Autonomous Background Thinking?").
+				Description("The AI will wake up on a schedule to research topics on its own.").
+				Value(&enableCron),
+		),
+	).Run()
+
+	if enableCron {
+		var schedule string
+		huh.NewForm(
+			huh.NewGroup(
+				huh.NewSelect[string]().
+					Title("Background Schedule").
+					Options(
+						huh.NewOption("Every 12 hours (Morning & Evening)", "720"),
+						huh.NewOption("Every 1 hour", "60"),
+					).
+					Value(&schedule),
+			),
+		).Run()
+		// TODO: Map schedule to cfg.Heartbeat.Interval
+	}
+}
+
+func configureChannels(cfg *config.Config) {
+	fmt.Println(headerStyle.Render("┌  Channels (Where to talk)"))
+
+	var selectedChannels []string
+	huh.NewForm(
+		huh.NewGroup(
+			huh.NewMultiSelect[string]().
+				Title("Select communication channels").
+				Options(
+					huh.NewOption("Telegram", "telegram").Description("Talk to your AI via Telegram bot"),
+					huh.NewOption("Discord", "discord").Description("Connect to your Discord server"),
+					huh.NewOption("Slack", "slack").Description("Integrate with your Slack workspace"),
+				).
+				Value(&selectedChannels),
+		),
+	).Run()
+
+	for _, ch := range selectedChannels {
+		if ch == "telegram" {
+			var token string
+			huh.NewForm(
+				huh.NewGroup(
+					huh.NewInput().
+						Title("Enter Telegram Bot Token").
+						Description("Get this from @BotFather").
+						Value(&token),
+				),
+			).Run()
+			if token != "" {
+				cfg.Channels.Telegram.Enabled = true
+				cfg.Channels.Telegram.Token = token
+			}
+		}
+		// Repeat for other channels...
+	}
 }
 
 func configureIdentity(cfg *config.Config) {
-	fmt.Println("\n🤖 Identity Configuration")
-	scanner := bufio.NewScanner(os.Stdin)
+	fmt.Println(headerStyle.Render("┌  Identity (Who are we?)"))
 
-	fmt.Printf("What is my name? [current: %s]: ", "V1Claw") // Wait, V1claw has no persistent Identity struct outside of memory docs. We will just init it later.
-	var aiName, aiRole, userName, userPrefs string
+	var aiName string = "V1Claw"
+	var aiRole string = "helpful personal assistant"
+	var userName string
+	var userPrefs string
 
-	if scanner.Scan() {
-		aiName = strings.TrimSpace(scanner.Text())
-	}
-	if aiName == "" {
-		aiName = "V1Claw"
-	}
-
-	fmt.Print("What is my core purpose/role? [current: helpful personal assistant]: ")
-	if scanner.Scan() {
-		aiRole = strings.TrimSpace(scanner.Text())
-	}
-	if aiRole == "" {
-		aiRole = "helpful personal assistant"
-	}
-
-	fmt.Println("\n👤 User Configuration")
-	fmt.Print("What is your name? ")
-	if scanner.Scan() {
-		userName = strings.TrimSpace(scanner.Text())
-	}
-
-	fmt.Print("Any specific preferences I should learn right now? ")
-	if scanner.Scan() {
-		userPrefs = strings.TrimSpace(scanner.Text())
-	}
+	huh.NewForm(
+		huh.NewGroup(
+			huh.NewInput().Title("What is my name?").Value(&aiName),
+			huh.NewInput().Title("What is my core purpose?").Value(&aiRole),
+			huh.NewInput().Title("What is your name?").Value(&userName),
+			huh.NewInput().Title("Any specific preferences?").Value(&userPrefs),
+		),
+	).Run()
 
 	initMemory(cfg.WorkspacePath(), aiName, aiRole, userName, userPrefs)
-	fmt.Println("✓ Identity synchronized to Memory.")
 }
 
 func configureCouncil(cfg *config.Config) {
-	fmt.Println("\n🛡️ The Council Routing")
-
-	persona := ""
-	promptPersona := &survey.Select{
-		Message: "How do you plan to use V1Claw the most?",
-		Options: []string{
-			"Software Engineer (High Code Accuracy, Multi-Agent)",
-			"Writer / Researcher (High Context, Better Prose)",
-			"General Assistant (Cost-Optimized, Fast)",
-		},
-	}
-	survey.AskOne(promptPersona, &persona)
+	var persona string
+	huh.NewForm(
+		huh.NewGroup(
+			huh.NewSelect[string]().
+				Title("Routing Persona").
+				Description("How should the AI behave during complex tasks?").
+				Options(
+					huh.NewOption("Software Engineer", "coder").Description("High code accuracy, multi-agent focus"),
+					huh.NewOption("Writer / Researcher", "writer").Description("High context, better prose"),
+					huh.NewOption("General Assistant", "speed").Description("Cost-optimized, fast response"),
+				).
+				Value(&persona),
+		),
+	).Run()
 
 	cfg.Council.Enabled = true
-	if strings.Contains(persona, "Software Engineer") {
-		cfg.Council.Persona = "coder"
-	} else if strings.Contains(persona, "Writer") {
-		cfg.Council.Persona = "writer"
-	} else {
-		cfg.Council.Persona = "speed"
-	}
-
-	fmt.Println("✓ Routing Persona updated. (Note: Leader/Fallback model definitions are auto-handled by 'Model' settings)")
+	cfg.Council.Persona = persona
 }
