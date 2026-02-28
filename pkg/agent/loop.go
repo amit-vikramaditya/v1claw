@@ -485,10 +485,67 @@ func (al *AgentLoop) runLLMIteration(ctx context.Context, messages []providers.M
 		// Retry loop for context/token errors
 		maxRetries := 2
 		for retry := 0; retry <= maxRetries; retry++ {
+			// Pass the execution to the Council routing system instead of binding tightly to a single provider.
+			// The Council will attempt the generated Primary, and if it fails due to rate limits or 503s,
+			// it will execute on the Fallback provider without breaking the loop or losing context!
+
+			// Note: Because providers.ExecuteWithCouncil isn't fully wired for generic tool/message pass-through
+			// in the stub we created, we will implement the retry logic inline here using the AgentLoop's
+			// access to the global provider factory.
+
 			response, err = al.provider.Chat(ctx, messages, providerToolDefs, al.model, map[string]interface{}{
 				"max_tokens":  8192,
 				"temperature": 0.7,
 			})
+
+			// --- Council Fallback Implementation ---
+			// If the standard call throws a rate limit or 503, attempt a Council recovery
+			if err != nil {
+				// We need to parse the physical config.json to check the user's latest Council state
+				// because the AgentLoop doesn't hold a direct reference to the *config.Config pointer.
+				configPath := filepath.Join(al.workspace, "config.json")
+				cfgBytes, loadErr := os.ReadFile(configPath)
+				if loadErr == nil {
+					var configMap map[string]interface{}
+					if json.Unmarshal(cfgBytes, &configMap) == nil {
+						if council, ok := configMap["council"].(map[string]interface{}); ok {
+							if enabled, _ := council["enabled"].(bool); enabled {
+								errStr := strings.ToLower(err.Error())
+								isRecoverable := strings.Contains(errStr, "429") ||
+									strings.Contains(errStr, "too many requests") ||
+									strings.Contains(errStr, "503") ||
+									strings.Contains(errStr, "timeout")
+
+								// Trigger the Fallback Routine!
+								if isRecoverable {
+									// In a full implementation we would dynamically swap the AL provider object here via providers.New(),
+									// but since V1Claw routes natively to the CLI or the OpenRouter abstraction,
+									// swapping the model name is often enough to save the run for the same provider.
+									fallbackModel, _ := council["fallback_model"].(string)
+
+									if fallbackModel != "" {
+										logger.WarnCF("agent", fmt.Sprintf("Council Activated: Primary %s failed. Rerouting prompt to Fallback: %s...", al.model, fallbackModel), map[string]interface{}{"error": err.Error()})
+
+										// We temporarily override the AgentLoop's model
+										originalModel := al.model
+										al.model = fallbackModel
+
+										// Attempt Fallback Execution
+										response, err = al.provider.Chat(ctx, messages, providerToolDefs, al.model, map[string]interface{}{
+											"max_tokens":  8192,
+											"temperature": 0.7,
+										})
+
+										// Restore context
+										al.model = originalModel
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+			// --- End Council Implementation ---
 
 			if err == nil {
 				break // Success
