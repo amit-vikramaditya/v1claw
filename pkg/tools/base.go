@@ -1,81 +1,126 @@
 package tools
 
-import "context"
+import (
+	"context"
+	"fmt"
+	"sync"
+
+	"github.com/amit-vikramaditya/v1claw/pkg/bus"
+	"github.com/amit-vikramaditya/v1claw/pkg/logger"
+	"github.com/amit-vikramaditya/v1claw/pkg/providers"
+)
+
+// AsyncCallback is a function that a tool can call to send an asynchronous result back to the agent.
+type AsyncCallback func(ctx context.Context, result *ToolResult)
+
+// ToolContext provides invocation-specific context to a tool execution.
+// This replaces mutable fields on tool instances to prevent cross-session data races.
+type ToolContext struct {
+	Channel    string
+	ChatID     string
+	SessionKey string
+	SenderID   string
+	Async      AsyncCallback
+	Bus        *bus.MessageBus
+	// Add other necessary context here (e.g., config, logger, etc.)
+}
 
 // Tool is the interface that all tools must implement.
 type Tool interface {
 	Name() string
 	Description() string
 	Parameters() map[string]interface{}
-	Execute(ctx context.Context, args map[string]interface{}) *ToolResult
+	Execute(ctx context.Context, tc ToolContext, args map[string]interface{}) *ToolResult
 }
 
-// ContextualTool is an optional interface that tools can implement
-// to receive the current message context (channel, chatID)
-type ContextualTool interface {
-	Tool
-	SetContext(channel, chatID string)
+// ToolRegistry manages the lifecycle and execution of Tools.
+type ToolRegistry struct {
+	mu    sync.RWMutex
+	tools map[string]Tool
 }
 
-// AsyncCallback is a function type that async tools use to notify completion.
-// When an async tool finishes its work, it calls this callback with the result.
-//
-// The ctx parameter allows the callback to be canceled if the agent is shutting down.
-// The result parameter contains the tool's execution result.
-//
-// Example usage in an async tool:
-//
-//	func (t *MyAsyncTool) Execute(ctx context.Context, args map[string]interface{}) *ToolResult {
-//	    // Start async work in background
-//	    go func() {
-//	        result := doAsyncWork()
-//	        if t.callback != nil {
-//	            t.callback(ctx, result)
-//	        }
-//	    }()
-//	    return AsyncResult("Async task started")
-//	}
-type AsyncCallback func(ctx context.Context, result *ToolResult)
-
-// AsyncTool is an optional interface that tools can implement to support
-// asynchronous execution with completion callbacks.
-//
-// Async tools return immediately with an AsyncResult, then notify completion
-// via the callback set by SetCallback.
-//
-// This is useful for:
-// - Long-running operations that shouldn't block the agent loop
-// - Subagent spawns that complete independently
-// - Background tasks that need to report results later
-//
-// Example:
-//
-//	type SpawnTool struct {
-//	    callback AsyncCallback
-//	}
-//
-//	func (t *SpawnTool) SetCallback(cb AsyncCallback) {
-//	    t.callback = cb
-//	}
-//
-//	func (t *SpawnTool) Execute(ctx context.Context, args map[string]interface{}) *ToolResult {
-//	    go t.runSubagent(ctx, args)
-//	    return AsyncResult("Subagent spawned, will report back")
-//	}
-type AsyncTool interface {
-	Tool
-	// SetCallback registers a callback function to be invoked when the async operation completes.
-	// The callback will be called from a goroutine and should handle thread-safety if needed.
-	SetCallback(cb AsyncCallback)
-}
-
-func ToolToSchema(tool Tool) map[string]interface{} {
-	return map[string]interface{}{
-		"type": "function",
-		"function": map[string]interface{}{
-			"name":        tool.Name(),
-			"description": tool.Description(),
-			"parameters":  tool.Parameters(),
-		},
+// NewToolRegistry creates a new, empty ToolRegistry.
+func NewToolRegistry() *ToolRegistry {
+	return &ToolRegistry{
+		tools: make(map[string]Tool),
 	}
+}
+
+// Register adds a Tool to the registry.
+func (tr *ToolRegistry) Register(tool Tool) {
+	tr.mu.Lock()
+	defer tr.mu.Unlock()
+	tr.tools[tool.Name()] = tool
+	logger.DebugC("tools", fmt.Sprintf("Registered tool: %s", tool.Name()))
+}
+
+// Get retrieves a Tool by name.
+func (tr *ToolRegistry) Get(name string) (Tool, bool) {
+	tr.mu.RLock()
+	defer tr.mu.RUnlock()
+	tool, ok := tr.tools[name]
+	return tool, ok
+}
+
+// List returns a list of all registered tool names.
+func (tr *ToolRegistry) List() []string {
+	tr.mu.RLock()
+	defer tr.mu.RUnlock()
+	names := make([]string, 0, len(tr.tools))
+	for name := range tr.tools {
+		names = append(names, name)
+	}
+	return names
+}
+
+// GetSummaries returns a list of formatted strings summarizing each tool.
+func (tr *ToolRegistry) GetSummaries() []string {
+	tr.mu.RLock()
+	defer tr.mu.RUnlock()
+	var summaries []string
+	for _, tool := range tr.tools {
+		summaries = append(summaries, fmt.Sprintf("- **%s**: %s", tool.Name(), tool.Description()))
+	}
+	return summaries
+}
+
+// ToProviderDefs converts all registered tools into a format suitable for an LLM provider.
+func (tr *ToolRegistry) ToProviderDefs() []providers.ToolDefinition {
+	tr.mu.RLock()
+	defer tr.mu.RUnlock()
+	defs := make([]providers.ToolDefinition, 0, len(tr.tools))
+	for _, tool := range tr.tools {
+		// Use Tool.Parameters() method directly
+		defs = append(defs, providers.ToolDefinition{
+			Type: "function",
+			Function: providers.ToolFunctionDefinition{
+				Name:        tool.Name(),
+				Description: tool.Description(),
+				Parameters:  tool.Parameters(),
+			},
+		})
+	}
+	return defs
+}
+
+// ExecuteWithContext executes a tool with the provided context and arguments.
+func (tr *ToolRegistry) ExecuteWithContext(ctx context.Context, toolName string, args map[string]interface{}, tc ToolContext) *ToolResult {
+	tool, ok := tr.Get(toolName)
+	if !ok {
+		return ErrorResult(fmt.Sprintf("Tool %s not found", toolName))
+	}
+
+	logger.DebugCF("tools", fmt.Sprintf("Executing tool %s", toolName),
+		map[string]interface{}{"args": args})
+
+	result := tool.Execute(ctx, tc, args)
+
+	if result.IsError {
+		logger.ErrorCF("tools", fmt.Sprintf("Tool %s failed", toolName),
+			map[string]interface{}{"error": result.ForLLM})
+	} else {
+		logger.DebugCF("tools", fmt.Sprintf("Tool %s executed successfully", toolName),
+			map[string]interface{}{"result_len": len(result.ForLLM)})
+	}
+	return result
 }

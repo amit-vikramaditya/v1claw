@@ -5,17 +5,19 @@ import (
 	"fmt"
 )
 
-type SendCallback func(channel, chatID, content string) error
-
+// MessageTool sends messages directly to the user or a specific channel/chat.
+// It is intended for the agent to communicate directly or provide updates.
 type MessageTool struct {
-	sendCallback   SendCallback
-	defaultChannel string
-	defaultChatID  string
-	sentInRound    bool // Tracks whether a message was sent in the current processing round
+	sendCallback func(channel, chatID, content string) error
 }
 
 func NewMessageTool() *MessageTool {
 	return &MessageTool{}
+}
+
+// SetSendCallback allows the agent loop to inject its outbound message publishing.
+func (t *MessageTool) SetSendCallback(callback func(channel, chatID, content string) error) {
+	t.sendCallback = callback
 }
 
 func (t *MessageTool) Name() string {
@@ -23,7 +25,7 @@ func (t *MessageTool) Name() string {
 }
 
 func (t *MessageTool) Description() string {
-	return "Send a message to user on a chat channel. Use this when you want to communicate something."
+	return "Send a message to the user or a specific channel/chat. Use this tool only for direct communication, not for tool results."
 }
 
 func (t *MessageTool) Parameters() map[string]interface{} {
@@ -32,72 +34,44 @@ func (t *MessageTool) Parameters() map[string]interface{} {
 		"properties": map[string]interface{}{
 			"content": map[string]interface{}{
 				"type":        "string",
-				"description": "The message content to send",
+				"description": "The message content to send.",
 			},
 			"channel": map[string]interface{}{
 				"type":        "string",
-				"description": "Optional: target channel (telegram, whatsapp, etc.)",
+				"description": "Optional. The target channel (e.g., 'discord', 'telegram'). Defaults to the current inbound channel if not specified.",
 			},
 			"chat_id": map[string]interface{}{
 				"type":        "string",
-				"description": "Optional: target chat/user ID",
+				"description": "Optional. The target chat ID. Defaults to the current inbound chat ID if not specified.",
 			},
 		},
 		"required": []string{"content"},
 	}
 }
 
-func (t *MessageTool) SetContext(channel, chatID string) {
-	t.defaultChannel = channel
-	t.defaultChatID = chatID
-	t.sentInRound = false // Reset send tracking for new processing round
-}
-
-// HasSentInRound returns true if the message tool sent a message during the current round.
-func (t *MessageTool) HasSentInRound() bool {
-	return t.sentInRound
-}
-
-func (t *MessageTool) SetSendCallback(callback SendCallback) {
-	t.sendCallback = callback
-}
-
-func (t *MessageTool) Execute(ctx context.Context, args map[string]interface{}) *ToolResult {
+// Execute sends a message using the provided ToolContext.
+func (t *MessageTool) Execute(ctx context.Context, tc ToolContext, args map[string]interface{}) *ToolResult {
 	content, ok := args["content"].(string)
 	if !ok {
-		return &ToolResult{ForLLM: "content is required", IsError: true}
+		return ErrorResult("content is required")
 	}
 
-	channel, _ := args["channel"].(string)
-	chatID, _ := args["chat_id"].(string)
-
-	if channel == "" {
-		channel = t.defaultChannel
+	targetChannel := tc.Channel
+	if ch, ok := args["channel"].(string); ok && ch != "" {
+		targetChannel = ch
 	}
-	if chatID == "" {
-		chatID = t.defaultChatID
-	}
-
-	if channel == "" || chatID == "" {
-		return &ToolResult{ForLLM: "No target channel/chat specified", IsError: true}
+	targetChatID := tc.ChatID
+	if cid, ok := args["chat_id"].(string); ok && cid != "" {
+		targetChatID = cid
 	}
 
 	if t.sendCallback == nil {
-		return &ToolResult{ForLLM: "Message sending not configured", IsError: true}
+		return ErrorResult("message send callback not configured")
 	}
 
-	if err := t.sendCallback(channel, chatID, content); err != nil {
-		return &ToolResult{
-			ForLLM:  fmt.Sprintf("sending message: %v", err),
-			IsError: true,
-			Err:     err,
-		}
+	if err := t.sendCallback(targetChannel, targetChatID, content); err != nil {
+		return ErrorResult(fmt.Sprintf("failed to send message: %v", err))
 	}
 
-	t.sentInRound = true
-	// Silent: user already received the message directly
-	return &ToolResult{
-		ForLLM: fmt.Sprintf("Message sent to %s:%s", channel, chatID),
-		Silent: true,
-	}
+	return SilentResult("Message sent.")
 }

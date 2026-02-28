@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/amit-vikramaditya/v1claw/pkg/logger"
 )
@@ -19,8 +20,10 @@ type Router struct {
 	subscriptions map[string]*Subscription
 	queue         *eventQueue
 	cancel        context.CancelFunc
+	routerCtx     context.Context // Persistent context for all handlers
 	running       bool
 	wg            sync.WaitGroup
+	semaphore     chan struct{} // Limits concurrent handlers
 }
 
 // NewRouter creates a new event router.
@@ -31,6 +34,7 @@ func NewRouter() *Router {
 		sources:       make(map[string]EventSource),
 		subscriptions: make(map[string]*Subscription),
 		queue:         eq,
+		semaphore:     make(chan struct{}, 100), // Maximum 100 concurrent handlers
 	}
 }
 
@@ -113,20 +117,19 @@ func (r *Router) Start(ctx context.Context) error {
 		return fmt.Errorf("router already running")
 	}
 
-	routerCtx, cancel := context.WithCancel(ctx)
-	r.cancel = cancel
+	r.routerCtx, r.cancel = context.WithCancel(ctx)
 	r.running = true
 	r.mu.Unlock()
 
 	// Start all event sources and fan-in their event channels.
 	for name, source := range r.sources {
-		ch, err := source.Start(routerCtx)
+		ch, err := source.Start(r.routerCtx)
 		if err != nil {
 			logger.ErrorC(logComponent, fmt.Sprintf("Failed to start source %s: %v", name, err))
 			continue
 		}
 		r.wg.Add(1)
-		go r.collectFromSource(routerCtx, name, ch)
+		go r.collectFromSource(r.routerCtx, name, ch)
 	}
 
 	logger.InfoC(logComponent, fmt.Sprintf("Router started with %d sources and %d subscriptions",
@@ -197,6 +200,7 @@ func (r *Router) collectFromSource(ctx context.Context, name string, ch <-chan E
 }
 
 // dispatch routes an event to all matching subscriptions.
+// It executes handlers concurrently to avoid blocking other events.
 func (r *Router) dispatch(event Event) {
 	r.mu.RLock()
 	var matched []*Subscription
@@ -205,6 +209,8 @@ func (r *Router) dispatch(event Event) {
 			matched = append(matched, sub)
 		}
 	}
+	// Capture the current router context
+	ctx := r.routerCtx
 	r.mu.RUnlock()
 
 	if len(matched) == 0 {
@@ -215,10 +221,24 @@ func (r *Router) dispatch(event Event) {
 	// Sort by subscription priority (lower = higher priority).
 	sortSubscriptions(matched)
 
+	// Execute handlers concurrently with a semaphore limit explicitly bounding goroutine creation
 	for _, sub := range matched {
-		if err := sub.Handler(context.Background(), event); err != nil {
-			logger.ErrorC(logComponent, fmt.Sprintf("Handler %s failed for event %s: %v", sub.Name, event.ID, err))
-		}
+		// Acquire semaphore BEFORE spawning to prevent unbound goroutine memory bloat
+		r.semaphore <- struct{}{}
+		r.wg.Add(1)
+
+		go func(s *Subscription, e Event) {
+			defer r.wg.Done()
+			defer func() { <-r.semaphore }()
+
+			// Create a task-specific context with a timeout derived from the router context
+			hCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+			defer cancel()
+
+			if err := s.Handler(hCtx, e); err != nil {
+				logger.ErrorC(logComponent, fmt.Sprintf("Handler %s failed for event %s: %v", s.Name, e.ID, err))
+			}
+		}(sub, event)
 	}
 }
 

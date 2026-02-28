@@ -2,10 +2,13 @@ package channels
 
 import (
 	"context"
+	"crypto/rand"
 	"fmt"
+	"math/big"
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
@@ -34,6 +37,8 @@ type TelegramChannel struct {
 	transcriber  *voice.GroqTranscriber
 	placeholders sync.Map // chatID -> messageID
 	stopThinking sync.Map // chatID -> thinkingCancel
+	authOTP      string
+	authMu       sync.Mutex
 }
 
 type thinkingCancel struct {
@@ -44,6 +49,11 @@ func (c *thinkingCancel) Cancel() {
 	if c != nil && c.fn != nil {
 		c.fn()
 	}
+}
+
+func generateOTP() string {
+	n, _ := rand.Int(rand.Reader, big.NewInt(1000000))
+	return fmt.Sprintf("%06d", n.Int64())
 }
 
 func NewTelegramChannel(cfg *config.Config, bus *bus.MessageBus) (*TelegramChannel, error) {
@@ -69,6 +79,11 @@ func NewTelegramChannel(cfg *config.Config, bus *bus.MessageBus) (*TelegramChann
 
 	base := NewBaseChannel("telegram", telegramCfg, bus, telegramCfg.AllowFrom)
 
+	otp := ""
+	if len(telegramCfg.AllowFrom) == 0 {
+		otp = generateOTP()
+	}
+
 	return &TelegramChannel{
 		BaseChannel:  base,
 		commands:     NewTelegramCommands(bot, cfg),
@@ -78,6 +93,7 @@ func NewTelegramChannel(cfg *config.Config, bus *bus.MessageBus) (*TelegramChann
 		transcriber:  nil,
 		placeholders: sync.Map{},
 		stopThinking: sync.Map{},
+		authOTP:      otp,
 	}, nil
 }
 
@@ -124,6 +140,15 @@ func (c *TelegramChannel) Start(ctx context.Context) error {
 	logger.InfoCF("telegram", "Telegram bot connected", map[string]interface{}{
 		"username": c.bot.Username(),
 	})
+
+	if c.authOTP != "" {
+		fmt.Printf("\n=======================================================\n")
+		fmt.Printf("🔒 TELEGRAM BOT SECURITY: ACTION REQUIRED 🔒\n")
+		fmt.Printf("Your bot is running, but no users are authorized.\n")
+		fmt.Printf("Open Telegram, find your bot (@%s), and send this OTP:\n", c.bot.Username())
+		fmt.Printf("OTP PIN: %s\n", c.authOTP)
+		fmt.Printf("=======================================================\n\n")
+	}
 
 	go bh.Start()
 
@@ -201,6 +226,39 @@ func (c *TelegramChannel) handleMessage(ctx context.Context, message *telego.Mes
 	if user.Username != "" {
 		senderID = fmt.Sprintf("%d|%s", user.ID, user.Username)
 	}
+
+	// Try OTP verification first
+	c.authMu.Lock()
+	if c.authOTP != "" {
+		text := strings.TrimSpace(message.Text)
+		if text == c.authOTP {
+			// Success
+			c.authOTP = ""
+			c.authMu.Unlock()
+
+			// Add to config in memory
+			c.config.Channels.Telegram.AllowFrom = append(c.config.Channels.Telegram.AllowFrom, senderID)
+
+			// Update live BaseChannel state so IsAllowed works
+			c.AddAllowedUser(senderID)
+
+			// Save to disk
+			home, _ := os.UserHomeDir()
+			configPath := filepath.Join(home, ".v1claw", "config.json")
+			if err := config.SaveConfig(configPath, c.config); err != nil {
+				logger.ErrorCF("telegram", "Failed to save config after OTP auth", map[string]interface{}{"error": err.Error()})
+			}
+
+			c.bot.SendMessage(ctx, tu.Message(telego.ChatID{ID: message.Chat.ID}, "✅ Successfully authenticated! I am now bound to your account and will only respond to you."))
+			return nil
+		}
+
+		c.authMu.Unlock()
+		logger.DebugCF("telegram", "Discarded unauthorized message during OTP lock", map[string]interface{}{})
+		c.bot.SendMessage(ctx, tu.Message(telego.ChatID{ID: message.Chat.ID}, "🔒 Unauthorized. Please provide the 6-digit OTP printed on the server console to bind this bot."))
+		return nil
+	}
+	c.authMu.Unlock()
 
 	// 检查白名单，避免为被拒绝的用户下载附件
 	if !c.IsAllowed(senderID) {

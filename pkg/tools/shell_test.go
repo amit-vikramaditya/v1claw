@@ -18,7 +18,7 @@ func TestShellTool_Success(t *testing.T) {
 		"command": "echo 'hello world'",
 	}
 
-	result := tool.Execute(ctx, args)
+	result := tool.Execute(ctx, ToolContext{}, args)
 
 	// Success should not be an error
 	if result.IsError {
@@ -45,7 +45,7 @@ func TestShellTool_Failure(t *testing.T) {
 		"command": "ls /nonexistent_directory_12345",
 	}
 
-	result := tool.Execute(ctx, args)
+	result := tool.Execute(ctx, ToolContext{}, args)
 
 	// Failure should be marked as error
 	if !result.IsError {
@@ -73,7 +73,7 @@ func TestShellTool_Timeout(t *testing.T) {
 		"command": "sleep 10",
 	}
 
-	result := tool.Execute(ctx, args)
+	result := tool.Execute(ctx, ToolContext{}, args)
 
 	// Timeout should be marked as error
 	if !result.IsError {
@@ -101,7 +101,7 @@ func TestShellTool_WorkingDir(t *testing.T) {
 		"working_dir": tmpDir,
 	}
 
-	result := tool.Execute(ctx, args)
+	result := tool.Execute(ctx, ToolContext{}, args)
 
 	if result.IsError {
 		t.Errorf("Expected success in custom working dir, got error: %s", result.ForLLM)
@@ -121,7 +121,7 @@ func TestShellTool_DangerousCommand(t *testing.T) {
 		"command": "rm -rf /",
 	}
 
-	result := tool.Execute(ctx, args)
+	result := tool.Execute(ctx, ToolContext{}, args)
 
 	// Dangerous command should be blocked
 	if !result.IsError {
@@ -140,7 +140,7 @@ func TestShellTool_MissingCommand(t *testing.T) {
 	ctx := context.Background()
 	args := map[string]interface{}{}
 
-	result := tool.Execute(ctx, args)
+	result := tool.Execute(ctx, ToolContext{}, args)
 
 	// Should return error result
 	if !result.IsError {
@@ -154,10 +154,10 @@ func TestShellTool_StderrCapture(t *testing.T) {
 
 	ctx := context.Background()
 	args := map[string]interface{}{
-		"command": "sh -c 'echo stdout; echo stderr >&2'",
+		"command": "awk 'BEGIN { print \"stdout\"; print \"stderr\" > \"/dev/stderr\" }'",
 	}
 
-	result := tool.Execute(ctx, args)
+	result := tool.Execute(ctx, ToolContext{}, args)
 
 	// Both stdout and stderr should be in output
 	if !strings.Contains(result.ForLLM, "stdout") {
@@ -178,7 +178,7 @@ func TestShellTool_OutputTruncation(t *testing.T) {
 		"command": "python3 -c \"print('x' * 20000)\" || echo " + strings.Repeat("x", 20000),
 	}
 
-	result := tool.Execute(ctx, args)
+	result := tool.Execute(ctx, ToolContext{}, args)
 
 	// Should have truncation message or be truncated
 	if len(result.ForLLM) > 15000 {
@@ -197,7 +197,7 @@ func TestShellTool_RestrictToWorkspace(t *testing.T) {
 		"command": "cat ../../etc/passwd",
 	}
 
-	result := tool.Execute(ctx, args)
+	result := tool.Execute(ctx, ToolContext{}, args)
 
 	// Path traversal should be blocked
 	if !result.IsError {

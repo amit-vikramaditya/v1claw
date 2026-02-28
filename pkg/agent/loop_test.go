@@ -229,7 +229,7 @@ func TestToolContext_Updates(t *testing.T) {
 	ctxTool := &mockContextualTool{}
 
 	// Verify the tool implements the interface correctly
-	var _ tools.ContextualTool = ctxTool
+	var _ tools.Tool = ctxTool
 }
 
 // TestToolRegistry_GetDefinitions verifies tool definitions can be retrieved
@@ -392,7 +392,7 @@ func (m *mockCustomTool) Parameters() map[string]interface{} {
 	}
 }
 
-func (m *mockCustomTool) Execute(ctx context.Context, args map[string]interface{}) *tools.ToolResult {
+func (m *mockCustomTool) Execute(ctx context.Context, tc tools.ToolContext, args map[string]interface{}) *tools.ToolResult {
 	return tools.SilentResult("Custom tool executed")
 }
 
@@ -417,13 +417,8 @@ func (m *mockContextualTool) Parameters() map[string]interface{} {
 	}
 }
 
-func (m *mockContextualTool) Execute(ctx context.Context, args map[string]interface{}) *tools.ToolResult {
+func (m *mockContextualTool) Execute(ctx context.Context, tc tools.ToolContext, args map[string]interface{}) *tools.ToolResult {
 	return tools.SilentResult("Contextual tool executed")
-}
-
-func (m *mockContextualTool) SetContext(channel, chatID string) {
-	m.lastChannel = channel
-	m.lastChatID = chatID
 }
 
 // testHelper executes a message and returns the response

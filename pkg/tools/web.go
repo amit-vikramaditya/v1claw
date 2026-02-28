@@ -314,7 +314,7 @@ func (t *WebSearchTool) Parameters() map[string]interface{} {
 	}
 }
 
-func (t *WebSearchTool) Execute(ctx context.Context, args map[string]interface{}) *ToolResult {
+func (t *WebSearchTool) Execute(ctx context.Context, tc ToolContext, args map[string]interface{}) *ToolResult {
 	query, ok := args["query"].(string)
 	if !ok {
 		return ErrorResult("query is required")
@@ -377,7 +377,7 @@ func (t *WebFetchTool) Parameters() map[string]interface{} {
 	}
 }
 
-func (t *WebFetchTool) Execute(ctx context.Context, args map[string]interface{}) *ToolResult {
+func (t *WebFetchTool) Execute(ctx context.Context, tc ToolContext, args map[string]interface{}) *ToolResult {
 	urlStr, ok := args["url"].(string)
 	if !ok {
 		return ErrorResult("url is required")

@@ -130,6 +130,23 @@ Pick your device. Follow the steps. You'll have a working AI assistant in under 
 
 ---
 
+### ⚡ Zero-Touch Quickstart (All Platforms)
+If you already have your binary built, you can instantly configure your V1Claw without the interactive wizard using the `--auto` flag:
+
+```bash
+./v1claw onboard --auto --provider gemini --api-key "YOUR_API_KEY_HERE"
+```
+
+*This will instantly provision the `config.json` with secure defaults, allowing you to bypass the interactive menus entirely.*
+
+Or, you can skip `config.json` entirely and run purely via **Environment Variables**:
+```bash
+export V1CLAW_PROVIDERS_GEMINI_API_KEY="your_api_key_here"
+./v1claw gateway
+```
+
+---
+
 ### 📱 Android (Termux)
 
 <details>
@@ -194,16 +211,12 @@ This compiles V1Claw into a single file. It takes 2-5 minutes on a phone. When i
 #### Step 6: Run first-time setup
 
 ```bash
-./build/v1claw-android-arm64 onboard
+./build/v1claw-android-arm64 onboard --auto --provider gemini --api-key "YOUR_API_KEY"
 ```
 
-The setup wizard will ask you to:
-1. **Pick your AI provider** (Gemini is free and recommended)
-2. **Paste your API key**
+*(Alternatively, run just `onboard` to use the interactive wizard, which will also let you name your Agent and configure its Memory Soul).*
 
 That's it — your config is ready at `~/.v1claw/config.json`.
-
-> **Don't have an API key yet?** Press Enter to pick Gemini, then get a free key at [aistudio.google.com/apikey](https://aistudio.google.com/apikey). You can re-run `onboard` anytime, or edit the config manually with `nano ~/.v1claw/config.json`.
 
 #### Step 7: Test it!
 
@@ -328,10 +341,10 @@ The binary will appear at `build/v1claw-darwin-arm64` (Apple Silicon) or `build/
 #### Step 4: Run first-time setup
 
 ```bash
-./build/v1claw-darwin-* onboard
+./build/v1claw-darwin-* onboard --auto --provider gemini --api-key "YOUR_API_KEY"
 ```
 
-The setup wizard will ask you to pick a provider and enter your API key. Your config is ready immediately.
+*(Alternatively, run just `onboard` to use the interactive wizard, which will also let you name your Agent and configure its Memory Soul).*
 
 #### Step 5: Test it
 
@@ -407,10 +420,10 @@ The binary will appear at `build/v1claw-linux-amd64` or `build/v1claw-linux-arm6
 #### Step 4: Run first-time setup
 
 ```bash
-./build/v1claw-linux-* onboard
+./build/v1claw-linux-* onboard --auto --provider gemini --api-key "YOUR_API_KEY"
 ```
 
-The setup wizard will ask you to pick a provider and enter your API key. Your config is ready immediately.
+*(Alternatively, run just `onboard` to use the interactive wizard, which will also let you name your Agent and configure its Memory Soul).*
 
 #### Step 5: Test it
 

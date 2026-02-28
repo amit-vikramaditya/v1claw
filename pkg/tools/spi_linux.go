@@ -6,6 +6,8 @@ import (
 	"runtime"
 	"syscall"
 	"unsafe"
+
+	"github.com/amit-vikramaditya/v1claw/pkg/permissions"
 )
 
 // SPI ioctl constants from Linux kernel headers.
@@ -21,8 +23,8 @@ const (
 
 // spiTransfer matches Linux kernel struct spi_ioc_transfer (32 bytes on all architectures).
 type spiTransfer struct {
-	txBuf       uint64
-	rxBuf       uint64
+	txBuf       uintptr
+	rxBuf       uintptr
 	length      uint32
 	speedHz     uint32
 	delayUsecs  uint16
@@ -66,7 +68,10 @@ func configureSPI(devPath string, mode uint8, bits uint8, speed uint32) (int, *T
 }
 
 // transfer performs a full-duplex SPI transfer
-func (t *SPITool) transfer(args map[string]interface{}) *ToolResult {
+func (t *SPITool) transfer(tc ToolContext, args map[string]interface{}) *ToolResult {
+	if !permissions.Global().IsAllowed(permissions.ShellHardware) {
+		return ErrorResult("SPI access is blocked by permissions.shell_hardware=false in config")
+	}
 	confirm, _ := args["confirm"].(bool)
 	if !confirm {
 		return ErrorResult("transfer operations require confirm: true. Please confirm with the user before sending data to SPI devices.")
@@ -108,8 +113,8 @@ func (t *SPITool) transfer(args map[string]interface{}) *ToolResult {
 	rxBuf := make([]byte, len(txBuf))
 
 	xfer := spiTransfer{
-		txBuf:       uint64(uintptr(unsafe.Pointer(&txBuf[0]))),
-		rxBuf:       uint64(uintptr(unsafe.Pointer(&rxBuf[0]))),
+		txBuf:       uintptr(unsafe.Pointer(&txBuf[0])),
+		rxBuf:       uintptr(unsafe.Pointer(&rxBuf[0])),
 		length:      uint32(len(txBuf)),
 		speedHz:     speed,
 		bitsPerWord: bits,
@@ -140,7 +145,10 @@ func (t *SPITool) transfer(args map[string]interface{}) *ToolResult {
 }
 
 // readDevice reads bytes from SPI by sending zeros (read-only, no confirm needed)
-func (t *SPITool) readDevice(args map[string]interface{}) *ToolResult {
+func (t *SPITool) readDevice(tc ToolContext, args map[string]interface{}) *ToolResult {
+	if !permissions.Global().IsAllowed(permissions.ShellHardware) {
+		return ErrorResult("SPI access is blocked by permissions.shell_hardware=false in config")
+	}
 	dev, speed, mode, bits, errMsg := parseSPIArgs(args)
 	if errMsg != "" {
 		return ErrorResult(errMsg)
@@ -165,8 +173,8 @@ func (t *SPITool) readDevice(args map[string]interface{}) *ToolResult {
 	rxBuf := make([]byte, length)
 
 	xfer := spiTransfer{
-		txBuf:       uint64(uintptr(unsafe.Pointer(&txBuf[0]))),
-		rxBuf:       uint64(uintptr(unsafe.Pointer(&rxBuf[0]))),
+		txBuf:       uintptr(unsafe.Pointer(&txBuf[0])),
+		rxBuf:       uintptr(unsafe.Pointer(&rxBuf[0])),
 		length:      uint32(length),
 		speedHz:     speed,
 		bitsPerWord: bits,

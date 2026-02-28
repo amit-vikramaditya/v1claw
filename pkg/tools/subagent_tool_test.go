@@ -39,7 +39,7 @@ func (m *MockLLMProvider) GetContextWindow() int {
 // TestSubagentTool_Name verifies tool name
 func TestSubagentTool_Name(t *testing.T) {
 	provider := &MockLLMProvider{}
-	manager := NewSubagentManager(provider, "test-model", "/tmp/test", nil)
+	manager := NewSubagentManager(provider, "test-model", "/tmp/test", nil, nil)
 	tool := NewSubagentTool(manager)
 
 	if tool.Name() != "subagent" {
@@ -50,7 +50,7 @@ func TestSubagentTool_Name(t *testing.T) {
 // TestSubagentTool_Description verifies tool description
 func TestSubagentTool_Description(t *testing.T) {
 	provider := &MockLLMProvider{}
-	manager := NewSubagentManager(provider, "test-model", "/tmp/test", nil)
+	manager := NewSubagentManager(provider, "test-model", "/tmp/test", nil, nil)
 	tool := NewSubagentTool(manager)
 
 	desc := tool.Description()
@@ -65,7 +65,7 @@ func TestSubagentTool_Description(t *testing.T) {
 // TestSubagentTool_Parameters verifies tool parameters schema
 func TestSubagentTool_Parameters(t *testing.T) {
 	provider := &MockLLMProvider{}
-	manager := NewSubagentManager(provider, "test-model", "/tmp/test", nil)
+	manager := NewSubagentManager(provider, "test-model", "/tmp/test", nil, nil)
 	tool := NewSubagentTool(manager)
 
 	params := tool.Parameters()
@@ -107,31 +107,17 @@ func TestSubagentTool_Parameters(t *testing.T) {
 	if !ok {
 		t.Fatal("Required should be a string array")
 	}
-	if len(required) != 1 || required[0] != "task" {
-		t.Errorf("Required should be ['task'], got: %v", required)
+	if len(required) != 2 || required[0] != "task" || required[1] != "label" {
+		t.Errorf("Required should be ['task', 'label'], got: %v", required)
 	}
-}
-
-// TestSubagentTool_SetContext verifies context setting
-func TestSubagentTool_SetContext(t *testing.T) {
-	provider := &MockLLMProvider{}
-	manager := NewSubagentManager(provider, "test-model", "/tmp/test", nil)
-	tool := NewSubagentTool(manager)
-
-	tool.SetContext("test-channel", "test-chat")
-
-	// Verify context is set (we can't directly access private fields,
-	// but we can verify it doesn't crash)
-	// The actual context usage is tested in Execute tests
 }
 
 // TestSubagentTool_Execute_Success tests successful execution
 func TestSubagentTool_Execute_Success(t *testing.T) {
 	provider := &MockLLMProvider{}
 	msgBus := bus.NewMessageBus()
-	manager := NewSubagentManager(provider, "test-model", "/tmp/test", msgBus)
+	manager := NewSubagentManager(provider, "test-model", "/tmp/test", msgBus, nil)
 	tool := NewSubagentTool(manager)
-	tool.SetContext("telegram", "chat-123")
 
 	ctx := context.Background()
 	args := map[string]interface{}{
@@ -139,7 +125,7 @@ func TestSubagentTool_Execute_Success(t *testing.T) {
 		"label": "haiku-task",
 	}
 
-	result := tool.Execute(ctx, args)
+	result := tool.Execute(ctx, ToolContext{}, args)
 
 	// Verify basic ToolResult structure
 	if result == nil {
@@ -185,7 +171,7 @@ func TestSubagentTool_Execute_Success(t *testing.T) {
 func TestSubagentTool_Execute_NoLabel(t *testing.T) {
 	provider := &MockLLMProvider{}
 	msgBus := bus.NewMessageBus()
-	manager := NewSubagentManager(provider, "test-model", "/tmp/test", msgBus)
+	manager := NewSubagentManager(provider, "test-model", "/tmp/test", msgBus, nil)
 	tool := NewSubagentTool(manager)
 
 	ctx := context.Background()
@@ -193,22 +179,22 @@ func TestSubagentTool_Execute_NoLabel(t *testing.T) {
 		"task": "Test task without label",
 	}
 
-	result := tool.Execute(ctx, args)
+	result := tool.Execute(ctx, ToolContext{}, args)
 
-	if result.IsError {
-		t.Errorf("Expected success without label, got error: %s", result.ForLLM)
+	if !result.IsError {
+		t.Errorf("Expected error without label")
 	}
 
-	// ForLLM should show (unnamed) for missing label
-	if !strings.Contains(result.ForLLM, "(unnamed)") {
-		t.Errorf("ForLLM should show '(unnamed)' for missing label, got: %s", result.ForLLM)
+	// ForLLM should show error about missing label
+	if !strings.Contains(result.ForLLM, "label is required") {
+		t.Errorf("ForLLM should expect label requirement, got: %s", result.ForLLM)
 	}
 }
 
 // TestSubagentTool_Execute_MissingTask tests error handling for missing task
 func TestSubagentTool_Execute_MissingTask(t *testing.T) {
 	provider := &MockLLMProvider{}
-	manager := NewSubagentManager(provider, "test-model", "/tmp/test", nil)
+	manager := NewSubagentManager(provider, "test-model", "/tmp/test", nil, nil)
 	tool := NewSubagentTool(manager)
 
 	ctx := context.Background()
@@ -216,7 +202,7 @@ func TestSubagentTool_Execute_MissingTask(t *testing.T) {
 		"label": "test",
 	}
 
-	result := tool.Execute(ctx, args)
+	result := tool.Execute(ctx, ToolContext{}, args)
 
 	// Should return error
 	if !result.IsError {
@@ -240,10 +226,11 @@ func TestSubagentTool_Execute_NilManager(t *testing.T) {
 
 	ctx := context.Background()
 	args := map[string]interface{}{
-		"task": "test task",
+		"task":  "test task",
+		"label": "my-mock-task",
 	}
 
-	result := tool.Execute(ctx, args)
+	result := tool.Execute(ctx, ToolContext{}, args)
 
 	// Should return error
 	if !result.IsError {
@@ -259,20 +246,16 @@ func TestSubagentTool_Execute_NilManager(t *testing.T) {
 func TestSubagentTool_Execute_ContextPassing(t *testing.T) {
 	provider := &MockLLMProvider{}
 	msgBus := bus.NewMessageBus()
-	manager := NewSubagentManager(provider, "test-model", "/tmp/test", msgBus)
+	manager := NewSubagentManager(provider, "test-model", "/tmp/test", msgBus, nil)
 	tool := NewSubagentTool(manager)
-
-	// Set context
-	channel := "test-channel"
-	chatID := "test-chat"
-	tool.SetContext(channel, chatID)
 
 	ctx := context.Background()
 	args := map[string]interface{}{
-		"task": "Test context passing",
+		"task":  "Test context passing",
+		"label": "ctx-test",
 	}
 
-	result := tool.Execute(ctx, args)
+	result := tool.Execute(ctx, ToolContext{}, args)
 
 	// Should succeed
 	if result.IsError {
@@ -288,7 +271,7 @@ func TestSubagentTool_ForUserTruncation(t *testing.T) {
 	// Create a mock provider that returns very long content
 	provider := &MockLLMProvider{}
 	msgBus := bus.NewMessageBus()
-	manager := NewSubagentManager(provider, "test-model", "/tmp/test", msgBus)
+	manager := NewSubagentManager(provider, "test-model", "/tmp/test", msgBus, nil)
 	tool := NewSubagentTool(manager)
 
 	ctx := context.Background()
@@ -300,7 +283,7 @@ func TestSubagentTool_ForUserTruncation(t *testing.T) {
 		"label": "long-test",
 	}
 
-	result := tool.Execute(ctx, args)
+	result := tool.Execute(ctx, ToolContext{}, args)
 
 	// ForUser should be truncated to 500 chars + "..."
 	maxUserLen := 500

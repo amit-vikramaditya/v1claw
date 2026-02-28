@@ -1,29 +1,39 @@
 package auth
 
 import (
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/amit-vikramaditya/v1claw/pkg/logger"
 )
+
+// MasterKeyEnvVar is the environment variable where the master encryption key is expected.
+const MasterKeyEnvVar = "V1CLAW_AUTH_MASTER_KEY"
 
 // storeMu protects concurrent access to the auth store file.
 var storeMu sync.Mutex
 
+// AuthCredential represents a stored authentication credential.
+// AccessToken and RefreshToken are encrypted at rest.
 type AuthCredential struct {
-	AccessToken  string    `json:"access_token"`
-	RefreshToken string    `json:"refresh_token,omitempty"`
+	AccessToken  string    `json:"access_token_enc"`            // Encrypted
+	RefreshToken string    `json:"refresh_token_enc,omitempty"` // Encrypted
 	AccountID    string    `json:"account_id,omitempty"`
 	ExpiresAt    time.Time `json:"expires_at,omitempty"`
 	Provider     string    `json:"provider"`
 	AuthMethod   string    `json:"auth_method"`
 }
 
-type AuthStore struct {
-	Credentials map[string]*AuthCredential `json:"credentials"`
-}
-
+// IsExpired checks if the access token has expired.
 func (c *AuthCredential) IsExpired() bool {
 	if c.ExpiresAt.IsZero() {
 		return false
@@ -31,6 +41,7 @@ func (c *AuthCredential) IsExpired() bool {
 	return time.Now().After(c.ExpiresAt)
 }
 
+// NeedsRefresh checks if the access token needs to be refreshed soon.
 func (c *AuthCredential) NeedsRefresh() bool {
 	if c.ExpiresAt.IsZero() {
 		return false
@@ -38,45 +49,146 @@ func (c *AuthCredential) NeedsRefresh() bool {
 	return time.Now().Add(5 * time.Minute).After(c.ExpiresAt)
 }
 
+// AuthStore holds all authentication credentials.
+type AuthStore struct {
+	Credentials map[string]*AuthCredential `json:"credentials"`
+}
+
+// authFilePath returns the path to the auth store file.
 func authFilePath() string {
 	home, _ := os.UserHomeDir()
 	return filepath.Join(home, ".v1claw", "auth.json")
 }
 
-func LoadStore() (*AuthStore, error) {
+// loadStoreLocked loads the authentication store from disk, decrypting credentials. Requires storeMu lock.
+func loadStoreLocked() (*AuthStore, error) {
+
+	key, err := getMasterKey()
+	if err != nil {
+		return nil, fmt.Errorf("master encryption key not found: %w", err)
+	}
+
 	path := authFilePath()
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return &AuthStore{Credentials: make(map[string]*AuthCredential)}, nil
 		}
-		return nil, err
+		return nil, fmt.Errorf("failed to read auth store: %w", err)
 	}
 
-	var store AuthStore
-	if err := json.Unmarshal(data, &store); err != nil {
-		return nil, err
+	var encryptedStore struct {
+		Credentials map[string]*AuthCredential `json:"credentials"`
 	}
-	if store.Credentials == nil {
-		store.Credentials = make(map[string]*AuthCredential)
+	if err := json.Unmarshal(data, &encryptedStore); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal encrypted auth store: %w", err)
 	}
-	return &store, nil
+
+	decryptedStore := &AuthStore{Credentials: make(map[string]*AuthCredential)}
+	for provider, encCred := range encryptedStore.Credentials {
+		decryptedCred := &AuthCredential{
+			AccountID:  encCred.AccountID,
+			ExpiresAt:  encCred.ExpiresAt,
+			Provider:   encCred.Provider,
+			AuthMethod: encCred.AuthMethod,
+		}
+
+		if encCred.AccessToken != "" {
+			decryptedAccessToken, decErr := decrypt(encCred.AccessToken, key)
+			if decErr != nil {
+				logger.ErrorC("auth", fmt.Sprintf("Failed to decrypt access token for %s: %v", provider, decErr))
+				continue // Skip this credential if decryption fails
+			}
+			decryptedCred.AccessToken = decryptedAccessToken
+		}
+
+		if encCred.RefreshToken != "" {
+			decryptedRefreshToken, decErr := decrypt(encCred.RefreshToken, key)
+			if decErr != nil {
+				logger.ErrorC("auth", fmt.Sprintf("Failed to decrypt refresh token for %s: %v", provider, decErr))
+				continue // Skip this credential if decryption fails
+			}
+			decryptedCred.RefreshToken = decryptedRefreshToken
+		}
+		decryptedStore.Credentials[provider] = decryptedCred
+	}
+
+	return decryptedStore, nil
 }
 
-func SaveStore(store *AuthStore) error {
+// LoadStore loads the authentication store from disk, decrypting credentials.
+func LoadStore() (*AuthStore, error) {
+	storeMu.Lock()
+	defer storeMu.Unlock()
+	return loadStoreLocked()
+}
+
+// saveStoreLocked saves the authentication store to disk, encrypting credentials atomically. Requires storeMu lock.
+func saveStoreLocked(store *AuthStore) error {
+
+	key, err := getMasterKey()
+	if err != nil {
+		return fmt.Errorf("master encryption key not found: %w", err)
+	}
+
+	encryptedStore := &AuthStore{Credentials: make(map[string]*AuthCredential)}
+	for provider, cred := range store.Credentials {
+		encryptedCred := &AuthCredential{
+			AccountID:  cred.AccountID,
+			ExpiresAt:  cred.ExpiresAt,
+			Provider:   cred.Provider,
+			AuthMethod: cred.AuthMethod,
+		}
+
+		if cred.AccessToken != "" {
+			encryptedAccessToken, encErr := encrypt(cred.AccessToken, key)
+			if encErr != nil {
+				return fmt.Errorf("failed to encrypt access token for %s: %w", provider, encErr)
+			}
+			encryptedCred.AccessToken = encryptedAccessToken
+		}
+
+		if cred.RefreshToken != "" {
+			encryptedRefreshToken, encErr := encrypt(cred.RefreshToken, key)
+			if encErr != nil {
+				return fmt.Errorf("failed to encrypt refresh token for %s: %w", provider, encErr)
+			}
+			encryptedCred.RefreshToken = encryptedRefreshToken
+		}
+		encryptedStore.Credentials[provider] = encryptedCred
+	}
+
+	data, err := json.MarshalIndent(encryptedStore, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal auth store: %w", err)
+	}
+
 	path := authFilePath()
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0700); err != nil {
-		return err
+		return fmt.Errorf("failed to create auth directory: %w", err)
 	}
 
-	data, err := json.MarshalIndent(store, "", "  ")
-	if err != nil {
-		return err
+	// Atomic write using temp file + rename
+	tempFile := path + ".tmp"
+	if err := os.WriteFile(tempFile, data, 0600); err != nil {
+		return fmt.Errorf("failed to write temp auth file: %w", err)
 	}
-	return os.WriteFile(path, data, 0600)
+	if err := os.Rename(tempFile, path); err != nil {
+		os.Remove(tempFile) // Clean up temp file on failure
+		return fmt.Errorf("failed to rename temp auth file: %w", err)
+	}
+	return nil
 }
 
+// SaveStore saves the authentication store to disk, encrypting credentials atomically.
+func SaveStore(store *AuthStore) error {
+	storeMu.Lock()
+	defer storeMu.Unlock()
+	return saveStoreLocked(store)
+}
+
+// GetCredential retrieves a decrypted credential for a provider.
 func GetCredential(provider string) (*AuthCredential, error) {
 	store, err := LoadStore()
 	if err != nil {
@@ -84,37 +196,105 @@ func GetCredential(provider string) (*AuthCredential, error) {
 	}
 	cred, ok := store.Credentials[provider]
 	if !ok {
-		return nil, nil
+		return nil, nil // Not an error if credential not found
 	}
 	return cred, nil
 }
 
+// SetCredential sets an encrypted credential for a provider.
 func SetCredential(provider string, cred *AuthCredential) error {
 	storeMu.Lock()
 	defer storeMu.Unlock()
-	store, err := LoadStore()
+
+	store, err := loadStoreLocked() // Load existing (and decrypted) store
 	if err != nil {
 		return err
 	}
-	store.Credentials[provider] = cred
-	return SaveStore(store)
+	store.Credentials[provider] = cred // Replace with new decrypted credential
+	return saveStoreLocked(store)      // Save (which will encrypt it)
 }
 
+// DeleteCredential deletes a credential for a provider.
 func DeleteCredential(provider string) error {
 	storeMu.Lock()
 	defer storeMu.Unlock()
-	store, err := LoadStore()
+
+	store, err := loadStoreLocked()
 	if err != nil {
 		return err
 	}
 	delete(store.Credentials, provider)
-	return SaveStore(store)
+	return saveStoreLocked(store)
 }
 
+// DeleteAllCredentials deletes the entire auth store file.
 func DeleteAllCredentials() error {
 	path := authFilePath()
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-		return err
+		return fmt.Errorf("failed to delete auth file: %w", err)
 	}
 	return nil
+}
+
+// getMasterKey retrieves the 32-byte AES master key from the environment.
+func getMasterKey() ([]byte, error) {
+	keyStr := os.Getenv(MasterKeyEnvVar)
+	if keyStr == "" {
+		return nil, fmt.Errorf("environment variable %s is not set", MasterKeyEnvVar)
+	}
+	if len(keyStr) != 32 {
+		return nil, fmt.Errorf("master key must be 32 bytes long, got %d", len(keyStr))
+	}
+	return []byte(keyStr), nil
+}
+
+// encrypt encrypts plaintext using AES-GCM.
+func encrypt(plaintext string, key []byte) (string, error) {
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return "", err
+	}
+
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return "", err
+	}
+
+	nonce := make([]byte, gcm.NonceSize())
+	if _, err = io.ReadFull(rand.Reader, nonce); err != nil {
+		return "", err
+	}
+
+	ciphertext := gcm.Seal(nonce, nonce, []byte(plaintext), nil)
+	return base64.StdEncoding.EncodeToString(ciphertext), nil
+}
+
+// decrypt decrypts ciphertext using AES-GCM.
+func decrypt(ciphertext string, key []byte) (string, error) {
+	data, err := base64.StdEncoding.DecodeString(ciphertext)
+	if err != nil {
+		return "", err
+	}
+
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return "", err
+	}
+
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return "", err
+	}
+
+	nonceSize := gcm.NonceSize()
+	if len(data) < nonceSize {
+		return "", fmt.Errorf("ciphertext too short")
+	}
+
+	nonce, ciphertextBytes := data[:nonceSize], data[nonceSize:]
+	plaintextBytes, err := gcm.Open(nil, nonce, ciphertextBytes, nil)
+	if err != nil {
+		return "", err
+	}
+	return string(plaintextBytes), nil
 }

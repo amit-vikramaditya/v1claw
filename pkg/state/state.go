@@ -44,6 +44,7 @@ type Manager struct {
 	workspace string
 	state     *State
 	mu        sync.RWMutex
+	ioMu      sync.Mutex // Separates disk I/O lock from state lock
 	stateFile string
 }
 
@@ -85,35 +86,42 @@ func NewManager(workspace string) *Manager {
 // ensuring that the state file is never corrupted even if the process crashes.
 func (sm *Manager) SetLastChannel(channel string) error {
 	sm.mu.Lock()
-	defer sm.mu.Unlock()
-
 	// Update state
 	sm.state.LastChannel = channel
 	sm.state.Timestamp = time.Now()
 
-	// Atomic save using temp file + rename
-	if err := sm.saveAtomic(); err != nil {
-		return fmt.Errorf("failed to save state atomically: %w", err)
+	data, err := json.MarshalIndent(sm.state, "", "  ")
+
+	if err != nil {
+		sm.mu.Unlock()
+		return fmt.Errorf("failed to marshal state: %w", err)
 	}
 
-	return nil
+	sm.ioMu.Lock()
+	defer sm.ioMu.Unlock()
+	sm.mu.Unlock() // Lock released AFTER securing ioMu lock to preserve update order
+
+	return sm.writeBytesAtomic(data)
 }
 
 // SetLastChatID atomically updates the last chat ID and saves the state.
 func (sm *Manager) SetLastChatID(chatID string) error {
 	sm.mu.Lock()
-	defer sm.mu.Unlock()
-
 	// Update state
 	sm.state.LastChatID = chatID
 	sm.state.Timestamp = time.Now()
 
-	// Atomic save using temp file + rename
-	if err := sm.saveAtomic(); err != nil {
-		return fmt.Errorf("failed to save state atomically: %w", err)
+	data, err := json.MarshalIndent(sm.state, "", "  ")
+
+	if err != nil {
+		sm.mu.Unlock()
+		return fmt.Errorf("failed to marshal state: %w", err)
 	}
 
-	return nil
+	sm.ioMu.Lock()
+	defer sm.ioMu.Unlock()
+	sm.mu.Unlock()
+	return sm.writeBytesAtomic(data)
 }
 
 // GetLastChannel returns the last channel from the state.
@@ -143,8 +151,6 @@ func (sm *Manager) GetTimestamp() time.Time {
 // The userKey should be a stable user identifier (e.g., "telegram:123456").
 func (sm *Manager) SetUserState(userKey, channel, chatID, senderID string) error {
 	sm.mu.Lock()
-	defer sm.mu.Unlock()
-
 	if sm.state.Users == nil {
 		sm.state.Users = make(map[string]*UserState)
 	}
@@ -161,7 +167,17 @@ func (sm *Manager) SetUserState(userKey, channel, chatID, senderID string) error
 	sm.state.LastChatID = chatID
 	sm.state.Timestamp = time.Now()
 
-	return sm.saveAtomic()
+	data, err := json.MarshalIndent(sm.state, "", "  ")
+
+	if err != nil {
+		sm.mu.Unlock()
+		return fmt.Errorf("failed to marshal state: %w", err)
+	}
+
+	sm.ioMu.Lock()
+	defer sm.ioMu.Unlock()
+	sm.mu.Unlock()
+	return sm.writeBytesAtomic(data)
 }
 
 // GetUserState returns the state for a specific user, or nil if not found.
@@ -215,15 +231,25 @@ func (sm *Manager) GetActiveUsers(within time.Duration) map[string]*UserState {
 // RemoveUser removes a user from the tracked state.
 func (sm *Manager) RemoveUser(userKey string) error {
 	sm.mu.Lock()
-	defer sm.mu.Unlock()
-
 	if sm.state.Users == nil {
+		sm.mu.Unlock()
 		return nil
 	}
 
 	delete(sm.state.Users, userKey)
 	sm.state.Timestamp = time.Now()
-	return sm.saveAtomic()
+
+	data, err := json.MarshalIndent(sm.state, "", "  ")
+
+	if err != nil {
+		sm.mu.Unlock()
+		return fmt.Errorf("failed to marshal state: %w", err)
+	}
+
+	sm.ioMu.Lock()
+	defer sm.ioMu.Unlock()
+	sm.mu.Unlock()
+	return sm.writeBytesAtomic(data)
 }
 
 // UserCount returns the number of tracked users.
@@ -238,21 +264,21 @@ func (sm *Manager) UserCount() int {
 }
 
 // saveAtomic performs an atomic save using temp file + rename.
-// This ensures that the state file is never corrupted:
-// 1. Write to a temp file
-// 2. Rename temp file to target (atomic on POSIX systems)
-// 3. If rename fails, cleanup the temp file
-//
 // Must be called with the lock held.
 func (sm *Manager) saveAtomic() error {
-	// Create temp file in the same directory as the target
-	tempFile := sm.stateFile + ".tmp"
-
-	// Marshal state to JSON
 	data, err := json.MarshalIndent(sm.state, "", "  ")
 	if err != nil {
 		return fmt.Errorf("failed to marshal state: %w", err)
 	}
+
+	sm.ioMu.Lock()
+	defer sm.ioMu.Unlock()
+	return sm.writeBytesAtomic(data)
+}
+
+func (sm *Manager) writeBytesAtomic(data []byte) error {
+	// Create temp file in the same directory as the target
+	tempFile := sm.stateFile + ".tmp"
 
 	// Write to temp file
 	if err := os.WriteFile(tempFile, data, 0600); err != nil {

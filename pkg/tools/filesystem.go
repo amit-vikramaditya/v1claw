@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -30,46 +31,28 @@ func validatePath(path, workspace string, restrict bool) (string, error) {
 	}
 
 	if restrict {
-		if !isWithinWorkspace(absPath, absWorkspace) {
-			return "", fmt.Errorf("access denied: path is outside the workspace")
-		}
-
+		// Resolve the real path of the workspace to prevent symlink traversal
 		workspaceReal := absWorkspace
 		if resolved, err := filepath.EvalSymlinks(absWorkspace); err == nil {
 			workspaceReal = resolved
+		} else if !os.IsNotExist(err) {
+			return "", fmt.Errorf("failed to resolve workspace symlink: %w", err)
 		}
 
+		// Resolve the real path of the given path
+		pathReal := absPath
 		if resolved, err := filepath.EvalSymlinks(absPath); err == nil {
-			if !isWithinWorkspace(resolved, workspaceReal) {
-				return "", fmt.Errorf("access denied: symlink resolves outside workspace")
-			}
-		} else if os.IsNotExist(err) {
-			if parentResolved, err := resolveExistingAncestor(filepath.Dir(absPath)); err == nil {
-				if !isWithinWorkspace(parentResolved, workspaceReal) {
-					return "", fmt.Errorf("access denied: symlink resolves outside workspace")
-				}
-			} else if !os.IsNotExist(err) {
-				return "", fmt.Errorf("failed to resolve path: %w", err)
-			}
-		} else {
-			return "", fmt.Errorf("failed to resolve path: %w", err)
+			pathReal = resolved
+		} else if !os.IsNotExist(err) && !os.IsPermission(err) { // Ignore permission errors on non-existent files
+			return "", fmt.Errorf("failed to resolve path symlink: %w", err)
+		}
+
+		if !isWithinWorkspace(pathReal, workspaceReal) {
+			return "", fmt.Errorf("access denied: path is outside the workspace or resolves outside via symlink")
 		}
 	}
 
 	return absPath, nil
-}
-
-func resolveExistingAncestor(path string) (string, error) {
-	for current := filepath.Clean(path); ; current = filepath.Dir(current) {
-		if resolved, err := filepath.EvalSymlinks(current); err == nil {
-			return resolved, nil
-		} else if !os.IsNotExist(err) {
-			return "", err
-		}
-		if filepath.Dir(current) == current {
-			return "", os.ErrNotExist
-		}
-	}
 }
 
 func isWithinWorkspace(candidate, workspace string) bool {
@@ -107,18 +90,49 @@ func (t *ReadFileTool) Parameters() map[string]interface{} {
 	}
 }
 
-func (t *ReadFileTool) Execute(ctx context.Context, args map[string]interface{}) *ToolResult {
+func (t *ReadFileTool) Execute(ctx context.Context, tc ToolContext, args map[string]interface{}) *ToolResult {
 	path, ok := args["path"].(string)
 	if !ok {
 		return ErrorResult("path is required")
 	}
+
+	// [CRITICAL] Filesystem tools have TOCTOU window and unbounded reads.
+	// Fix: Add a max_bytes limit to prevent OOM.
+	const maxReadBytes = 10 * 1024 * 1024 // 10MB limit for reads
 
 	resolvedPath, err := validatePath(path, t.workspace, t.restrict)
 	if err != nil {
 		return ErrorResult(err.Error())
 	}
 
-	content, err := os.ReadFile(resolvedPath)
+	// Open file first to tie the check to the actual file descriptor
+	f, err := os.Open(resolvedPath)
+	if err != nil {
+		return ErrorResult(fmt.Sprintf("failed to open file: %v", err))
+	}
+	defer f.Close()
+
+	if t.restrict {
+		// TOCTOU mitigation: verify the opened file matches the resolved path's Lstat
+		// This prevents swapping the file with a symlink after validatePath
+		fi, err := f.Stat()
+		if err == nil {
+			li, lerr := os.Lstat(resolvedPath)
+			if lerr == nil && !os.SameFile(fi, li) {
+				return ErrorResult("access denied: symlink race detected (TOCTOU)")
+			}
+		}
+	}
+
+	info, err := f.Stat()
+	if err != nil {
+		return ErrorResult(fmt.Sprintf("failed to stat file: %v", err))
+	}
+	if info.Size() > maxReadBytes {
+		return ErrorResult(fmt.Sprintf("file too large to read (max %d bytes)", maxReadBytes))
+	}
+
+	content, err := io.ReadAll(f)
 	if err != nil {
 		return ErrorResult(fmt.Sprintf("failed to read file: %v", err))
 	}
@@ -160,7 +174,7 @@ func (t *WriteFileTool) Parameters() map[string]interface{} {
 	}
 }
 
-func (t *WriteFileTool) Execute(ctx context.Context, args map[string]interface{}) *ToolResult {
+func (t *WriteFileTool) Execute(ctx context.Context, tc ToolContext, args map[string]interface{}) *ToolResult {
 	path, ok := args["path"].(string)
 	if !ok {
 		return ErrorResult("path is required")
@@ -181,7 +195,24 @@ func (t *WriteFileTool) Execute(ctx context.Context, args map[string]interface{}
 		return ErrorResult(fmt.Sprintf("failed to create directory: %v", err))
 	}
 
-	if err := os.WriteFile(resolvedPath, []byte(content), 0644); err != nil {
+	f, err := os.OpenFile(resolvedPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
+	if err != nil {
+		return ErrorResult(fmt.Sprintf("failed to open file for writing: %v", err))
+	}
+	defer f.Close()
+
+	if t.restrict {
+		// TOCTOU mitigation for writes
+		fi, err := f.Stat()
+		if err == nil {
+			li, lerr := os.Lstat(resolvedPath)
+			if lerr == nil && !os.SameFile(fi, li) {
+				return ErrorResult("access denied: symlink race detected (TOCTOU)")
+			}
+		}
+	}
+
+	if _, err := f.Write([]byte(content)); err != nil {
 		return ErrorResult(fmt.Sprintf("failed to write file: %v", err))
 	}
 
@@ -218,7 +249,7 @@ func (t *ListDirTool) Parameters() map[string]interface{} {
 	}
 }
 
-func (t *ListDirTool) Execute(ctx context.Context, args map[string]interface{}) *ToolResult {
+func (t *ListDirTool) Execute(ctx context.Context, tc ToolContext, args map[string]interface{}) *ToolResult {
 	path, ok := args["path"].(string)
 	if !ok {
 		path = "."

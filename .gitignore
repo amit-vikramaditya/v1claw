@@ -45,3 +45,7 @@ tasks/
 # Added by goreleaser init:
 dist/
 OUR_WORK.md
+
+# Logs and Process IDs
+*.log
+*.pid

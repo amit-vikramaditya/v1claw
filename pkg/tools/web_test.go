@@ -26,7 +26,7 @@ func TestWebTool_WebFetch_Success(t *testing.T) {
 		"url": server.URL,
 	}
 
-	result := tool.Execute(ctx, args)
+	result := tool.Execute(ctx, ToolContext{}, args)
 
 	// Localhost should be blocked by SSRF protection
 	if !result.IsError {
@@ -55,7 +55,7 @@ func TestWebTool_WebFetch_JSON(t *testing.T) {
 		"url": server.URL,
 	}
 
-	result := tool.Execute(ctx, args)
+	result := tool.Execute(ctx, ToolContext{}, args)
 
 	// Localhost should be blocked by SSRF protection
 	if !result.IsError {
@@ -71,7 +71,7 @@ func TestWebTool_WebFetch_InvalidURL(t *testing.T) {
 		"url": "not-a-valid-url",
 	}
 
-	result := tool.Execute(ctx, args)
+	result := tool.Execute(ctx, ToolContext{}, args)
 
 	// Should return error result
 	if !result.IsError {
@@ -92,7 +92,7 @@ func TestWebTool_WebFetch_UnsupportedScheme(t *testing.T) {
 		"url": "ftp://example.com/file.txt",
 	}
 
-	result := tool.Execute(ctx, args)
+	result := tool.Execute(ctx, ToolContext{}, args)
 
 	// Should return error result
 	if !result.IsError {
@@ -111,7 +111,7 @@ func TestWebTool_WebFetch_MissingURL(t *testing.T) {
 	ctx := context.Background()
 	args := map[string]interface{}{}
 
-	result := tool.Execute(ctx, args)
+	result := tool.Execute(ctx, ToolContext{}, args)
 
 	// Should return error result
 	if !result.IsError {
@@ -141,7 +141,7 @@ func TestWebTool_WebFetch_Truncation(t *testing.T) {
 		"url": server.URL,
 	}
 
-	result := tool.Execute(ctx, args)
+	result := tool.Execute(ctx, ToolContext{}, args)
 
 	// Localhost should be blocked by SSRF protection
 	if !result.IsError {
@@ -169,7 +169,7 @@ func TestWebTool_WebSearch_MissingQuery(t *testing.T) {
 	ctx := context.Background()
 	args := map[string]interface{}{}
 
-	result := tool.Execute(ctx, args)
+	result := tool.Execute(ctx, ToolContext{}, args)
 
 	// Should return error result
 	if !result.IsError {
@@ -192,7 +192,7 @@ func TestWebTool_WebFetch_HTMLExtraction(t *testing.T) {
 		"url": server.URL,
 	}
 
-	result := tool.Execute(ctx, args)
+	result := tool.Execute(ctx, ToolContext{}, args)
 
 	// Localhost should be blocked by SSRF protection
 	if !result.IsError {
@@ -216,7 +216,7 @@ func TestWebTool_SSRF_BlockedHosts(t *testing.T) {
 	ctx := context.Background()
 
 	for _, u := range blockedURLs {
-		result := tool.Execute(ctx, map[string]interface{}{"url": u})
+		result := tool.Execute(ctx, ToolContext{}, map[string]interface{}{"url": u})
 		if !result.IsError {
 			t.Errorf("Expected SSRF block for %s", u)
 		}
@@ -250,7 +250,7 @@ func TestWebTool_WebFetch_MissingDomain(t *testing.T) {
 		"url": "https://",
 	}
 
-	result := tool.Execute(ctx, args)
+	result := tool.Execute(ctx, ToolContext{}, args)
 
 	// Should return error result
 	if !result.IsError {

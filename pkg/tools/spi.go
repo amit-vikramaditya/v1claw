@@ -67,7 +67,7 @@ func (t *SPITool) Parameters() map[string]interface{} {
 	}
 }
 
-func (t *SPITool) Execute(ctx context.Context, args map[string]interface{}) *ToolResult {
+func (t *SPITool) Execute(ctx context.Context, tc ToolContext, args map[string]interface{}) *ToolResult {
 	if runtime.GOOS != "linux" {
 		return ErrorResult("SPI is only supported on Linux. This tool requires /dev/spidev* device files.")
 	}
@@ -81,9 +81,9 @@ func (t *SPITool) Execute(ctx context.Context, args map[string]interface{}) *Too
 	case "list":
 		return t.list()
 	case "transfer":
-		return t.transfer(args)
+		return t.transfer(tc, args)
 	case "read":
-		return t.readDevice(args)
+		return t.readDevice(tc, args)
 	default:
 		return ErrorResult(fmt.Sprintf("unknown action: %s (valid: list, transfer, read)", action))
 	}

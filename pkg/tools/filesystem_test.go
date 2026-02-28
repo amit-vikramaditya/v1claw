@@ -20,7 +20,7 @@ func TestFilesystemTool_ReadFile_Success(t *testing.T) {
 		"path": testFile,
 	}
 
-	result := tool.Execute(ctx, args)
+	result := tool.Execute(ctx, ToolContext{}, args)
 
 	// Success should not be an error
 	if result.IsError {
@@ -47,7 +47,7 @@ func TestFilesystemTool_ReadFile_NotFound(t *testing.T) {
 		"path": "/nonexistent_file_12345.txt",
 	}
 
-	result := tool.Execute(ctx, args)
+	result := tool.Execute(ctx, ToolContext{}, args)
 
 	// Failure should be marked as error
 	if !result.IsError {
@@ -66,7 +66,7 @@ func TestFilesystemTool_ReadFile_MissingPath(t *testing.T) {
 	ctx := context.Background()
 	args := map[string]interface{}{}
 
-	result := tool.Execute(ctx, args)
+	result := tool.Execute(ctx, ToolContext{}, args)
 
 	// Should return error result
 	if !result.IsError {
@@ -91,7 +91,7 @@ func TestFilesystemTool_WriteFile_Success(t *testing.T) {
 		"content": "hello world",
 	}
 
-	result := tool.Execute(ctx, args)
+	result := tool.Execute(ctx, ToolContext{}, args)
 
 	// Success should not be an error
 	if result.IsError {
@@ -130,7 +130,7 @@ func TestFilesystemTool_WriteFile_CreateDir(t *testing.T) {
 		"content": "test",
 	}
 
-	result := tool.Execute(ctx, args)
+	result := tool.Execute(ctx, ToolContext{}, args)
 
 	// Success should not be an error
 	if result.IsError {
@@ -155,7 +155,7 @@ func TestFilesystemTool_WriteFile_MissingPath(t *testing.T) {
 		"content": "test",
 	}
 
-	result := tool.Execute(ctx, args)
+	result := tool.Execute(ctx, ToolContext{}, args)
 
 	// Should return error result
 	if !result.IsError {
@@ -171,7 +171,7 @@ func TestFilesystemTool_WriteFile_MissingContent(t *testing.T) {
 		"path": "/tmp/test.txt",
 	}
 
-	result := tool.Execute(ctx, args)
+	result := tool.Execute(ctx, ToolContext{}, args)
 
 	// Should return error result
 	if !result.IsError {
@@ -197,7 +197,7 @@ func TestFilesystemTool_ListDir_Success(t *testing.T) {
 		"path": tmpDir,
 	}
 
-	result := tool.Execute(ctx, args)
+	result := tool.Execute(ctx, ToolContext{}, args)
 
 	// Success should not be an error
 	if result.IsError {
@@ -221,7 +221,7 @@ func TestFilesystemTool_ListDir_NotFound(t *testing.T) {
 		"path": "/nonexistent_directory_12345",
 	}
 
-	result := tool.Execute(ctx, args)
+	result := tool.Execute(ctx, ToolContext{}, args)
 
 	// Failure should be marked as error
 	if !result.IsError {
@@ -240,7 +240,7 @@ func TestFilesystemTool_ListDir_DefaultPath(t *testing.T) {
 	ctx := context.Background()
 	args := map[string]interface{}{}
 
-	result := tool.Execute(ctx, args)
+	result := tool.Execute(ctx, ToolContext{}, args)
 
 	// Should use "." as default path
 	if result.IsError {
@@ -268,7 +268,7 @@ func TestFilesystemTool_ReadFile_RejectsSymlinkEscape(t *testing.T) {
 	}
 
 	tool := NewReadFileTool(workspace, true)
-	result := tool.Execute(context.Background(), map[string]interface{}{
+	result := tool.Execute(context.Background(), ToolContext{}, map[string]interface{}{
 		"path": link,
 	})
 

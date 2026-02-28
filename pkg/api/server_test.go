@@ -15,8 +15,6 @@ import (
 
 	"github.com/amit-vikramaditya/v1claw/pkg/events"
 	"github.com/amit-vikramaditya/v1claw/pkg/state"
-
-	"golang.org/x/time/rate" // Added for rate limiting tests
 )
 
 func newTestServer(t *testing.T) (*Server, *state.Manager) {
@@ -246,7 +244,7 @@ func TestAuthMiddleware_NoKey(t *testing.T) {
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
 	var resp ErrorResponse
 	json.NewDecoder(w.Body).Decode(&resp)
-	assert.Contains(t, resp.Error, "API key not configured")
+	assert.Contains(t, resp.Error, "invalid or missing API key")
 }
 
 func TestAuthMiddleware_ValidKey(t *testing.T) {

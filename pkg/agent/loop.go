@@ -22,6 +22,7 @@ import (
 	"github.com/amit-vikramaditya/v1claw/pkg/channels"
 	"github.com/amit-vikramaditya/v1claw/pkg/config"
 	"github.com/amit-vikramaditya/v1claw/pkg/constants"
+	"github.com/amit-vikramaditya/v1claw/pkg/epistemology"
 	"github.com/amit-vikramaditya/v1claw/pkg/logger"
 	"github.com/amit-vikramaditya/v1claw/pkg/providers"
 	"github.com/amit-vikramaditya/v1claw/pkg/session"
@@ -60,7 +61,7 @@ type processOptions struct {
 
 // createToolRegistry creates a tool registry with common tools.
 // This is shared between main agent and subagents.
-func createToolRegistry(workspace string, restrict bool, cfg *config.Config, msgBus *bus.MessageBus) *tools.ToolRegistry {
+func createToolRegistry(workspace string, restrict bool, cfg *config.Config, msgBus *bus.MessageBus, graphStore epistemology.GraphStore) *tools.ToolRegistry {
 	registry := tools.NewToolRegistry()
 
 	// File system tools
@@ -69,6 +70,12 @@ func createToolRegistry(workspace string, restrict bool, cfg *config.Config, msg
 	registry.Register(tools.NewListDirTool(workspace, restrict))
 	registry.Register(tools.NewEditFileTool(workspace, restrict))
 	registry.Register(tools.NewAppendFileTool(workspace, restrict))
+
+	// Epistemology memory tools
+	if graphStore != nil {
+		registry.Register(tools.NewAssertFactTool(graphStore))
+		registry.Register(tools.NewQueryGraphTool(graphStore))
+	}
 
 	// Shell execution
 	registry.Register(tools.NewExecTool(workspace, restrict))
@@ -113,12 +120,25 @@ func NewAgentLoop(cfg *config.Config, msgBus *bus.MessageBus, provider providers
 
 	restrict := cfg.Agents.Defaults.RestrictToWorkspace
 
+	// Initialize vectorless epistemology memory
+	var graphStore epistemology.GraphStore
+	var err error
+	graphStore, err = epistemology.NewSQLiteGraphStore(workspace)
+	if err != nil {
+		logger.ErrorCF("agent", "Failed to initialize epistemology store (sqlite)", map[string]interface{}{"error": err.Error()})
+		// Fallback to JSON if SQLite fails (graceful degradation)
+		if gJSON, errJSON := epistemology.NewJSONGraphStore(workspace); errJSON == nil {
+			graphStore = gJSON
+		}
+	}
+
 	// Create tool registry for main agent
-	toolsRegistry := createToolRegistry(workspace, restrict, cfg, msgBus)
+	toolsRegistry := createToolRegistry(workspace, restrict, cfg, msgBus, graphStore)
 
 	// Create subagent manager with its own tool registry
-	subagentManager := tools.NewSubagentManager(provider, cfg.Agents.Defaults.Model, workspace, msgBus)
-	subagentTools := createToolRegistry(workspace, restrict, cfg, msgBus)
+	cliProviders := make(map[string]providers.LLMProvider) // This will be loaded from config/discovery later
+	subagentManager := tools.NewSubagentManager(provider, cfg.Agents.Defaults.Model, workspace, msgBus, cliProviders)
+	subagentTools := createToolRegistry(workspace, restrict, cfg, msgBus, graphStore)
 	// Subagent doesn't need spawn/subagent tools to avoid recursion
 	subagentManager.SetTools(subagentTools)
 
@@ -129,6 +149,11 @@ func NewAgentLoop(cfg *config.Config, msgBus *bus.MessageBus, provider providers
 	// Register subagent tool (synchronous execution)
 	subagentTool := tools.NewSubagentTool(subagentManager)
 	toolsRegistry.Register(subagentTool)
+
+	// Register DelegateTaskTool for advanced orchestration
+	// TODO: Wire actual CLI providers based on config here
+	delegateTool := tools.NewDelegateTaskTool(subagentManager)
+	toolsRegistry.Register(delegateTool)
 
 	sessionsManager := session.NewSessionManager(filepath.Join(workspace, "sessions"))
 
@@ -156,6 +181,7 @@ func NewAgentLoop(cfg *config.Config, msgBus *bus.MessageBus, provider providers
 
 func (al *AgentLoop) Run(ctx context.Context) error {
 	al.running.Store(true)
+	sem := make(chan struct{}, 10) // Worker pool bounds concurrent LLM calls
 
 	for al.running.Load() {
 		select {
@@ -167,29 +193,23 @@ func (al *AgentLoop) Run(ctx context.Context) error {
 				continue
 			}
 
-			response, err := al.processMessage(ctx, msg)
-			if err != nil {
-				response = fmt.Sprintf("Error processing message: %v", err)
-			}
+			sem <- struct{}{} // Acquire worker
+			go func(m bus.InboundMessage) {
+				defer func() { <-sem }() // Release worker
 
-			if response != "" {
-				// Check if the message tool already sent a response during this round.
-				// If so, skip publishing to avoid duplicate messages to the user.
-				alreadySent := false
-				if tool, ok := al.tools.Get("message"); ok {
-					if mt, ok := tool.(*tools.MessageTool); ok {
-						alreadySent = mt.HasSentInRound()
-					}
+				response, err := al.processMessage(ctx, m)
+				if err != nil {
+					response = fmt.Sprintf("Error processing message: %v", err)
 				}
 
-				if !alreadySent {
+				if response != "" {
 					al.bus.PublishOutbound(bus.OutboundMessage{
-						Channel: msg.Channel,
-						ChatID:  msg.ChatID,
+						Channel: m.Channel,
+						ChatID:  m.ChatID,
 						Content: response,
 					})
 				}
-			}
+			}(msg)
 		}
 	}
 
@@ -355,8 +375,8 @@ func (al *AgentLoop) runAgentLoop(ctx context.Context, opts processOptions) (str
 		}
 	}
 
-	// 1. Update tool contexts
-	al.updateToolContexts(opts.Channel, opts.ChatID)
+	// 1. Tool contexts are now passed explicitly via ToolContext
+	// al.updateToolContexts(opts.Channel, opts.ChatID)
 
 	// 2. Build messages (skip history for heartbeat)
 	var history []providers.Message
@@ -617,7 +637,14 @@ func (al *AgentLoop) runLLMIteration(ctx context.Context, messages []providers.M
 				}
 			}
 
-			toolResult := al.tools.ExecuteWithContext(ctx, tc.Name, tc.Arguments, opts.Channel, opts.ChatID, asyncCallback)
+			toolResult := al.tools.ExecuteWithContext(ctx, tc.Name, tc.Arguments, tools.ToolContext{
+				Channel:    opts.Channel,
+				ChatID:     opts.ChatID,
+				SessionKey: opts.SessionKey,
+				SenderID:   "", // SenderID is generally unused by subagents here
+				Bus:        al.bus,
+				Async:      asyncCallback,
+			})
 
 			// Send ForUser content to user immediately if not Silent
 			if !toolResult.Silent && toolResult.ForUser != "" && opts.SendResponse {
@@ -652,26 +679,6 @@ func (al *AgentLoop) runLLMIteration(ctx context.Context, messages []providers.M
 	}
 
 	return finalContent, iteration, nil
-}
-
-// updateToolContexts updates the context for tools that need channel/chatID info.
-func (al *AgentLoop) updateToolContexts(channel, chatID string) {
-	// Use ContextualTool interface instead of type assertions
-	if tool, ok := al.tools.Get("message"); ok {
-		if mt, ok := tool.(tools.ContextualTool); ok {
-			mt.SetContext(channel, chatID)
-		}
-	}
-	if tool, ok := al.tools.Get("spawn"); ok {
-		if st, ok := tool.(tools.ContextualTool); ok {
-			st.SetContext(channel, chatID)
-		}
-	}
-	if tool, ok := al.tools.Get("subagent"); ok {
-		if st, ok := tool.(tools.ContextualTool); ok {
-			st.SetContext(channel, chatID)
-		}
-	}
 }
 
 // maybeSummarize triggers summarization if the session history exceeds thresholds.

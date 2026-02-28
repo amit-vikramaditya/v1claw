@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"sync/atomic"
 
 	"github.com/amit-vikramaditya/v1claw/pkg/bus"
@@ -24,6 +25,7 @@ type BaseChannel struct {
 	running   atomic.Bool
 	name      string
 	allowList []string
+	allowMu   sync.RWMutex
 }
 
 func NewBaseChannel(name string, config interface{}, bus *bus.MessageBus, allowList []string) *BaseChannel {
@@ -35,6 +37,12 @@ func NewBaseChannel(name string, config interface{}, bus *bus.MessageBus, allowL
 	}
 }
 
+func (c *BaseChannel) AddAllowedUser(senderID string) {
+	c.allowMu.Lock()
+	defer c.allowMu.Unlock()
+	c.allowList = append(c.allowList, senderID)
+}
+
 func (c *BaseChannel) Name() string {
 	return c.name
 }
@@ -44,6 +52,8 @@ func (c *BaseChannel) IsRunning() bool {
 }
 
 func (c *BaseChannel) IsAllowed(senderID string) bool {
+	c.allowMu.RLock()
+	defer c.allowMu.RUnlock()
 	if len(c.allowList) == 0 {
 		return true
 	}

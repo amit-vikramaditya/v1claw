@@ -103,7 +103,7 @@ func (t *CronTool) SetContext(channel, chatID string) {
 }
 
 // Execute runs the tool with the given arguments
-func (t *CronTool) Execute(ctx context.Context, args map[string]interface{}) *ToolResult {
+func (t *CronTool) Execute(ctx context.Context, tc ToolContext, args map[string]interface{}) *ToolResult {
 	action, ok := args["action"].(string)
 	if !ok {
 		return ErrorResult("action is required")
@@ -290,7 +290,11 @@ func (t *CronTool) ExecuteJob(ctx context.Context, job *cron.CronJob) string {
 			"command": job.Payload.Command,
 		}
 
-		result := t.execTool.Execute(ctx, args)
+		result := t.execTool.Execute(ctx, ToolContext{
+			Channel: channel,
+			ChatID:  chatID,
+			Bus:     t.msgBus,
+		}, args)
 		var output string
 		if result.IsError {
 			output = fmt.Sprintf("Error executing scheduled command: %s", result.ForLLM)

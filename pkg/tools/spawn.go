@@ -2,27 +2,14 @@ package tools
 
 import (
 	"context"
-	"fmt"
 )
 
 type SpawnTool struct {
-	manager       *SubagentManager
-	originChannel string
-	originChatID  string
-	callback      AsyncCallback // For async completion notification
+	manager *SubagentManager
 }
 
 func NewSpawnTool(manager *SubagentManager) *SpawnTool {
-	return &SpawnTool{
-		manager:       manager,
-		originChannel: "cli",
-		originChatID:  "direct",
-	}
-}
-
-// SetCallback implements AsyncTool interface for async completion notification
-func (t *SpawnTool) SetCallback(cb AsyncCallback) {
-	t.callback = cb
+	return &SpawnTool{manager: manager}
 }
 
 func (t *SpawnTool) Name() string {
@@ -30,7 +17,7 @@ func (t *SpawnTool) Name() string {
 }
 
 func (t *SpawnTool) Description() string {
-	return "Spawn a subagent to handle a task in the background. Use this for complex or time-consuming tasks that can run independently. The subagent will complete the task and report back when done."
+	return "Spawn a subagent to work on a specific task in the background. The subagent will run for a limited number of iterations and report its final answer via the message bus."
 }
 
 func (t *SpawnTool) Parameters() map[string]interface{} {
@@ -39,40 +26,37 @@ func (t *SpawnTool) Parameters() map[string]interface{} {
 		"properties": map[string]interface{}{
 			"task": map[string]interface{}{
 				"type":        "string",
-				"description": "The task for subagent to complete",
+				"description": "The detailed task description for the subagent.",
 			},
 			"label": map[string]interface{}{
 				"type":        "string",
-				"description": "Optional short label for the task (for display)",
+				"description": "A short, unique label for this subagent instance (e.g., 'code_reviewer', 'bug_fixer').",
 			},
 		},
-		"required": []string{"task"},
+		"required": []string{"task", "label"},
 	}
 }
 
-func (t *SpawnTool) SetContext(channel, chatID string) {
-	t.originChannel = channel
-	t.originChatID = chatID
-}
-
-func (t *SpawnTool) Execute(ctx context.Context, args map[string]interface{}) *ToolResult {
+func (t *SpawnTool) Execute(ctx context.Context, tc ToolContext, args map[string]interface{}) *ToolResult {
 	task, ok := args["task"].(string)
 	if !ok {
 		return ErrorResult("task is required")
 	}
-
-	label, _ := args["label"].(string)
-
-	if t.manager == nil {
-		return ErrorResult("Subagent manager not configured")
+	label, ok := args["label"].(string)
+	if !ok {
+		return ErrorResult("label is required")
 	}
 
-	// Pass callback to manager for async completion notification
-	result, err := t.manager.Spawn(ctx, task, label, t.originChannel, t.originChatID, t.callback)
+	if t.manager == nil {
+		return ErrorResult("subagent manager is not configured")
+	}
+
+	// Pass the original ToolContext to Spawn
+	msg, err := t.manager.Spawn(ctx, task, label, tc)
 	if err != nil {
-		return ErrorResult(fmt.Sprintf("failed to spawn subagent: %v", err))
+		return ErrorResult(err.Error()).WithError(err)
 	}
 
 	// Return AsyncResult since the task runs in background
-	return AsyncResult(result)
+	return AsyncResult(msg)
 }

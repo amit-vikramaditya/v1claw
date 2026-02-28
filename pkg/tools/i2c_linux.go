@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"syscall"
 	"unsafe"
+
+	"github.com/amit-vikramaditya/v1claw/pkg/permissions"
 )
 
 // I2C ioctl constants from Linux kernel headers (<linux/i2c-dev.h>, <linux/i2c.h>)
@@ -74,7 +76,10 @@ func smbusProbe(fd int, addr int, hasQuick bool) bool {
 // scan probes valid 7-bit addresses on a bus for connected devices.
 // Uses the same hybrid probe strategy as i2cdetect's MODE_AUTO:
 // SMBus Quick Write for most addresses, SMBus Read Byte for EEPROM ranges.
-func (t *I2CTool) scan(args map[string]interface{}) *ToolResult {
+func (t *I2CTool) scan(tc ToolContext, args map[string]interface{}) *ToolResult {
+	if !permissions.Global().IsAllowed(permissions.ShellHardware) {
+		return ErrorResult("I2C access is blocked by permissions.shell_hardware=false in config")
+	}
 	bus, errResult := parseI2CBus(args)
 	if errResult != nil {
 		return errResult
@@ -142,7 +147,10 @@ func (t *I2CTool) scan(args map[string]interface{}) *ToolResult {
 }
 
 // readDevice reads bytes from an I2C device, optionally at a specific register
-func (t *I2CTool) readDevice(args map[string]interface{}) *ToolResult {
+func (t *I2CTool) readDevice(tc ToolContext, args map[string]interface{}) *ToolResult {
+	if !permissions.Global().IsAllowed(permissions.ShellHardware) {
+		return ErrorResult("I2C access is blocked by permissions.shell_hardware=false in config")
+	}
 	bus, errResult := parseI2CBus(args)
 	if errResult != nil {
 		return errResult
@@ -212,7 +220,10 @@ func (t *I2CTool) readDevice(args map[string]interface{}) *ToolResult {
 }
 
 // writeDevice writes bytes to an I2C device, optionally at a specific register
-func (t *I2CTool) writeDevice(args map[string]interface{}) *ToolResult {
+func (t *I2CTool) writeDevice(tc ToolContext, args map[string]interface{}) *ToolResult {
+	if !permissions.Global().IsAllowed(permissions.ShellHardware) {
+		return ErrorResult("I2C access is blocked by permissions.shell_hardware=false in config")
+	}
 	confirm, _ := args["confirm"].(bool)
 	if !confirm {
 		return ErrorResult("write operations require confirm: true. Please confirm with the user before writing to I2C devices, as incorrect writes can misconfigure hardware.")
@@ -234,6 +245,11 @@ func (t *I2CTool) writeDevice(args map[string]interface{}) *ToolResult {
 	}
 	if len(dataRaw) > 256 {
 		return ErrorResult("data too long: maximum 256 bytes per I2C transaction")
+	}
+
+	// NEW: Prevent unsafe writes to EEPROM/Firmware address ranges (common locations for system boot configs)
+	if addr >= 0x50 && addr <= 0x57 {
+		return ErrorResult("write operation blocked: target address resides within protected EEPROM bounds (0x50-0x57). System firmware modification is sandbox-restricted.")
 	}
 
 	data := make([]byte, 0, len(dataRaw)+1)

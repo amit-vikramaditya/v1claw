@@ -214,26 +214,26 @@ func (p *Pipeline) processRecording(ctx context.Context, filePath string) {
 
 // handleOutbound listens for agent responses and speaks them.
 func (p *Pipeline) handleOutbound(ctx context.Context) {
+	outCh := p.msgBus.SubscribeOutbound()
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-p.stopCh:
 			return
-		default:
-		}
+		case msg, ok := <-outCh:
+			if !ok {
+				return
+			}
 
-		msg, ok := p.msgBus.SubscribeOutbound(ctx)
-		if !ok {
-			return
-		}
+			// Only speak responses targeted at the voice channel.
+			if msg.Channel != "voice" {
+				continue
+			}
 
-		// Only speak responses targeted at the voice channel.
-		if msg.Channel != "voice" {
-			continue
+			// Speak asynchronously to prevent pipeline deafness to inbound events
+			go p.speakResponse(ctx, msg.Content)
 		}
-
-		p.speakResponse(ctx, msg.Content)
 	}
 }
 

@@ -18,10 +18,11 @@ func ChunkText(text string, opts ChunkOptions) []string {
 	}
 
 	text = strings.TrimSpace(text)
-	if len(text) == 0 {
+	runes := []rune(text)
+	if len(runes) == 0 {
 		return nil
 	}
-	if len(text) <= opts.MaxChunkSize {
+	if len(runes) <= opts.MaxChunkSize {
 		return []string{text}
 	}
 
@@ -31,16 +32,16 @@ func ChunkText(text string, opts ChunkOptions) []string {
 		step = 1
 	}
 
-	for start := 0; start < len(text); start += step {
+	for start := 0; start < len(runes); start += step {
 		end := start + opts.MaxChunkSize
-		if end > len(text) {
-			end = len(text)
+		if end > len(runes) {
+			end = len(runes)
 		}
 
-		chunk := text[start:end]
+		chunk := string(runes[start:end])
 
 		// Try to break at a sentence or word boundary.
-		if end < len(text) {
+		if end < len(runes) {
 			if idx := lastSentenceBreak(chunk); idx > len(chunk)/2 {
 				chunk = chunk[:idx+1]
 			} else if idx := lastWordBreak(chunk); idx > len(chunk)/2 {
@@ -53,9 +54,10 @@ func ChunkText(text string, opts ChunkOptions) []string {
 			chunks = append(chunks, chunk)
 		}
 
-		// If we trimmed the chunk, adjust the next start.
-		if len(chunk) < opts.MaxChunkSize && end < len(text) {
-			start = start + len(chunk) - opts.Overlap - step + step
+		// If we trimmed the chunk, adjust the next start utilizing absolute rune lengths.
+		chunkRunes := []rune(chunk)
+		if len(chunkRunes) < opts.MaxChunkSize && end < len(runes) {
+			start = start + len(chunkRunes) - opts.Overlap - step + step
 		}
 	}
 

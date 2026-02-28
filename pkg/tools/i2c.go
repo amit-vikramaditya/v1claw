@@ -63,7 +63,7 @@ func (t *I2CTool) Parameters() map[string]interface{} {
 	}
 }
 
-func (t *I2CTool) Execute(ctx context.Context, args map[string]interface{}) *ToolResult {
+func (t *I2CTool) Execute(ctx context.Context, tc ToolContext, args map[string]interface{}) *ToolResult {
 	if runtime.GOOS != "linux" {
 		return ErrorResult("I2C is only supported on Linux. This tool requires /dev/i2c-* device files.")
 	}
@@ -77,11 +77,11 @@ func (t *I2CTool) Execute(ctx context.Context, args map[string]interface{}) *Too
 	case "detect":
 		return t.detect()
 	case "scan":
-		return t.scan(args)
+		return t.scan(tc, args)
 	case "read":
-		return t.readDevice(args)
+		return t.readDevice(tc, args)
 	case "write":
-		return t.writeDevice(args)
+		return t.writeDevice(tc, args)
 	default:
 		return ErrorResult(fmt.Sprintf("unknown action: %s (valid: detect, scan, read, write)", action))
 	}

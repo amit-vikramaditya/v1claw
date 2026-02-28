@@ -40,6 +40,8 @@ type wsClient struct {
 	mu        sync.Mutex
 	closeOnce sync.Once
 	capReqs   map[string]chan CapabilityResponse // Pending capability requests
+	ctx       context.Context
+	cancel    context.CancelFunc
 }
 
 func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
@@ -50,11 +52,14 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	}
 
 	clientID := fmt.Sprintf("ws_%d", time.Now().UnixNano())
+	ctx, cancel := context.WithCancel(context.Background())
 	client := &wsClient{
 		id:      clientID,
 		conn:    conn,
-		send:    make(chan []byte, 64),
+		send:    make(chan []byte, 256), // Expanded buffer to prevent streaming drops
 		capReqs: make(map[string]chan CapabilityResponse),
+		ctx:     ctx,
+		cancel:  cancel,
 	}
 
 	s.mu.Lock()
@@ -79,6 +84,7 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) wsWritePump(client *wsClient) {
 	defer func() {
+		client.cancel()
 		client.conn.Close()
 		s.removeWSClient(client.id)
 	}()
@@ -96,6 +102,7 @@ func (s *Server) wsWritePump(client *wsClient) {
 
 func (s *Server) wsReadPump(client *wsClient) {
 	defer func() {
+		client.cancel()
 		s.removeWSClient(client.id)
 		client.conn.Close()
 	}()
@@ -154,7 +161,11 @@ func (s *Server) handleWSChat(client *wsClient, msg WSMessage) {
 	}
 
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+		parentCtx := client.ctx
+		if parentCtx == nil {
+			parentCtx = context.Background() // Fallback for unit tests
+		}
+		ctx, cancel := context.WithTimeout(parentCtx, 120*time.Second) // Bounded by connection lifecycle
 		defer cancel()
 
 		response, err := handler(ctx, text, sessionKey)
@@ -186,8 +197,8 @@ func (s *Server) sendToClient(client *wsClient, msg WSMessage) {
 	}
 	select {
 	case client.send <- data:
-	default:
-		// Client too slow, drop message.
+	case <-time.After(50 * time.Millisecond): // Non-blocking grace period to handle burst packet drops dynamically
+		logger.WarnC("api", "Dropped websocket frame due to buffer congestion")
 	}
 }
 

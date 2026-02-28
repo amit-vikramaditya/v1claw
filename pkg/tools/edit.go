@@ -51,7 +51,7 @@ func (t *EditFileTool) Parameters() map[string]interface{} {
 	}
 }
 
-func (t *EditFileTool) Execute(ctx context.Context, args map[string]interface{}) *ToolResult {
+func (t *EditFileTool) Execute(ctx context.Context, tc ToolContext, args map[string]interface{}) *ToolResult {
 	path, ok := args["path"].(string)
 	if !ok {
 		return ErrorResult("path is required")
@@ -135,7 +135,7 @@ func (t *AppendFileTool) Parameters() map[string]interface{} {
 	}
 }
 
-func (t *AppendFileTool) Execute(ctx context.Context, args map[string]interface{}) *ToolResult {
+func (t *AppendFileTool) Execute(ctx context.Context, tc ToolContext, args map[string]interface{}) *ToolResult {
 	path, ok := args["path"].(string)
 	if !ok {
 		return ErrorResult("path is required")

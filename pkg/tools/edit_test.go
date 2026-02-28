@@ -22,7 +22,7 @@ func TestEditTool_EditFile_Success(t *testing.T) {
 		"new_text": "Universe",
 	}
 
-	result := tool.Execute(ctx, args)
+	result := tool.Execute(ctx, ToolContext{}, args)
 
 	// Success should not be an error
 	if result.IsError {
@@ -66,7 +66,7 @@ func TestEditTool_EditFile_NotFound(t *testing.T) {
 		"new_text": "new",
 	}
 
-	result := tool.Execute(ctx, args)
+	result := tool.Execute(ctx, ToolContext{}, args)
 
 	// Should return error result
 	if !result.IsError {
@@ -93,7 +93,7 @@ func TestEditTool_EditFile_OldTextNotFound(t *testing.T) {
 		"new_text": "Hello",
 	}
 
-	result := tool.Execute(ctx, args)
+	result := tool.Execute(ctx, ToolContext{}, args)
 
 	// Should return error result
 	if !result.IsError {
@@ -120,7 +120,7 @@ func TestEditTool_EditFile_MultipleMatches(t *testing.T) {
 		"new_text": "done",
 	}
 
-	result := tool.Execute(ctx, args)
+	result := tool.Execute(ctx, ToolContext{}, args)
 
 	// Should return error result
 	if !result.IsError {
@@ -148,7 +148,7 @@ func TestEditTool_EditFile_OutsideAllowedDir(t *testing.T) {
 		"new_text": "new",
 	}
 
-	result := tool.Execute(ctx, args)
+	result := tool.Execute(ctx, ToolContext{}, args)
 
 	// Should return error result
 	if !result.IsError {
@@ -170,7 +170,7 @@ func TestEditTool_EditFile_MissingPath(t *testing.T) {
 		"new_text": "new",
 	}
 
-	result := tool.Execute(ctx, args)
+	result := tool.Execute(ctx, ToolContext{}, args)
 
 	// Should return error result
 	if !result.IsError {
@@ -187,7 +187,7 @@ func TestEditTool_EditFile_MissingOldText(t *testing.T) {
 		"new_text": "new",
 	}
 
-	result := tool.Execute(ctx, args)
+	result := tool.Execute(ctx, ToolContext{}, args)
 
 	// Should return error result
 	if !result.IsError {
@@ -204,7 +204,7 @@ func TestEditTool_EditFile_MissingNewText(t *testing.T) {
 		"old_text": "old",
 	}
 
-	result := tool.Execute(ctx, args)
+	result := tool.Execute(ctx, ToolContext{}, args)
 
 	// Should return error result
 	if !result.IsError {
@@ -225,7 +225,7 @@ func TestEditTool_AppendFile_Success(t *testing.T) {
 		"content": "\nAppended content",
 	}
 
-	result := tool.Execute(ctx, args)
+	result := tool.Execute(ctx, ToolContext{}, args)
 
 	// Success should not be an error
 	if result.IsError {
@@ -264,7 +264,7 @@ func TestEditTool_AppendFile_MissingPath(t *testing.T) {
 		"content": "test",
 	}
 
-	result := tool.Execute(ctx, args)
+	result := tool.Execute(ctx, ToolContext{}, args)
 
 	// Should return error result
 	if !result.IsError {
@@ -280,7 +280,7 @@ func TestEditTool_AppendFile_MissingContent(t *testing.T) {
 		"path": "/tmp/test.txt",
 	}
 
-	result := tool.Execute(ctx, args)
+	result := tool.Execute(ctx, ToolContext{}, args)
 
 	// Should return error result
 	if !result.IsError {
