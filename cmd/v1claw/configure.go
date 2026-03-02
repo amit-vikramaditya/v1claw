@@ -7,9 +7,9 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/amit-vikramaditya/v1claw/pkg/config"
 	"github.com/charmbracelet/huh"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/amit-vikramaditya/v1claw/pkg/config"
 )
 
 var (
@@ -19,9 +19,9 @@ var (
 			MarginTop(1).
 			MarginBottom(1)
 
-	cyanStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("12"))
-	grayStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
-	redStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
+	cyanStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("12"))
+	grayStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
+	redStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
 	greenStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("10"))
 
 	borderStyle = lipgloss.NewStyle().
@@ -68,9 +68,9 @@ func printCurrentState(cfg *config.Config) {
 		channels = strings.Join(activeChannels, ", ")
 	}
 
-	stateContent := fmt.Sprintf("┌  Current System State\n│\n│  Home: %s\n│  Security: %s\n│  Brain: %s\n│  Channels: %s\n└", 
+	stateContent := fmt.Sprintf("┌  Current System State\n│\n│  Home: %s\n│  Security: %s\n│  Brain: %s\n│  Channels: %s\n└",
 		workspace, security, brain, channels)
-	
+
 	fmt.Println(borderStyle.Render(stateContent))
 }
 
