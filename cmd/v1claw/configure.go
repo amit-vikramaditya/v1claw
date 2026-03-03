@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -133,12 +132,12 @@ func configureCmd() {
 				huh.NewSelect[string]().
 					Title("What would you like to configure?").
 					Options(
-						huh.NewOption("🏠 The Home (Workspace & Security)", "workspace").Description("Where the AI lives and what files it can see"),
-						huh.NewOption("🧠 The Brain (Providers & Council)", "models").Description("Connect Gemini, Claude, or local CLIs"),
-						huh.NewOption("🧰 Tools & Skills (Search, Cron)", "tools").Description("Give your AI abilities to browse and run tasks"),
-						huh.NewOption("📡 Channels (Telegram, Discord)", "channels").Description("Where you chat with your AI"),
-						huh.NewOption("🧬 Identity (Soul & User)", "identity").Description("Define personalities and core instructions"),
-						huh.NewOption("💾 Save & Exit", "save").Description("Commit changes and finish"),
+						huh.NewOption("🏠 The Home — "+grayStyle.Render("Workspace & Security"), "workspace"),
+						huh.NewOption("🧠 The Brain — "+grayStyle.Render("Providers & Council"), "models"),
+						huh.NewOption("🧰 Tools — "+grayStyle.Render("Skills & Search"), "tools"),
+						huh.NewOption("📡 Channels — "+grayStyle.Render("Telegram & Discord"), "channels"),
+						huh.NewOption("🧬 Identity — "+grayStyle.Render("Soul & User"), "identity"),
+						huh.NewOption("💾 Save & Exit", "save"),
 					).
 					Value(&choice),
 			),
@@ -260,13 +259,14 @@ func configureModels(cfg *config.Config) {
 	optionMap := make(map[string]string)
 
 	for _, tool := range discoveredCLIs {
-		label := fmt.Sprintf("%s (Local)", tool.DisplayName)
-		providerOptions = append(providerOptions, huh.NewOption(label, tool.ID).Description(tool.Description))
+		label := fmt.Sprintf("%s (Local) — %s", tool.DisplayName, grayStyle.Render(tool.Description))
+		providerOptions = append(providerOptions, huh.NewOption(label, tool.ID))
 		optionMap[tool.ID] = label
 	}
 
 	for _, p := range traditional {
-		providerOptions = append(providerOptions, huh.NewOption(p.name, p.id).Description(p.desc))
+		label := fmt.Sprintf("%s — %s", p.name, grayStyle.Render(p.desc))
+		providerOptions = append(providerOptions, huh.NewOption(label, p.id))
 		optionMap[p.id] = p.name
 	}
 
@@ -392,11 +392,11 @@ func configureTools(cfg *config.Config) {
 				Title("Select tools to equip").
 				Description("Give your AI abilities to interact with the world.").
 				Options(
-					huh.NewOption("DuckDuckGo Search", "ddg").Description("Free web search, no key required"),
-					huh.NewOption("Tavily Search", "tavily").Description("Premium research tool, requires Tavily API key"),
-					huh.NewOption("Academic Literature", "academic").Description("Search peer-reviewed papers (Consensus feature)"),
-					huh.NewOption("Terminal Access", "shell").Description("Allow AI to run bash commands in its workspace"),
-					huh.NewOption("File System", "fs").Description("Allow AI to read and write files"),
+					huh.NewOption("DuckDuckGo — "+grayStyle.Render("Free web search, no key required"), "ddg"),
+					huh.NewOption("Tavily — "+grayStyle.Render("Premium search tool, requires API key"), "tavily"),
+					huh.NewOption("Academic — "+grayStyle.Render("Search peer-reviewed papers (Consensus)"), "academic"),
+					huh.NewOption("Terminal — "+grayStyle.Render("Allow AI to run bash commands"), "shell"),
+					huh.NewOption("File System — "+grayStyle.Render("Allow AI to read and write files"), "fs"),
 				).
 				Value(&selectedTools),
 		),
@@ -450,9 +450,9 @@ func configureChannels(cfg *config.Config) {
 			huh.NewMultiSelect[string]().
 				Title("Select communication channels").
 				Options(
-					huh.NewOption("Telegram", "telegram").Description("Talk to your AI via Telegram bot"),
-					huh.NewOption("Discord", "discord").Description("Connect to your Discord server"),
-					huh.NewOption("Slack", "slack").Description("Integrate with your Slack workspace"),
+					huh.NewOption("Telegram — "+grayStyle.Render("Talk via Telegram bot"), "telegram"),
+					huh.NewOption("Discord — "+grayStyle.Render("Connect to your server"), "discord"),
+					huh.NewOption("Slack — "+grayStyle.Render("Integrate with workspace"), "slack"),
 				).
 				Value(&selectedChannels),
 		),
@@ -506,9 +506,9 @@ func configureCouncil(cfg *config.Config) {
 				Title("Routing Persona").
 				Description("How should the AI behave during complex tasks?").
 				Options(
-					huh.NewOption("Software Engineer", "coder").Description("High code accuracy, multi-agent focus"),
-					huh.NewOption("Writer / Researcher", "writer").Description("High context, better prose"),
-					huh.NewOption("General Assistant", "speed").Description("Cost-optimized, fast response"),
+					huh.NewOption("Software Engineer — "+grayStyle.Render("High accuracy, multi-agent focus"), "coder"),
+					huh.NewOption("Writer / Researcher — "+grayStyle.Render("High context, better prose"), "writer"),
+					huh.NewOption("General Assistant — "+grayStyle.Render("Cost-optimized, fast response"), "speed"),
 				).
 				Value(&persona),
 		),
