@@ -364,23 +364,13 @@ func configureModels(cfg *config.Config) {
 		}
 	}
 
-	// Show Layer 1 auto-resilience status — always on, no config needed.
-	autoFallback := inferAutoFallback(cfg.Agents.Defaults.Model)
-	if autoFallback != "" {
-		fmt.Printf("\n%s Same-provider resilience auto-configured: %s → %s (Layer 1, always on)\n",
-			"✓", cfg.Agents.Defaults.Model, autoFallback)
-	} else {
-		fmt.Printf("\n%s Same-provider resilience: no cheaper fallback known for %s\n",
-			"ℹ", cfg.Agents.Defaults.Model)
-	}
-
-	// Dynamic Council Question — Layer 2 (cross-provider, optional upgrade)
+	// Dynamic Council Question
 	var enableCouncil bool
 	huh.NewForm(
 		huh.NewGroup(
 			huh.NewConfirm().
-				Title("Cross-provider Failover (Layer 2 — optional)").
-				Description("Do you have a SECOND AI provider key? Enable this to failover across providers (e.g. OpenAI → Anthropic). Single-key users already get Layer 1 resilience above.").
+				Title("High Availability (The Council)").
+				Description("Should we automatically switch to a backup AI if the primary fails?").
 				Value(&enableCouncil),
 		),
 	).Run()
@@ -514,53 +504,10 @@ func configureIdentity(cfg *config.Config) {
 	initMemory(cfg.WorkspacePath(), aiName, aiRole, userName, userPrefs)
 }
 
-// inferAutoFallback is a display-only mirror of agent.inferSameProviderFallback.
-// Used during onboarding to show the user what Layer 1 will auto-configure.
-func inferAutoFallback(model string) string {
-	lm := strings.ToLower(model)
-	if strings.Contains(lm, "claude") {
-		if strings.Contains(lm, "opus") {
-			return "claude-sonnet-4-5"
-		}
-		if strings.Contains(lm, "sonnet") {
-			return "claude-haiku-3-5"
-		}
-		return ""
-	}
-	if strings.Contains(lm, "o3") || strings.Contains(lm, "o1") {
-		return "gpt-4o"
-	}
-	if strings.Contains(lm, "gpt-4") && !strings.Contains(lm, "mini") {
-		return "gpt-4o-mini"
-	}
-	if strings.Contains(lm, "gemini") {
-		if strings.Contains(lm, "ultra") || strings.Contains(lm, "1.5-pro") || strings.Contains(lm, "2.0-pro") {
-			return "gemini-2.0-flash"
-		}
-		if strings.Contains(lm, "flash") && !strings.Contains(lm, "lite") {
-			return "gemini-2.0-flash-lite"
-		}
-		return ""
-	}
-	if strings.Contains(lm, "70b") || strings.Contains(lm, "versatile") || strings.Contains(lm, "mixtral") {
-		return "llama-3.1-8b-instant"
-	}
-	if strings.Contains(lm, "deepseek") && strings.Contains(lm, "reasoner") {
-		return "deepseek-chat"
-	}
-	if strings.Contains(lm, "glm") && !strings.Contains(lm, "flash") {
-		return "glm-4-flash"
-	}
-	return ""
-}
-
 func configureCouncil(cfg *config.Config) {
 	// Capture the primary provider/model that was just selected.
 	cfg.Council.Primary = cfg.Agents.Defaults.Provider
 	cfg.Council.PrimaryModel = cfg.Agents.Defaults.Model
-
-	fmt.Println(grayStyle.Render("\n  Layer 2 — Cross-provider Failover Configuration"))
-	fmt.Println(grayStyle.Render("  Automatically route to another provider when your primary is rate-limited or down."))
 
 	var persona string
 	huh.NewForm(
@@ -591,8 +538,8 @@ func configureCouncil(cfg *config.Config) {
 		huh.NewForm(
 			huh.NewGroup(
 				huh.NewSelect[string]().
-					Title("Fallback Provider (Layer 2)").
-					Description("Which AI should take over when the primary is unavailable? Must have a valid API key configured.").
+					Title("Fallback Provider").
+					Description("Which AI should take over when the primary is unavailable?").
 					Options(fallbackProviderOptions...).
 					Value(&fallbackProvider),
 			),
