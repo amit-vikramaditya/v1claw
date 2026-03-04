@@ -42,7 +42,6 @@ import (
 	"github.com/amit-vikramaditya/v1claw/pkg/logger"
 	"github.com/amit-vikramaditya/v1claw/pkg/migrate"
 	"github.com/amit-vikramaditya/v1claw/pkg/permissions"
-	"github.com/amit-vikramaditya/v1claw/pkg/proactive"
 	"github.com/amit-vikramaditya/v1claw/pkg/providers"
 	"github.com/amit-vikramaditya/v1claw/pkg/queue"
 	"github.com/amit-vikramaditya/v1claw/pkg/skills"
@@ -495,20 +494,12 @@ func agentCmd() {
 
 	if message != "" {
 		ctx := context.Background()
-		// Enable streaming for single-message CLI output
-		agentLoop.SetStreamCallback(func(token string) {
-			fmt.Fprint(os.Stdout, token)
-		})
 		response, err := agentLoop.ProcessDirect(ctx, message, sessionKey)
 		if err != nil {
 			fmt.Printf("Error: %v\n", err)
 			os.Exit(1)
 		}
-		if agentLoop.StreamingEnabled() {
-			fmt.Println() // streaming already printed content; just add a trailing newline
-		} else {
-			fmt.Printf("\n%s %s\n", logo, response)
-		}
+		fmt.Printf("\n%s %s\n", logo, response)
 	} else {
 		fmt.Printf("%s Interactive mode (Ctrl+C to exit)\n\n", logo)
 		interactiveMode(agentLoop, sessionKey)
@@ -534,18 +525,6 @@ func interactiveMode(agentLoop *agent.AgentLoop, sessionKey string) {
 	}
 	defer rl.Close()
 
-	// Enable token-by-token streaming for interactive CLI sessions.
-	// The callback prints the V1 logo prefix before the first token, then
-	// streams each subsequent token directly, giving a live typing effect.
-	var streamed bool
-	agentLoop.SetStreamCallback(func(token string) {
-		if !streamed {
-			fmt.Printf("\n%s ", logo)
-			streamed = true
-		}
-		fmt.Fprint(os.Stdout, token)
-	})
-
 	for {
 		line, err := rl.Readline()
 		if err != nil {
@@ -567,8 +546,6 @@ func interactiveMode(agentLoop *agent.AgentLoop, sessionKey string) {
 			return
 		}
 
-		streamed = false // reset per-message streaming flag
-
 		ctx := context.Background()
 		response, err := agentLoop.ProcessDirect(ctx, input, sessionKey)
 		if err != nil {
@@ -576,12 +553,7 @@ func interactiveMode(agentLoop *agent.AgentLoop, sessionKey string) {
 			continue
 		}
 
-		if streamed {
-			// Tokens were printed live; just add trailing newlines
-			fmt.Print("\n\n")
-		} else {
-			fmt.Printf("\n%s %s\n\n", logo, response)
-		}
+		fmt.Printf("\n%s %s\n\n", logo, response)
 	}
 }
 
@@ -1212,32 +1184,6 @@ func gatewayCmd() {
 	)
 	heartbeatService.SetBus(msgBus)
 	heartbeatService.SetProactiveEngine(agentLoop.ProactiveEngine())
-
-	// Wire proactive suggestion handler: deliver suggestions directly to the last
-	// active channel as outbound messages so the user gets proactive notifications.
-	if eng := agentLoop.ProactiveEngine(); eng != nil {
-		stateForProactive := state.NewManager(cfg.WorkspacePath())
-		eng.SetHandler(func(ctx context.Context, sug proactive.Suggestion) {
-			lastChannel := stateForProactive.GetLastChannel()
-			if lastChannel == "" {
-				return
-			}
-			parts := strings.SplitN(lastChannel, ":", 2)
-			if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
-				return
-			}
-			// Skip internal-only channels that cannot receive messages
-			ch := parts[0]
-			if ch == "cli" || ch == "system" || ch == "subagent" || ch == "heartbeat" {
-				return
-			}
-			msgBus.PublishOutbound(bus.OutboundMessage{
-				Channel: ch,
-				ChatID:  parts[1],
-				Content: fmt.Sprintf("💡 **Proactive %s**: %s", sug.Type, sug.Message),
-			})
-		})
-	}
 	heartbeatService.SetHandler(func(prompt, channel, chatID string) *tools.ToolResult {
 		// Use cli:direct as fallback if no valid channel
 		if channel == "" || chatID == "" {

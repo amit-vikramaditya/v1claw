@@ -7,7 +7,6 @@
 package providers
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -246,124 +245,6 @@ func (p *HTTPProvider) parseResponse(body []byte) (*LLMResponse, error) {
 
 func (p *HTTPProvider) GetDefaultModel() string {
 	return ""
-}
-
-// Stream implements StreamingProvider using OpenAI-compatible SSE streaming.
-// It sends messages with stream:true and yields tokens as StreamChunks.
-// The returned channel is closed after the final StreamChunk{Done:true}.
-func (p *HTTPProvider) Stream(ctx context.Context, messages []Message, model string, options map[string]interface{}) (<-chan StreamChunk, error) {
-	if p.apiBase == "" {
-		return nil, fmt.Errorf("API base not configured")
-	}
-
-	// Strip provider prefix (same logic as Chat)
-	if idx := strings.Index(model, "/"); idx != -1 {
-		prefix := model[:idx]
-		if prefix == "moonshot" || prefix == "nvidia" || prefix == "groq" || prefix == "ollama" {
-			model = model[idx+1:]
-		}
-	}
-
-	requestBody := map[string]interface{}{
-		"model":    model,
-		"messages": messages,
-		"stream":   true,
-	}
-
-	if maxTokens, ok := options["max_tokens"].(int); ok {
-		lowerModel := strings.ToLower(model)
-		if strings.Contains(lowerModel, "glm") || strings.Contains(lowerModel, "o1") {
-			requestBody["max_completion_tokens"] = maxTokens
-		} else {
-			requestBody["max_tokens"] = maxTokens
-		}
-	}
-
-	if temperature, ok := options["temperature"].(float64); ok {
-		lowerModel := strings.ToLower(model)
-		if strings.Contains(lowerModel, "kimi") && strings.Contains(lowerModel, "k2") {
-			requestBody["temperature"] = 1.0
-		} else {
-			requestBody["temperature"] = temperature
-		}
-	}
-
-	jsonData, err := json.Marshal(requestBody)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal stream request: %w", err)
-	}
-
-	req, err := http.NewRequestWithContext(ctx, "POST", p.apiBase+"/chat/completions", bytes.NewReader(jsonData))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create stream request: %w", err)
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "text/event-stream")
-	if p.apiKey != "" {
-		req.Header.Set("Authorization", "Bearer "+p.apiKey)
-	}
-
-	resp, err := p.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to send stream request: %w", err)
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		return nil, formatAPIError(resp.StatusCode, body)
-	}
-
-	ch := make(chan StreamChunk, 64)
-
-	go func() {
-		defer resp.Body.Close()
-		defer func() {
-			ch <- StreamChunk{Done: true}
-			close(ch)
-		}()
-
-		scanner := bufio.NewScanner(resp.Body)
-		for scanner.Scan() {
-			line := scanner.Text()
-
-			// SSE data lines start with "data: "
-			if !strings.HasPrefix(line, "data: ") {
-				continue
-			}
-			data := strings.TrimPrefix(line, "data: ")
-
-			// Stream complete sentinel
-			if data == "[DONE]" {
-				return
-			}
-
-			// Parse the SSE JSON chunk
-			var chunk struct {
-				Choices []struct {
-					Delta struct {
-						Content string `json:"content"`
-					} `json:"delta"`
-					FinishReason *string `json:"finish_reason"`
-				} `json:"choices"`
-			}
-
-			if err := json.Unmarshal([]byte(data), &chunk); err != nil {
-				continue // Skip malformed chunks
-			}
-
-			if len(chunk.Choices) > 0 && chunk.Choices[0].Delta.Content != "" {
-				select {
-				case ch <- StreamChunk{Text: chunk.Choices[0].Delta.Content}:
-				case <-ctx.Done():
-					return
-				}
-			}
-		}
-	}()
-
-	return ch, nil
 }
 
 func createClaudeAuthProvider() (LLMProvider, error) {

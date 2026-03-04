@@ -50,21 +50,13 @@ type AgentLoop struct {
 	cooldowns      sync.Map // Tracks provider/model fatigue and cooldown expiration
 
 	// Cached council configuration — avoids a config.json disk read on every LLM call.
-	councilEnabled          bool
-	councilFallbackModel    string
-	councilFallbackProvider providers.LLMProvider // Separate provider instance for cross-provider fallback
-	councilFallbackName     string               // Display name of fallback provider (e.g. "anthropic")
-	councilMu               sync.RWMutex
+	councilEnabled       bool
+	councilFallbackModel string
+	councilMu            sync.RWMutex
 
 	// toolTimeout caps per-tool execution to prevent a single hung tool from
 	// blocking the agent indefinitely. Defaults to 5 minutes.
 	toolTimeout time.Duration
-
-	// streamCallback is an optional function called with each streamed token
-	// during the final (non-tool-call) LLM response turn. Used by the CLI
-	// to display tokens as they arrive without waiting for the full response.
-	// Thread-safe: only set before the agent starts processing.
-	streamCallback func(token string)
 
 	// proactiveEngine learns user behavior patterns and suggests routines.
 	// May be nil if initialization fails (non-critical).
@@ -95,10 +87,10 @@ func (al *AgentLoop) UpdateCouncilConfig(enabled bool, fallbackModel string) {
 }
 
 // getCouncilConfig reads the council config under its dedicated read lock.
-func (al *AgentLoop) getCouncilConfig() (enabled bool, fallbackModel, fallbackName string) {
+func (al *AgentLoop) getCouncilConfig() (enabled bool, fallbackModel string) {
 	al.councilMu.RLock()
 	defer al.councilMu.RUnlock()
-	return al.councilEnabled, al.councilFallbackModel, al.councilFallbackName
+	return al.councilEnabled, al.councilFallbackModel
 }
 
 // processOptions configures how a message is processed
@@ -167,82 +159,6 @@ func createToolRegistry(workspace string, restrict bool, cfg *config.Config, msg
 	registry.Register(messageTool)
 
 	return registry
-}
-
-// createFallbackProvider builds a fallback LLMProvider for Council failover.
-// It uses cfg.Council.Fallback (provider name) if set, otherwise falls back to
-// persona-based selection: speed→Groq, coder→Anthropic, writer→OpenAI.
-// Returns nil if no fallback can be configured (graceful degradation).
-func createFallbackProvider(cfg *config.Config) providers.LLMProvider {
-	providerName := strings.ToLower(cfg.Council.Fallback)
-
-	// Persona-based default fallback selection when no explicit provider set
-	if providerName == "" {
-		switch strings.ToLower(cfg.Council.Persona) {
-		case "speed":
-			providerName = "groq"
-		case "coder":
-			providerName = "anthropic"
-		case "writer":
-			providerName = "openai"
-		default:
-			return nil
-		}
-	}
-
-	var apiKey, apiBase string
-	switch providerName {
-	case "groq":
-		apiKey = cfg.Providers.Groq.APIKey
-		apiBase = cfg.Providers.Groq.APIBase
-		if apiBase == "" {
-			apiBase = "https://api.groq.com/openai/v1"
-		}
-	case "openai", "gpt":
-		apiKey = cfg.Providers.OpenAI.APIKey
-		apiBase = cfg.Providers.OpenAI.APIBase
-		if apiBase == "" {
-			apiBase = "https://api.openai.com/v1"
-		}
-	case "anthropic", "claude":
-		apiKey = cfg.Providers.Anthropic.APIKey
-		apiBase = cfg.Providers.Anthropic.APIBase
-		if apiBase == "" {
-			apiBase = "https://api.anthropic.com/v1"
-		}
-	case "openrouter":
-		apiKey = cfg.Providers.OpenRouter.APIKey
-		apiBase = cfg.Providers.OpenRouter.APIBase
-		if apiBase == "" {
-			apiBase = "https://openrouter.ai/api/v1"
-		}
-	case "gemini", "google":
-		apiKey = cfg.Providers.Gemini.APIKey
-		apiBase = cfg.Providers.Gemini.APIBase
-		if apiBase == "" {
-			apiBase = "https://generativelanguage.googleapis.com/v1beta"
-		}
-	case "deepseek":
-		apiKey = cfg.Providers.DeepSeek.APIKey
-		apiBase = cfg.Providers.DeepSeek.APIBase
-		if apiBase == "" {
-			apiBase = "https://api.deepseek.com/v1"
-		}
-	case "zhipu", "glm":
-		apiKey = cfg.Providers.Zhipu.APIKey
-		apiBase = cfg.Providers.Zhipu.APIBase
-		if apiBase == "" {
-			apiBase = "https://open.bigmodel.cn/api/paas/v4"
-		}
-	default:
-		return nil
-	}
-
-	if apiKey == "" {
-		return nil
-	}
-
-	return providers.NewHTTPProvider(apiKey, apiBase, "")
 }
 
 func NewAgentLoop(cfg *config.Config, msgBus *bus.MessageBus, provider providers.LLMProvider) *AgentLoop {
@@ -314,33 +230,6 @@ func NewAgentLoop(cfg *config.Config, msgBus *bus.MessageBus, provider providers
 		toolTimeout:          5 * time.Minute,
 	}
 
-	// Initialize Council fallback provider — enables true cross-provider failover.
-	// e.g. OpenAI primary  + Anthropic fallback, or persona-based (speed→Groq).
-	if cfg.Council.Enabled {
-		if fp := createFallbackProvider(cfg); fp != nil {
-			al.councilFallbackProvider = fp
-			// Resolve the display name: explicit config first, then persona-inferred
-			fbName := cfg.Council.Fallback
-			if fbName == "" {
-				switch strings.ToLower(cfg.Council.Persona) {
-				case "speed":
-					fbName = "groq"
-				case "coder":
-					fbName = "anthropic"
-				case "writer":
-					fbName = "openai"
-				}
-			}
-			al.councilFallbackName = fbName
-			logger.InfoCF("agent", "Council fallback provider configured",
-				map[string]interface{}{
-					"fallback_provider": fbName,
-					"fallback_model":    cfg.Council.FallbackModel,
-					"persona":           cfg.Council.Persona,
-				})
-		}
-	}
-
 	// Initialize proactive engine for behavior-pattern learning.
 	// Non-fatal: agent works without it.
 	if eng, err := proactive.NewEngine(workspace); err == nil {
@@ -355,19 +244,6 @@ func NewAgentLoop(cfg *config.Config, msgBus *bus.MessageBus, provider providers
 // ProactiveEngine returns the proactive engine instance (may be nil).
 func (al *AgentLoop) ProactiveEngine() *proactive.Engine {
 	return al.proactiveEngine
-}
-
-// SetStreamCallback registers a function that is called with each streamed
-// token during the final LLM response turn (when no tool calls remain).
-// Pass nil to disable streaming. Must be called before processing begins.
-func (al *AgentLoop) SetStreamCallback(fn func(token string)) {
-	al.streamCallback = fn
-}
-
-// StreamingEnabled returns true if a stream callback is registered.
-// CLI modes can use this to suppress double-printing the returned response.
-func (al *AgentLoop) StreamingEnabled() bool {
-	return al.streamCallback != nil
 }
 
 func (al *AgentLoop) Run(ctx context.Context) error {
@@ -717,7 +593,7 @@ func (al *AgentLoop) runLLMIteration(ctx context.Context, messages []providers.M
 
 			// 2. Council recovery when the primary call failed.
 			if err != nil {
-				councilEnabled, councilFallback, councilFallbackProvName := al.getCouncilConfig()
+				councilEnabled, councilFallback := al.getCouncilConfig()
 				if councilEnabled && councilFallback != "" && councilFallback != currentModel {
 					errStr := strings.ToLower(err.Error())
 
@@ -736,13 +612,13 @@ func (al *AgentLoop) runLLMIteration(ctx context.Context, messages []providers.M
 							switch {
 							case isAuthError:
 								al.cooldowns.Store(currentModel, time.Time{}) // zero value = infinite cooldown
-								notifyMsg = fmt.Sprintf("⚠️ API key for `%s` is unauthorised or expired (401/403). Shifting to fallback `%s/%s`. Please check your billing.", currentModel, councilFallbackProvName, councilFallback)
+								notifyMsg = fmt.Sprintf("⚠️ The API key for `%s` is unauthorised or expired (401/403). Shifting to fallback model (`%s`). Please check your billing.", currentModel, councilFallback)
 							case isRateLimit:
 								al.cooldowns.Store(currentModel, time.Now().Add(5*time.Minute))
-								notifyMsg = fmt.Sprintf("⚠️ Rate limit / quota exceeded on `%s` (429). Cooling down 5 min, shifting to fallback `%s/%s`.", currentModel, councilFallbackProvName, councilFallback)
+								notifyMsg = fmt.Sprintf("⚠️ Rate limit / quota exceeded on `%s` (429). Cooling down for 5 minutes and shifting to fallback (`%s`).", currentModel, councilFallback)
 							case isOverloaded:
 								al.cooldowns.Store(currentModel, time.Now().Add(1*time.Minute))
-								notifyMsg = fmt.Sprintf("⚠️ `%s` servers overloaded (503). Retrying on fallback `%s/%s`.", currentModel, councilFallbackProvName, councilFallback)
+								notifyMsg = fmt.Sprintf("⚠️ `%s` servers are overloaded (503). Retrying on fallback model (`%s`).", currentModel, councilFallback)
 							}
 							if notifyMsg != "" && opts.SendResponse && !constants.IsInternalChannel(opts.Channel) {
 								al.bus.PublishOutbound(bus.OutboundMessage{
@@ -758,16 +634,9 @@ func (al *AgentLoop) runLLMIteration(ctx context.Context, messages []providers.M
 							})
 						}
 
-						// Execute fallback — use dedicated cross-provider fallback if configured,
-						// otherwise degrade gracefully to the primary provider with a different model.
+						// Execute fallback without mutating any shared field.
 						callModel = councilFallback
-						al.councilMu.RLock()
-						fallbackProv := al.councilFallbackProvider
-						al.councilMu.RUnlock()
-						if fallbackProv == nil {
-							fallbackProv = al.provider
-						}
-						response, err = fallbackProv.Chat(ctx, messages, providerToolDefs, callModel, map[string]interface{}{
+						response, err = al.provider.Chat(ctx, messages, providerToolDefs, callModel, map[string]interface{}{
 							"max_tokens":  8192,
 							"temperature": 0.7,
 						})
@@ -860,28 +729,6 @@ func (al *AgentLoop) runLLMIteration(ctx context.Context, messages []providers.M
 					"iteration":     iteration,
 					"content_chars": len(finalContent),
 				})
-
-			// Stream the final response token-by-token if a callback is registered
-			// and the provider supports SSE streaming.  We make a second, streaming
-			// call so the user sees tokens as they arrive rather than waiting for
-			// the entire response.  The Chat() result is kept as the canonical
-			// content for session storage and tool-call safety.
-			if al.streamCallback != nil {
-				if sp, ok := al.provider.(providers.StreamingProvider); ok && finalContent != "" {
-					if streamCh, err := sp.Stream(ctx, messages, al.getModel(), map[string]interface{}{
-						"max_tokens":  8192,
-						"temperature": 0.7,
-					}); err == nil {
-						for chunk := range streamCh {
-							if chunk.Done {
-								break
-							}
-							al.streamCallback(chunk.Text)
-						}
-					}
-				}
-			}
-
 			break
 		}
 
