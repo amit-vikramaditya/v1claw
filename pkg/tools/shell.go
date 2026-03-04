@@ -31,14 +31,14 @@ func NewExecTool(workingDir string, restrict bool, msgBus *bus.MessageBus) *Exec
 		regexp.MustCompile(`\brm\s+(-[a-z]*r[a-z]*f|-[a-z]*f[a-z]*r)\s+/`), // rm -rf / or rm -fr /
 		regexp.MustCompile(`\brmdir\s+/`),
 		// Disk-level wipes / partition tools
-		regexp.MustCompile(`\bdd\b.*\bof=/dev/`),   // dd of=/dev/sda
-		regexp.MustCompile(`\bmkfs\b`),             // any filesystem formatting
+		regexp.MustCompile(`\bdd\b.*\bof=/dev/`), // dd of=/dev/sda
+		regexp.MustCompile(`\bmkfs\b`),           // any filesystem formatting
 		regexp.MustCompile(`\bfdisk\b`),
 		regexp.MustCompile(`\bparted\b`),
 		regexp.MustCompile(`\bwipefs\b`),
 		// Privilege escalation
 		regexp.MustCompile(`\bsudo\b`),
-		regexp.MustCompile(`\bsu\s`),               // su <user> (not "sudo")
+		regexp.MustCompile(`\bsu\s`), // su <user> (not "sudo")
 		regexp.MustCompile(`\bdoas\b`),
 		// Pipe-to-shell download execution (curl|bash etc.)
 		regexp.MustCompile(`\|\s*(bash|sh|zsh|ksh|csh|fish)\b`),
