@@ -49,6 +49,11 @@ type AgentLoop struct {
 	channelManager *channels.Manager
 	cooldowns      sync.Map // Tracks provider/model fatigue and cooldown expiration
 
+	// autoFallbackModel is a zero-config same-provider fallback automatically
+	// inferred from the primary model name (e.g. claude-opus → claude-sonnet).
+	// Enables Layer 1 resilience for single-key users without any configuration.
+	autoFallbackModel string
+
 	// Cached council configuration — avoids a config.json disk read on every LLM call.
 	councilEnabled          bool
 	councilFallbackModel    string
@@ -245,6 +250,65 @@ func createFallbackProvider(cfg *config.Config) providers.LLMProvider {
 	return providers.NewHTTPProvider(apiKey, apiBase, "")
 }
 
+// inferSameProviderFallback maps a primary model to a cheaper/faster alternative
+// from the same provider family. This enables Layer 1 resilience with zero config —
+// any user with a single API key gets automatic failover when hitting rate limits
+// or service overloads. Returns "" if no sensible fallback is known.
+func inferSameProviderFallback(model string) string {
+	lm := strings.ToLower(model)
+
+	// Anthropic / Claude family
+	if strings.Contains(lm, "claude") {
+		if strings.Contains(lm, "opus") {
+			return "claude-sonnet-4-5"
+		}
+		if strings.Contains(lm, "sonnet") {
+			return "claude-haiku-3-5"
+		}
+		return "" // already on haiku — nothing cheaper in family
+	}
+
+	// OpenAI / GPT family
+	if strings.Contains(lm, "o3") || strings.Contains(lm, "o1") {
+		return "gpt-4o"
+	}
+	if strings.Contains(lm, "gpt-4") && !strings.Contains(lm, "mini") {
+		return "gpt-4o-mini"
+	}
+
+	// Google Gemini family
+	if strings.Contains(lm, "gemini") {
+		if strings.Contains(lm, "ultra") || strings.Contains(lm, "1.5-pro") || strings.Contains(lm, "2.0-pro") {
+			return "gemini-2.0-flash"
+		}
+		if strings.Contains(lm, "flash") && !strings.Contains(lm, "lite") {
+			return "gemini-2.0-flash-lite"
+		}
+		return "" // already on lite/exp variants
+	}
+
+	// Groq (Llama/Mixtral hosted models)
+	if strings.Contains(lm, "70b") || strings.Contains(lm, "versatile") {
+		return "llama-3.1-8b-instant"
+	}
+	if strings.Contains(lm, "mixtral") {
+		return "llama-3.1-8b-instant"
+	}
+
+	// DeepSeek family
+	if strings.Contains(lm, "deepseek") && strings.Contains(lm, "reasoner") {
+		return "deepseek-chat"
+	}
+
+	// Zhipu / GLM family
+	if strings.Contains(lm, "glm") && !strings.Contains(lm, "flash") {
+		return "glm-4-flash"
+	}
+
+	// OpenRouter / generic — can't safely infer, leave empty
+	return ""
+}
+
 func NewAgentLoop(cfg *config.Config, msgBus *bus.MessageBus, provider providers.LLMProvider) *AgentLoop {
 	workspace := cfg.WorkspacePath()
 	os.MkdirAll(workspace, 0755)
@@ -312,6 +376,17 @@ func NewAgentLoop(cfg *config.Config, msgBus *bus.MessageBus, provider providers
 		councilEnabled:       cfg.Council.Enabled,
 		councilFallbackModel: cfg.Council.FallbackModel,
 		toolTimeout:          5 * time.Minute,
+	}
+
+	// Layer 1: auto-detect same-provider fallback (zero config, always on).
+	// Works for every user with a single API key — no council configuration needed.
+	if fb := inferSameProviderFallback(cfg.Agents.Defaults.Model); fb != "" {
+		al.autoFallbackModel = fb
+		logger.InfoCF("agent", "Layer 1 auto-resilience ready",
+			map[string]interface{}{
+				"primary":  cfg.Agents.Defaults.Model,
+				"fallback": fb,
+			})
 	}
 
 	// Initialize Council fallback provider — enables true cross-provider failover.
@@ -715,21 +790,53 @@ func (al *AgentLoop) runLLMIteration(ctx context.Context, messages []providers.M
 				err = fmt.Errorf("council: primary %s skipped due to active cooldown cache", currentModel)
 			}
 
-			// 2. Council recovery when the primary call failed.
+		// 2. Two-layer resilience: recover from primary model call failure.
+		if err != nil {
+			errStr := strings.ToLower(err.Error())
+
+			isAuthError := strings.Contains(errStr, "401") || strings.Contains(errStr, "403") ||
+				strings.Contains(errStr, "unauthorized") || strings.Contains(errStr, "forbidden")
+			isRateLimit := strings.Contains(errStr, "429") || strings.Contains(errStr, "400") ||
+				strings.Contains(errStr, "too many requests") || strings.Contains(errStr, "quota") ||
+				strings.Contains(errStr, "exhausted")
+			isOverloaded := strings.Contains(errStr, "503") || strings.Contains(errStr, "timeout") ||
+				strings.Contains(errStr, "service unavailable")
+			isCacheSkip := strings.Contains(errStr, "active cooldown cache")
+
+			// Determine whether the cache-skip was triggered by an auth error
+			// (infinite cooldown). In that case, the same API key won't help —
+			// Layer 1 would fail too, so we skip straight to Layer 2.
+			isAuthCooldown := false
+			if isCacheSkip {
+				if cdTime, exists := al.cooldowns.Load(currentModel); exists {
+					if exp, ok := cdTime.(time.Time); ok && exp.IsZero() {
+						isAuthCooldown = true
+					}
+				}
+			}
+
+			// --- Layer 1: Same-provider auto-resilience (zero config, always on) ---
+			// Kicks in for rate-limit / overload / temporal cooldown — NOT for auth
+			// errors (invalid key → a different model on the same key won't help).
+			canTryLayer1 := !isAuthError && !isAuthCooldown && (isRateLimit || isOverloaded || isCacheSkip)
+			if canTryLayer1 && al.autoFallbackModel != "" && al.autoFallbackModel != currentModel {
+				logger.WarnCF("agent", "Layer 1: switching to same-provider fallback model",
+					map[string]interface{}{
+						"primary":  currentModel,
+						"fallback": al.autoFallbackModel,
+						"reason":   errStr,
+					})
+				callModel = al.autoFallbackModel
+				response, err = al.provider.Chat(ctx, messages, providerToolDefs, callModel, map[string]interface{}{
+					"max_tokens":  8192,
+					"temperature": 0.7,
+				})
+			}
+
+			// --- Layer 2: Cross-provider Council (explicit config, multi-key users) ---
 			if err != nil {
 				councilEnabled, councilFallback, councilFallbackProvName := al.getCouncilConfig()
 				if councilEnabled && councilFallback != "" && councilFallback != currentModel {
-					errStr := strings.ToLower(err.Error())
-
-					isAuthError := strings.Contains(errStr, "401") || strings.Contains(errStr, "403") ||
-						strings.Contains(errStr, "unauthorized") || strings.Contains(errStr, "forbidden")
-					isRateLimit := strings.Contains(errStr, "429") || strings.Contains(errStr, "400") ||
-						strings.Contains(errStr, "too many requests") || strings.Contains(errStr, "quota") ||
-						strings.Contains(errStr, "exhausted")
-					isOverloaded := strings.Contains(errStr, "503") || strings.Contains(errStr, "timeout") ||
-						strings.Contains(errStr, "service unavailable")
-					isCacheSkip := strings.Contains(errStr, "active cooldown cache")
-
 					if isAuthError || isRateLimit || isOverloaded || isCacheSkip {
 						if !isCacheSkip {
 							var notifyMsg string
@@ -751,15 +858,15 @@ func (al *AgentLoop) runLLMIteration(ctx context.Context, messages []providers.M
 									Content: notifyMsg,
 								})
 							}
-							logger.WarnCF("agent", "Council redirecting to fallback", map[string]interface{}{
+							logger.WarnCF("agent", "Layer 2 Council redirecting to cross-provider fallback", map[string]interface{}{
 								"primary":  currentModel,
 								"fallback": councilFallback,
 								"reason":   errStr,
 							})
 						}
 
-						// Execute fallback — use dedicated cross-provider fallback if configured,
-						// otherwise degrade gracefully to the primary provider with a different model.
+						// Execute Layer 2 fallback — use dedicated cross-provider provider if
+						// configured, otherwise degrade gracefully to primary with different model.
 						callModel = councilFallback
 						al.councilMu.RLock()
 						fallbackProv := al.councilFallbackProvider
@@ -774,7 +881,8 @@ func (al *AgentLoop) runLLMIteration(ctx context.Context, messages []providers.M
 					}
 				}
 			}
-			// --- End Council Implementation ---
+		}
+		// --- End Two-layer Resilience ---
 
 			if err == nil {
 				break // Success
