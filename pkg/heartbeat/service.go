@@ -43,6 +43,7 @@ type HeartbeatService struct {
 	mu              sync.RWMutex
 	stopChan        chan struct{}
 	proactiveEngine *proactive.Engine
+	lastDetect      time.Time // last time DetectPatterns was run
 }
 
 // NewHeartbeatService creates a new heartbeat service
@@ -185,6 +186,35 @@ func (hs *HeartbeatService) executeHeartbeat() {
 			for _, r := range routines {
 				prompt += fmt.Sprintf("- **%s**: %s\n", r.Name, r.Action)
 				eng.MarkRoutineTriggered(r.ID)
+			}
+		}
+
+		// Run pattern detection once per day to automatically promote observed
+		// user behaviors into named routines (requires ≥ 3 occurrences).
+		hs.mu.Lock()
+		needsDetect := time.Since(hs.lastDetect) > 24*time.Hour
+		if needsDetect {
+			hs.lastDetect = time.Now()
+		}
+		hs.mu.Unlock()
+
+		if needsDetect && eng.ActivityCount() >= 10 {
+			detected := eng.DetectPatterns(3)
+			existing := eng.GetRoutines()
+			existingActions := make(map[string]bool, len(existing))
+			for _, r := range existing {
+				existingActions[r.Action] = true
+			}
+			for _, p := range detected {
+				if !existingActions[p.Action] && p.Confidence >= 0.05 {
+					eng.AddRoutine(p)
+					logger.InfoCF("heartbeat", "Auto-promoted detected pattern to routine",
+						map[string]interface{}{
+							"name":       p.Name,
+							"time":       p.TimeOfDay,
+							"confidence": p.Confidence,
+						})
+				}
 			}
 		}
 	}
