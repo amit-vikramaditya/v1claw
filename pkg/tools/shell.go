@@ -26,11 +26,34 @@ type ExecTool struct {
 }
 
 func NewExecTool(workingDir string, restrict bool, msgBus *bus.MessageBus) *ExecTool {
-	// ... (retain existing denyPatterns for layered security)
 	denyPatterns := []*regexp.Regexp{
-		// ... existing code ...
+		// Destructive filesystem wipes
+		regexp.MustCompile(`\brm\s+(-[a-z]*r[a-z]*f|-[a-z]*f[a-z]*r)\s+/`), // rm -rf / or rm -fr /
+		regexp.MustCompile(`\brmdir\s+/`),
+		// Disk-level wipes / partition tools
+		regexp.MustCompile(`\bdd\b.*\bof=/dev/`),   // dd of=/dev/sda
+		regexp.MustCompile(`\bmkfs\b`),             // any filesystem formatting
+		regexp.MustCompile(`\bfdisk\b`),
+		regexp.MustCompile(`\bparted\b`),
+		regexp.MustCompile(`\bwipefs\b`),
+		// Privilege escalation
+		regexp.MustCompile(`\bsudo\b`),
+		regexp.MustCompile(`\bsu\s`),               // su <user> (not "sudo")
+		regexp.MustCompile(`\bdoas\b`),
+		// Pipe-to-shell download execution (curl|bash etc.)
+		regexp.MustCompile(`\|\s*(bash|sh|zsh|ksh|csh|fish)\b`),
+		// Kernel module manipulation
+		regexp.MustCompile(`\bmodprobe\b`),
+		regexp.MustCompile(`\binsmod\b`),
+		regexp.MustCompile(`\brmmod\b`),
+		// Fork-bomb pattern:  :() { :|:& };:
+		regexp.MustCompile(`:\s*\(\)\s*\{`),
+		// Overwrite critical system files
+		regexp.MustCompile(`>\s*/etc/(passwd|shadow|sudoers|crontab)\b`),
+		// chmod setuid/setgid bits
+		regexp.MustCompile(`\bchmod\s+[ugoa]*[+]s\b`),
+		regexp.MustCompile(`\bchmod\s+[0-7]*[4-7][0-7]{3}\b`), // e.g. chmod 4755
 	}
-	// ... existing code ...
 
 	return &ExecTool{
 		workingDir:          workingDir,
@@ -214,13 +237,25 @@ func (t *ExecTool) guardCommand(command, cwd string) string {
 	cmd := strings.TrimSpace(command)
 	lower := strings.ToLower(cmd)
 
-	// NEW: Block interpreter bypass patterns for dynamic languages preventing workspace escape
+	// Block interpreter bypass patterns for dynamic languages that could escape the sandbox.
+	// Use filepath.Base so that full-path invocations (/usr/bin/python3, /bin/sh …) are caught
+	// in addition to bare names.
 	interpreters := []string{"python", "python3", "sh", "bash", "zsh", "ruby", "perl", "node"}
-	for _, interp := range interpreters {
-		if strings.HasPrefix(lower, interp+" ") {
-			// Catch common sandbox escape maneuvers: injecting system scripts or evaluating paths outside workspace
-			if strings.Contains(lower, "import os") || strings.Contains(lower, "/etc/") || strings.Contains(lower, "system(") || strings.Contains(lower, "-c ") || strings.Contains(lower, "eval") {
-				return "Command blocked by safety guard (interpreter bypass patterns detected)"
+	fields := strings.Fields(lower)
+	if len(fields) > 0 {
+		baseCmd := filepath.Base(fields[0])
+		for _, interp := range interpreters {
+			if baseCmd == interp {
+				// Catch -c flag, eval, OS module imports, /etc/ access — common sandbox escapes.
+				if strings.Contains(lower, "import os") ||
+					strings.Contains(lower, "/etc/") ||
+					strings.Contains(lower, "system(") ||
+					strings.Contains(lower, " -c ") ||
+					strings.Contains(lower, "\t-c ") ||
+					strings.Contains(lower, "eval") {
+					return "Command blocked by safety guard (interpreter bypass patterns detected)"
+				}
+				break
 			}
 		}
 	}

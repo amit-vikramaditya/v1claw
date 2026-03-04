@@ -5,6 +5,7 @@ package permissions
 
 import (
 	"fmt"
+	"sort"
 	"sync"
 
 	"github.com/amit-vikramaditya/v1claw/pkg/logger"
@@ -129,7 +130,8 @@ func (r *Registry) Snapshot() map[Feature]bool {
 	return out
 }
 
-// EnabledFeatures returns a slice of features that are currently allowed.
+// EnabledFeatures returns a sorted slice of features that are currently allowed.
+// The result is sorted for determinism (map iteration order is random).
 func (r *Registry) EnabledFeatures() []Feature {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -139,5 +141,8 @@ func (r *Registry) EnabledFeatures() []Feature {
 			enabled = append(enabled, f)
 		}
 	}
+	sort.Slice(enabled, func(i, j int) bool {
+		return string(enabled[i]) < string(enabled[j])
+	})
 	return enabled
 }

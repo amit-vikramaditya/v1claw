@@ -214,14 +214,15 @@ func (p *Pipeline) processRecording(ctx context.Context, filePath string) {
 
 // handleOutbound listens for agent responses and speaks them.
 func (p *Pipeline) handleOutbound(ctx context.Context) {
-	outCh := p.msgBus.SubscribeOutbound()
+	sub := p.msgBus.SubscribeOutbound()
+	defer sub.Unsubscribe()
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-p.stopCh:
 			return
-		case msg, ok := <-outCh:
+		case msg, ok := <-sub.C:
 			if !ok {
 				return
 			}

@@ -248,6 +248,12 @@ func (sm *SessionManager) loadSessions() error {
 			continue
 		}
 
+		// Skip oversized session files to prevent OOM on load.
+		const maxSessionFileSize = 10 * 1024 * 1024 // 10 MB
+		if info, err := file.Info(); err != nil || info.Size() > maxSessionFileSize {
+			continue
+		}
+
 		sessionPath := filepath.Join(sm.storage, file.Name())
 		data, err := os.ReadFile(sessionPath)
 		if err != nil {
@@ -278,5 +284,31 @@ func (sm *SessionManager) SetHistory(key string, history []providers.Message) {
 		copy(msgs, history)
 		session.Messages = msgs
 		session.Updated = time.Now()
+	}
+}
+
+// SummarizeAndTruncate atomically sets the session summary and truncates the
+// message history in a single locked operation.  Using separate SetSummary and
+// TruncateHistory calls introduces a race window where a new message arriving
+// between the two steps could be incorrectly dropped.
+func (sm *SessionManager) SummarizeAndTruncate(key string, summary string, keepLast int) {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+
+	session, ok := sm.sessions[key]
+	if !ok {
+		return
+	}
+
+	session.Summary = summary
+	session.Updated = time.Now()
+
+	if keepLast <= 0 {
+		session.Messages = []providers.Message{}
+		return
+	}
+
+	if len(session.Messages) > keepLast {
+		session.Messages = session.Messages[len(session.Messages)-keepLast:]
 	}
 }

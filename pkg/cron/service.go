@@ -326,9 +326,27 @@ func (cs *CronService) loadStore() error {
 		return err
 	}
 
-	return json.Unmarshal(data, cs.store)
+	if err := json.Unmarshal(data, cs.store); err != nil {
+		return err
+	}
+
+	// Recovery: a job marked "running" when the process died will never be
+	// re-triggered because checkJobs skips running jobs. Reset them so they
+	// execute on the next scheduler tick.
+	for i := range cs.store.Jobs {
+		if cs.store.Jobs[i].State.LastStatus == "running" {
+			cs.store.Jobs[i].State.LastStatus = "interrupted"
+			log.Printf("[cron] job %s recovered from interrupted state on load", cs.store.Jobs[i].ID)
+		}
+	}
+
+	return nil
 }
 
+// saveStoreUnsafe writes the cron store atomically via a temp-file rename so
+// that a crash mid-write never produces a corrupted store file.
+// Caller MUST hold cs.mu (write or under write-hold is fine since we only call
+// this from locked methods named *Unsafe).
 func (cs *CronService) saveStoreUnsafe() error {
 	dir := filepath.Dir(cs.storePath)
 	if err := os.MkdirAll(dir, 0700); err != nil {
@@ -340,7 +358,42 @@ func (cs *CronService) saveStoreUnsafe() error {
 		return err
 	}
 
-	return os.WriteFile(cs.storePath, data, 0600)
+	// Write to a temp file in the same directory so os.Rename is atomic.
+	tmp, err := os.CreateTemp(dir, "cron-*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+
+	// Cleanup helper: remove the temp file on error paths.
+	cleanup := true
+	defer func() {
+		if cleanup {
+			_ = os.Remove(tmpPath)
+		}
+	}()
+
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Chmod(0600); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+
+	if err := os.Rename(tmpPath, cs.storePath); err != nil {
+		return err
+	}
+	cleanup = false
+	return nil
 }
 
 func (cs *CronService) AddJob(name string, schedule CronSchedule, message string, deliver bool, channel, to string) (*CronJob, error) {
@@ -451,18 +504,15 @@ func (cs *CronService) ListJobs(includeDisabled bool) []CronJob {
 	cs.mu.RLock()
 	defer cs.mu.RUnlock()
 
-	if includeDisabled {
-		return cs.store.Jobs
-	}
-
-	var enabled []CronJob
+	// Always return a copy of the slice so callers cannot mutate the internal
+	// store without holding the mutex.
+	result := make([]CronJob, 0, len(cs.store.Jobs))
 	for _, job := range cs.store.Jobs {
-		if job.Enabled {
-			enabled = append(enabled, job)
+		if includeDisabled || job.Enabled {
+			result = append(result, job) // CronJob is a value type — this copies
 		}
 	}
-
-	return enabled
+	return result
 }
 
 func (cs *CronService) Status() map[string]interface{} {

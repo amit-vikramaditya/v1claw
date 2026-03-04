@@ -245,14 +245,15 @@ func (m *Manager) StopAll(ctx context.Context) error {
 func (m *Manager) dispatchOutbound(ctx context.Context) {
 	logger.InfoC("channels", "Outbound dispatcher started")
 
-	outCh := m.bus.SubscribeOutbound()
+	sub := m.bus.SubscribeOutbound()
+	defer sub.Unsubscribe()
 
 	for {
 		select {
 		case <-ctx.Done():
 			logger.InfoC("channels", "Outbound dispatcher stopped")
 			return
-		case msg, ok := <-outCh:
+		case msg, ok := <-sub.C:
 			if !ok {
 				continue
 			}

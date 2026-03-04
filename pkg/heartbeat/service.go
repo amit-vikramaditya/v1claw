@@ -17,6 +17,7 @@ import (
 	"github.com/amit-vikramaditya/v1claw/pkg/bus"
 	"github.com/amit-vikramaditya/v1claw/pkg/constants"
 	"github.com/amit-vikramaditya/v1claw/pkg/logger"
+	"github.com/amit-vikramaditya/v1claw/pkg/proactive"
 	"github.com/amit-vikramaditya/v1claw/pkg/state"
 	"github.com/amit-vikramaditya/v1claw/pkg/tools"
 )
@@ -33,14 +34,15 @@ type HeartbeatHandler func(prompt, channel, chatID string) *tools.ToolResult
 
 // HeartbeatService manages periodic heartbeat checks
 type HeartbeatService struct {
-	workspace string
-	bus       *bus.MessageBus
-	state     *state.Manager
-	handler   HeartbeatHandler
-	interval  time.Duration
-	enabled   bool
-	mu        sync.RWMutex
-	stopChan  chan struct{}
+	workspace       string
+	bus             *bus.MessageBus
+	state           *state.Manager
+	handler         HeartbeatHandler
+	interval        time.Duration
+	enabled         bool
+	mu              sync.RWMutex
+	stopChan        chan struct{}
+	proactiveEngine *proactive.Engine
 }
 
 // NewHeartbeatService creates a new heartbeat service
@@ -74,6 +76,14 @@ func (hs *HeartbeatService) SetHandler(handler HeartbeatHandler) {
 	hs.mu.Lock()
 	defer hs.mu.Unlock()
 	hs.handler = handler
+}
+
+// SetProactiveEngine wires the proactive engine so the heartbeat can
+// fire learned user-routine suggestions alongside the scheduled prompt.
+func (hs *HeartbeatService) SetProactiveEngine(eng *proactive.Engine) {
+	hs.mu.Lock()
+	defer hs.mu.Unlock()
+	hs.proactiveEngine = eng
 }
 
 // Start begins the heartbeat service
@@ -163,6 +173,20 @@ func (hs *HeartbeatService) executeHeartbeat() {
 	if prompt == "" {
 		logger.InfoC("heartbeat", "No heartbeat prompt (HEARTBEAT.md empty or missing)")
 		return
+	}
+
+	// Append any proactive routines that are due to fire right now.
+	hs.mu.RLock()
+	eng := hs.proactiveEngine
+	hs.mu.RUnlock()
+	if eng != nil {
+		if routines := eng.CheckRoutines(); len(routines) > 0 {
+			prompt += "\n\n## Proactive Routines Due Now\n"
+			for _, r := range routines {
+				prompt += fmt.Sprintf("- **%s**: %s\n", r.Name, r.Action)
+				eng.MarkRoutineTriggered(r.ID)
+			}
+		}
 	}
 
 	if handler == nil {

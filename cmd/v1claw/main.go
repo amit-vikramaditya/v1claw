@@ -246,10 +246,38 @@ func expandHome(path string) string {
 	return path
 }
 
+// sanitizeOnboardingField strips newlines and control characters from a
+// user-supplied onboarding string before it is written into MEMORY.md.
+// MEMORY.md is loaded into the LLM system prompt on every request, so any
+// injected markdown headings or instruction text would be interpreted by the
+// model.  Single-line fields (aiName, aiRole, userName) are restricted to
+// printable non-newline characters.  The multi-line userPrefs field allows
+// newlines but strips NUL and other control characters.
+func sanitizeOnboardingField(s string, allowNewlines bool) string {
+	return strings.Map(func(r rune) rune {
+		if r == '\x00' {
+			return -1 // drop NUL bytes entirely
+		}
+		if !allowNewlines && (r == '\n' || r == '\r') {
+			return ' '
+		}
+		if r < 0x20 && r != '\n' && r != '\r' && r != '\t' {
+			return ' ' // replace other control chars with space
+		}
+		return r
+	}, s)
+}
+
 func initMemory(workspace, aiName, aiRole, userName, userPrefs string) {
 	memoryDir := filepath.Join(workspace, "memory")
 	os.MkdirAll(memoryDir, 0700)
 	memoryFile := filepath.Join(memoryDir, "MEMORY.md")
+
+	// Sanitise all user-supplied strings to prevent markdown/prompt injection.
+	safeName := sanitizeOnboardingField(aiName, false)
+	safeRole := sanitizeOnboardingField(aiRole, false)
+	safeUser := sanitizeOnboardingField(userName, false)
+	safePrefs := sanitizeOnboardingField(userPrefs, true)
 
 	memoryContent := fmt.Sprintf(`# Long-term Memory
 
@@ -267,7 +295,7 @@ This file stores important information that should persist across sessions.
 
 ## Important Notes
 - Initialized configuration defaults.
-`, aiName, aiRole, userName, userPrefs)
+`, safeName, safeRole, safeUser, safePrefs)
 
 	_ = os.WriteFile(memoryFile, []byte(memoryContent), 0600)
 }
@@ -627,11 +655,10 @@ func clientCmd() {
 
 	fmt.Printf("%s Connecting to gateway at %s...\n", logo, server)
 
-	// Build WebSocket URL.
+	// Build WebSocket URL — never append the API key as a query parameter
+	// because URLs appear in server logs and shell history in plaintext.
+	// The key is sent exclusively via the Authorization header below.
 	wsURL := fmt.Sprintf("ws://%s/api/v1/ws", server)
-	if apiKey != "" {
-		wsURL += "?api_key=" + apiKey
-	}
 
 	header := http.Header{}
 	if apiKey != "" {
@@ -1156,6 +1183,7 @@ func gatewayCmd() {
 		cfg.Heartbeat.Enabled,
 	)
 	heartbeatService.SetBus(msgBus)
+	heartbeatService.SetProactiveEngine(agentLoop.ProactiveEngine())
 	heartbeatService.SetHandler(func(prompt, channel, chatID string) *tools.ToolResult {
 		// Use cli:direct as fallback if no valid channel
 		if channel == "" || chatID == "" {
@@ -1429,8 +1457,10 @@ func gatewayCmd() {
 }
 
 func isPublicHost(host string) bool {
-	host = strings.TrimSpace(host)
-	if host == "" || host == "localhost" {
+	// Normalise: lowercase and strip trailing DNS dot so "LOCALHOST.",
+	// "Localhost", "::1" etc. are all treated correctly.
+	host = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(host), "."))
+	if host == "" || host == "localhost" || host == "::1" {
 		return false
 	}
 	if host == "0.0.0.0" || host == "::" || host == "[::]" {

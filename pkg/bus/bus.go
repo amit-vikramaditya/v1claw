@@ -16,22 +16,50 @@ type MessageBus struct {
 	done         chan struct{}
 }
 
+// Subscription represents an active outbound subscription.
+// Call Unsubscribe when the subscriber is done to free resources.
+type Subscription struct {
+	C  <-chan OutboundMessage
+	ch chan OutboundMessage
+	mb *MessageBus
+}
+
+// Unsubscribe removes this subscription from the bus and closes the channel.
+// It is safe to call multiple times.
+func (s *Subscription) Unsubscribe() {
+	s.mb.mu.Lock()
+	defer s.mb.mu.Unlock()
+
+	subs := s.mb.outboundSubs
+	for i, c := range subs {
+		if c == s.ch {
+			s.mb.outboundSubs = append(subs[:i], subs[i+1:]...)
+			close(s.ch)
+			break
+		}
+	}
+}
+
 func NewMessageBus() *MessageBus {
 	return &MessageBus{
-		inbound:      make(chan InboundMessage, 1024), // Increased buffer
+		inbound:      make(chan InboundMessage, 1024),
 		outboundSubs: make([]chan OutboundMessage, 0),
 		handlers:     make(map[string]MessageHandler),
 		done:         make(chan struct{}),
 	}
 }
 
-func (mb *MessageBus) PublishInbound(msg InboundMessage) {
+// PublishInbound delivers a message to the agent loop.
+// Returns true if the message was queued, false if the buffer was full (dropped).
+func (mb *MessageBus) PublishInbound(msg InboundMessage) bool {
 	select {
 	case <-mb.done:
-		return
+		return false
 	case mb.inbound <- msg:
+		return true
 	default:
 		logger.WarnC("bus", "Inbound buffer full, dropping message to prevent deadlock")
+		return false
 	}
 }
 
@@ -61,12 +89,14 @@ func (mb *MessageBus) PublishOutbound(msg OutboundMessage) {
 	}
 }
 
-func (mb *MessageBus) SubscribeOutbound() <-chan OutboundMessage {
+// SubscribeOutbound returns a Subscription whose C field receives outbound messages.
+// Call Subscription.Unsubscribe() when done to prevent goroutine/memory leaks.
+func (mb *MessageBus) SubscribeOutbound() *Subscription {
 	mb.mu.Lock()
 	defer mb.mu.Unlock()
 	ch := make(chan OutboundMessage, 1024)
 	mb.outboundSubs = append(mb.outboundSubs, ch)
-	return ch
+	return &Subscription{C: ch, ch: ch, mb: mb}
 }
 
 func (mb *MessageBus) RegisterHandler(channel string, handler MessageHandler) {

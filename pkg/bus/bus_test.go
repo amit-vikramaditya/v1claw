@@ -36,7 +36,7 @@ func TestMessageBus_PublishOutbound_Saturation(t *testing.T) {
 	defer mb.Close()
 
 	// Subscribe exactly one listener
-	ch := mb.SubscribeOutbound()
+	sub := mb.SubscribeOutbound()
 
 	// The listener buffer is 1024. Fill it.
 	for i := 0; i < 1024; i++ {
@@ -58,7 +58,7 @@ func TestMessageBus_PublishOutbound_Saturation(t *testing.T) {
 	}
 
 	// Consume one to verify the channel is actually full and working
-	msg := <-ch
+	msg := <-sub.C
 	if msg.Content != "filler" {
 		t.Errorf("Expected 'filler', got %v", msg.Content)
 	}
