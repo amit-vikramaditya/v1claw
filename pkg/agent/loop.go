@@ -24,6 +24,7 @@ import (
 	"github.com/amit-vikramaditya/v1claw/pkg/constants"
 	"github.com/amit-vikramaditya/v1claw/pkg/epistemology"
 	"github.com/amit-vikramaditya/v1claw/pkg/logger"
+	"github.com/amit-vikramaditya/v1claw/pkg/proactive"
 	"github.com/amit-vikramaditya/v1claw/pkg/providers"
 	"github.com/amit-vikramaditya/v1claw/pkg/session"
 	"github.com/amit-vikramaditya/v1claw/pkg/state"
@@ -36,7 +37,8 @@ type AgentLoop struct {
 	provider       providers.LLMProvider
 	workspace      string
 	model          string
-	contextWindow  int // Maximum context window size in tokens
+	modelMu        sync.RWMutex // Protects model field for concurrent goroutine access
+	contextWindow  int          // Maximum context window size in tokens
 	maxIterations  int
 	sessions       *session.SessionManager
 	state          *state.Manager
@@ -46,6 +48,49 @@ type AgentLoop struct {
 	summarizing    sync.Map // Tracks which sessions are currently being summarized
 	channelManager *channels.Manager
 	cooldowns      sync.Map // Tracks provider/model fatigue and cooldown expiration
+
+	// Cached council configuration — avoids a config.json disk read on every LLM call.
+	councilEnabled       bool
+	councilFallbackModel string
+	councilMu            sync.RWMutex
+
+	// toolTimeout caps per-tool execution to prevent a single hung tool from
+	// blocking the agent indefinitely. Defaults to 5 minutes.
+	toolTimeout time.Duration
+
+	// proactiveEngine learns user behavior patterns and suggests routines.
+	// May be nil if initialization fails (non-critical).
+	proactiveEngine *proactive.Engine
+}
+
+// getModel returns the current primary model name, safe for concurrent reads.
+func (al *AgentLoop) getModel() string {
+	al.modelMu.RLock()
+	defer al.modelMu.RUnlock()
+	return al.model
+}
+
+// setModel updates the primary model name, safe for concurrent writes.
+func (al *AgentLoop) setModel(m string) {
+	al.modelMu.Lock()
+	defer al.modelMu.Unlock()
+	al.model = m
+}
+
+// UpdateCouncilConfig refreshes the cached council config at runtime.
+// Safe to call concurrently from any goroutine.
+func (al *AgentLoop) UpdateCouncilConfig(enabled bool, fallbackModel string) {
+	al.councilMu.Lock()
+	defer al.councilMu.Unlock()
+	al.councilEnabled = enabled
+	al.councilFallbackModel = fallbackModel
+}
+
+// getCouncilConfig reads the council config under its dedicated read lock.
+func (al *AgentLoop) getCouncilConfig() (enabled bool, fallbackModel string) {
+	al.councilMu.RLock()
+	defer al.councilMu.RUnlock()
+	return al.councilEnabled, al.councilFallbackModel
 }
 
 // processOptions configures how a message is processed
@@ -165,21 +210,40 @@ func NewAgentLoop(cfg *config.Config, msgBus *bus.MessageBus, provider providers
 	// Create context builder and set tools registry
 	contextBuilder := NewContextBuilder(workspace)
 	contextBuilder.SetToolsRegistry(toolsRegistry)
+	contextBuilder.SetGraphStore(graphStore)
 
-	return &AgentLoop{
-		bus:            msgBus,
-		provider:       provider,
-		workspace:      workspace,
-		model:          cfg.Agents.Defaults.Model,
-		contextWindow:  cfg.Agents.Defaults.MaxTokens, // Restore context window for summarization
-		maxIterations:  cfg.Agents.Defaults.MaxToolIterations,
-		sessions:       sessionsManager,
-		state:          stateManager,
-		contextBuilder: contextBuilder,
-		tools:          toolsRegistry,
-		summarizing:    sync.Map{},
-		cooldowns:      sync.Map{},
+	al := &AgentLoop{
+		bus:                  msgBus,
+		provider:             provider,
+		workspace:            workspace,
+		model:                cfg.Agents.Defaults.Model,
+		contextWindow:        cfg.Agents.Defaults.MaxTokens,
+		maxIterations:        cfg.Agents.Defaults.MaxToolIterations,
+		sessions:             sessionsManager,
+		state:                stateManager,
+		contextBuilder:       contextBuilder,
+		tools:                toolsRegistry,
+		summarizing:          sync.Map{},
+		cooldowns:            sync.Map{},
+		councilEnabled:       cfg.Council.Enabled,
+		councilFallbackModel: cfg.Council.FallbackModel,
+		toolTimeout:          5 * time.Minute,
 	}
+
+	// Initialize proactive engine for behavior-pattern learning.
+	// Non-fatal: agent works without it.
+	if eng, err := proactive.NewEngine(workspace); err == nil {
+		al.proactiveEngine = eng
+	} else {
+		logger.WarnCF("agent", "Proactive engine init failed (non-fatal)", map[string]interface{}{"error": err.Error()})
+	}
+
+	return al
+}
+
+// ProactiveEngine returns the proactive engine instance (may be nil).
+func (al *AgentLoop) ProactiveEngine() *proactive.Engine {
+	return al.proactiveEngine
 }
 
 func (al *AgentLoop) Run(ctx context.Context) error {
@@ -375,6 +439,10 @@ func (al *AgentLoop) runAgentLoop(ctx context.Context, opts processOptions) (str
 			if err := al.RecordLastChannel(channelKey); err != nil {
 				logger.WarnCF("agent", "Failed to record last channel: %v", map[string]interface{}{"error": err.Error()})
 			}
+			// Feed interaction into the proactive behavior-learning engine.
+			if al.proactiveEngine != nil {
+				al.proactiveEngine.RecordActivity(opts.UserMessage, opts.Channel)
+			}
 		}
 	}
 
@@ -466,7 +534,7 @@ func (al *AgentLoop) runLLMIteration(ctx context.Context, messages []providers.M
 		logger.DebugCF("agent", "LLM request",
 			map[string]interface{}{
 				"iteration":         iteration,
-				"model":             al.model,
+				"model":             al.getModel(),
 				"messages_count":    len(messages),
 				"tools_count":       len(providerToolDefs),
 				"max_tokens":        8192,
@@ -485,115 +553,93 @@ func (al *AgentLoop) runLLMIteration(ctx context.Context, messages []providers.M
 		var response *providers.LLMResponse
 		var err error
 
+		// Read current model once per iteration — never mutate al.model from goroutines.
+		// callModel may be overridden to the fallback during council recovery.
+		currentModel := al.getModel()
+
 		// Retry loop for context/token errors
 		maxRetries := 2
 		for retry := 0; retry <= maxRetries; retry++ {
-			// Pass the execution to the Council routing system instead of binding tightly to a single provider.
-			// The Council will attempt the generated Primary, and if it fails due to rate limits or 503s,
-			// it will execute on the Fallback provider without breaking the loop or losing context!
-
-			// Note: Because providers.ExecuteWithCouncil isn't fully wired for generic tool/message pass-through
-			// in the stub we created, we will implement the retry logic inline here using the AgentLoop's
-			// access to the global provider factory.
-
 			// --- Council Fallback Implementation ---
 			// 1. Check Cooldown Cache BEFORE executing Primary
 			var skipPrimary bool
-			if cdTime, exists := al.cooldowns.Load(al.model); exists {
+			if cdTime, exists := al.cooldowns.Load(currentModel); exists {
 				expiration, ok := cdTime.(time.Time)
 				if ok {
 					if expiration.IsZero() {
-						// Infinite Cooldown (401/403)
 						skipPrimary = true
-						logger.WarnCF("agent", fmt.Sprintf("Council: Skipping Primary %s due to Infinite Cooldown (Auth/Quota)", al.model), nil)
+						logger.WarnCF("agent", fmt.Sprintf("Council: Skipping Primary %s — infinite cooldown (auth/quota)", currentModel), nil)
 					} else if time.Now().Before(expiration) {
-						// Temporal Cooldown (429/503)
 						skipPrimary = true
-						logger.WarnCF("agent", fmt.Sprintf("Council: Skipping Primary %s due to Temporal Cooldown (Expires in %v)", al.model, time.Until(expiration)), nil)
+						logger.WarnCF("agent", fmt.Sprintf("Council: Skipping Primary %s — cooldown expires in %v", currentModel, time.Until(expiration).Round(time.Second)), nil)
 					} else {
-						// Cooldown Expired
-						al.cooldowns.Delete(al.model)
+						al.cooldowns.Delete(currentModel)
 					}
 				}
 			}
 
+			// callModel is the model actually sent to the provider this call.
+			// It may differ from currentModel during fallback — never writes back to the struct.
+			callModel := currentModel
+
 			if !skipPrimary {
-				response, err = al.provider.Chat(ctx, messages, providerToolDefs, al.model, map[string]interface{}{
+				response, err = al.provider.Chat(ctx, messages, providerToolDefs, callModel, map[string]interface{}{
 					"max_tokens":  8192,
 					"temperature": 0.7,
 				})
 			} else {
-				// Artificial error to force fallback execution since we skipped the Primary
-				err = fmt.Errorf("council: primary %s skipped due to active cooldown cache", al.model)
+				err = fmt.Errorf("council: primary %s skipped due to active cooldown cache", currentModel)
 			}
 
-			// 2. If the standard call throws an error (or we skipped it), attempt a Council recovery
+			// 2. Council recovery when the primary call failed.
 			if err != nil {
-				// We parse config.json to check the real-time Council schema
-				configPath := filepath.Join(al.workspace, "config.json")
-				cfgBytes, loadErr := os.ReadFile(configPath)
-				if loadErr == nil {
-					var configMap map[string]interface{}
-					if json.Unmarshal(cfgBytes, &configMap) == nil {
-						if council, ok := configMap["council"].(map[string]interface{}); ok {
-							if enabled, _ := council["enabled"].(bool); enabled {
+				councilEnabled, councilFallback := al.getCouncilConfig()
+				if councilEnabled && councilFallback != "" && councilFallback != currentModel {
+					errStr := strings.ToLower(err.Error())
 
-								// Parse HTTP Errors to define Cooldowns
-								errStr := strings.ToLower(err.Error())
+					isAuthError := strings.Contains(errStr, "401") || strings.Contains(errStr, "403") ||
+						strings.Contains(errStr, "unauthorized") || strings.Contains(errStr, "forbidden")
+					isRateLimit := strings.Contains(errStr, "429") || strings.Contains(errStr, "400") ||
+						strings.Contains(errStr, "too many requests") || strings.Contains(errStr, "quota") ||
+						strings.Contains(errStr, "exhausted")
+					isOverloaded := strings.Contains(errStr, "503") || strings.Contains(errStr, "timeout") ||
+						strings.Contains(errStr, "service unavailable")
+					isCacheSkip := strings.Contains(errStr, "active cooldown cache")
 
-								isAuthError := strings.Contains(errStr, "401") || strings.Contains(errStr, "403") || strings.Contains(errStr, "unauthorized") || strings.Contains(errStr, "forbidden")
-								isRateLimit := strings.Contains(errStr, "429") || strings.Contains(errStr, "400") || strings.Contains(errStr, "too many requests") || strings.Contains(errStr, "quota") || strings.Contains(errStr, "exhausted")
-								isOverloaded := strings.Contains(errStr, "503") || strings.Contains(errStr, "timeout") || strings.Contains(errStr, "service unavailable")
-								isCacheSkip := strings.Contains(errStr, "active cooldown cache")
-
-								isRecoverable := isAuthError || isRateLimit || isOverloaded || isCacheSkip
-
-								if isRecoverable {
-									fallbackModel, _ := council["fallback_model"].(string)
-
-									if fallbackModel != "" && fallbackModel != al.model { // Prevent infinite loops
-										originalModel := al.model
-
-										// Apply Cooldowns and Surface Notifications for newly failed requests
-										if !isCacheSkip {
-											var msg string
-											if isAuthError {
-												al.cooldowns.Store(originalModel, time.Time{}) // Zero time = Infinite
-												msg = fmt.Sprintf("⚠️ The API key for my current brain (%s) is **unauthorized or expired** (401/403). I am shifting to your Fallback model (`%s`) for the remainder of this session. Please check your billing.", originalModel, fallbackModel)
-											} else if isRateLimit {
-												al.cooldowns.Store(originalModel, time.Now().Add(5*time.Minute)) // 5 Min
-												msg = fmt.Sprintf("⚠️ I've hit a **Rate Limit / Quota Exceeded** on `%s` (429). I am letting it cool down for 5 minutes and shifting to the Fallback Council member (`%s`).", originalModel, fallbackModel)
-											} else if isOverloaded {
-												al.cooldowns.Store(originalModel, time.Now().Add(1*time.Minute)) // 1 Min
-												msg = fmt.Sprintf("⚠️ The `%s` servers are currently **Overloaded** (503). Retrying your request on the Fallback model (`%s`).", originalModel, fallbackModel)
-											}
-
-											// Send explanation to the UI before shifting
-											if opts.SendResponse && !constants.IsInternalChannel(opts.Channel) {
-												al.bus.PublishOutbound(bus.OutboundMessage{
-													Channel: opts.Channel,
-													ChatID:  opts.ChatID,
-													Content: msg,
-												})
-											}
-											logger.WarnCF("agent", "Council Redirecting", map[string]interface{}{"primary": originalModel, "fallback": fallbackModel, "reason": errStr})
-										}
-
-										// 3. We temporarily override the AgentLoop's model
-										al.model = fallbackModel
-
-										// Execute Fallback
-										response, err = al.provider.Chat(ctx, messages, providerToolDefs, al.model, map[string]interface{}{
-											"max_tokens":  8192,
-											"temperature": 0.7,
-										})
-
-										// Restore context mapping
-										al.model = originalModel
-									}
-								}
+					if isAuthError || isRateLimit || isOverloaded || isCacheSkip {
+						if !isCacheSkip {
+							var notifyMsg string
+							switch {
+							case isAuthError:
+								al.cooldowns.Store(currentModel, time.Time{}) // zero value = infinite cooldown
+								notifyMsg = fmt.Sprintf("⚠️ The API key for `%s` is unauthorised or expired (401/403). Shifting to fallback model (`%s`). Please check your billing.", currentModel, councilFallback)
+							case isRateLimit:
+								al.cooldowns.Store(currentModel, time.Now().Add(5*time.Minute))
+								notifyMsg = fmt.Sprintf("⚠️ Rate limit / quota exceeded on `%s` (429). Cooling down for 5 minutes and shifting to fallback (`%s`).", currentModel, councilFallback)
+							case isOverloaded:
+								al.cooldowns.Store(currentModel, time.Now().Add(1*time.Minute))
+								notifyMsg = fmt.Sprintf("⚠️ `%s` servers are overloaded (503). Retrying on fallback model (`%s`).", currentModel, councilFallback)
 							}
+							if notifyMsg != "" && opts.SendResponse && !constants.IsInternalChannel(opts.Channel) {
+								al.bus.PublishOutbound(bus.OutboundMessage{
+									Channel: opts.Channel,
+									ChatID:  opts.ChatID,
+									Content: notifyMsg,
+								})
+							}
+							logger.WarnCF("agent", "Council redirecting to fallback", map[string]interface{}{
+								"primary":  currentModel,
+								"fallback": councilFallback,
+								"reason":   errStr,
+							})
 						}
+
+						// Execute fallback without mutating any shared field.
+						callModel = councilFallback
+						response, err = al.provider.Chat(ctx, messages, providerToolDefs, callModel, map[string]interface{}{
+							"max_tokens":  8192,
+							"temperature": 0.7,
+						})
 					}
 				}
 			}
@@ -746,7 +792,8 @@ func (al *AgentLoop) runLLMIteration(ctx context.Context, messages []providers.M
 				}
 			}
 
-			toolResult := al.tools.ExecuteWithContext(ctx, tc.Name, tc.Arguments, tools.ToolContext{
+			toolCtx, toolCancel := context.WithTimeout(ctx, al.toolTimeout)
+			toolResult := al.tools.ExecuteWithContext(toolCtx, tc.Name, tc.Arguments, tools.ToolContext{
 				Channel:    opts.Channel,
 				ChatID:     opts.ChatID,
 				SessionKey: opts.SessionKey,
@@ -754,6 +801,7 @@ func (al *AgentLoop) runLLMIteration(ctx context.Context, messages []providers.M
 				Bus:        al.bus,
 				Async:      asyncCallback,
 			})
+			toolCancel()
 
 			// Send ForUser content to user immediately if not Silent
 			if !toolResult.Silent && toolResult.ForUser != "" && opts.SendResponse {
@@ -814,62 +862,37 @@ func (al *AgentLoop) maybeSummarize(sessionKey, channel, chatID string) {
 	}
 }
 
-// forceCompression aggressively reduces context when the limit is hit.
-// It drops the oldest 50% of messages (keeping system prompt and last user message).
+// forceCompression aggressively reduces context when the token limit is hit.
+// Session history never contains a system message — that is rebuilt fresh on
+// every call from BuildMessages.  We simply drop the oldest half of real
+// conversation messages and record the gap as a synthetic user note so the
+// LLM knows context was truncated.
 func (al *AgentLoop) forceCompression(sessionKey string) {
 	history := al.sessions.GetHistory(sessionKey)
 	if len(history) <= 4 {
 		return
 	}
 
-	// Keep system prompt (usually [0]) and the very last message (user's trigger)
-	// We want to drop the oldest half of the *conversation*
-	// Assuming [0] is system, [1:] is conversation
-	conversation := history[1 : len(history)-1]
-	if len(conversation) == 0 {
-		return
+	// Drop the first 50 % of messages.  Round up so we always keep at least
+	// ceil(N/2) messages, preserving the most-recent context.
+	dropCount := len(history) / 2
+	kept := history[dropCount:]
+
+	// Prepend a synthetic note so the LLM is aware of the gap.
+	compressionNote := providers.Message{
+		Role:    "user",
+		Content: fmt.Sprintf("[System note: %d older messages were dropped due to context window limits. Conversation continues from here.]", dropCount),
 	}
+	newHistory := make([]providers.Message, 0, 1+len(kept))
+	newHistory = append(newHistory, compressionNote)
+	newHistory = append(newHistory, kept...)
 
-	// Helper to find the mid-point of the conversation
-	mid := len(conversation) / 2
-
-	// New history structure:
-	// 1. System Prompt
-	// 2. [Summary of dropped part] - synthesized
-	// 3. Second half of conversation
-	// 4. Last message
-
-	// Simplified approach for emergency: Drop first half of conversation
-	// and rely on existing summary if present, or create a placeholder.
-
-	droppedCount := mid
-	keptConversation := conversation[mid:]
-
-	newHistory := make([]providers.Message, 0)
-	newHistory = append(newHistory, history[0]) // System prompt
-
-	// Add a note about compression
-	compressionNote := fmt.Sprintf("[System: Emergency compression dropped %d oldest messages due to context limit]", droppedCount)
-	// If there was an existing summary, we might lose it if it was in the dropped part (which is just messages).
-	// The summary is stored separately in session.Summary, so it persists!
-	// We just need to ensure the user knows there's a gap.
-
-	// We only modify the messages list here
-	newHistory = append(newHistory, providers.Message{
-		Role:    "system",
-		Content: compressionNote,
-	})
-
-	newHistory = append(newHistory, keptConversation...)
-	newHistory = append(newHistory, history[len(history)-1]) // Last message
-
-	// Update session
 	al.sessions.SetHistory(sessionKey, newHistory)
 	al.sessions.Save(sessionKey)
 
 	logger.WarnCF("agent", "Forced compression executed", map[string]interface{}{
 		"session_key":  sessionKey,
-		"dropped_msgs": droppedCount,
+		"dropped_msgs": dropCount,
 		"new_count":    len(newHistory),
 	})
 }
@@ -993,7 +1016,7 @@ func (al *AgentLoop) summarizeSession(sessionKey string) {
 
 		// Merge them
 		mergePrompt := fmt.Sprintf("Merge these two conversation summaries into one cohesive summary:\n\n1: %s\n\n2: %s", s1, s2)
-		resp, err := al.provider.Chat(ctx, []providers.Message{{Role: "user", Content: mergePrompt}}, nil, al.model, map[string]interface{}{
+		resp, err := al.provider.Chat(ctx, []providers.Message{{Role: "user", Content: mergePrompt}}, nil, al.getModel(), map[string]interface{}{
 			"max_tokens":  1024,
 			"temperature": 0.3,
 		})
@@ -1011,8 +1034,9 @@ func (al *AgentLoop) summarizeSession(sessionKey string) {
 	}
 
 	if finalSummary != "" {
-		al.sessions.SetSummary(sessionKey, finalSummary)
-		al.sessions.TruncateHistory(sessionKey, 4)
+		// Atomically update summary and truncate history in one operation to
+		// prevent a race where a new message arrives between the two calls.
+		al.sessions.SummarizeAndTruncate(sessionKey, finalSummary, 4)
 		al.sessions.Save(sessionKey)
 	}
 }
@@ -1028,7 +1052,7 @@ func (al *AgentLoop) summarizeBatch(ctx context.Context, batch []providers.Messa
 		prompt += fmt.Sprintf("%s: %s\n", m.Role, m.Content)
 	}
 
-	response, err := al.provider.Chat(ctx, []providers.Message{{Role: "user", Content: prompt}}, nil, al.model, map[string]interface{}{
+	response, err := al.provider.Chat(ctx, []providers.Message{{Role: "user", Content: prompt}}, nil, al.getModel(), map[string]interface{}{
 		"max_tokens":  1024,
 		"temperature": 0.3,
 	})
@@ -1071,7 +1095,7 @@ func (al *AgentLoop) handleCommand(ctx context.Context, msg bus.InboundMessage) 
 		}
 		switch args[0] {
 		case "model":
-			return fmt.Sprintf("Current model: %s", al.model), true
+			return fmt.Sprintf("Current model: %s", al.getModel()), true
 		case "channel":
 			return fmt.Sprintf("Current channel: %s", msg.Channel), true
 		default:
@@ -1112,8 +1136,8 @@ func (al *AgentLoop) handleCommand(ctx context.Context, msg bus.InboundMessage) 
 			if strings.Contains(value, "://") || strings.Contains(value, "/") || strings.Contains(value, "\\") {
 				return "Invalid model name — URLs and paths are not allowed", true
 			}
-			oldModel := al.model
-			al.model = value
+			oldModel := al.getModel()
+			al.setModel(value)
 			return fmt.Sprintf("Switched model from %s to %s", oldModel, value), true
 		case "channel":
 			// This changes the 'default' channel for some operations, or effectively redirects output?

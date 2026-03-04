@@ -437,7 +437,13 @@ func configureTools(cfg *config.Config) {
 					Value(&schedule),
 			),
 		).Run()
-		// TODO: Map schedule to cfg.Heartbeat.Interval
+		cfg.Heartbeat.Enabled = true
+		switch schedule {
+		case "60":
+			cfg.Heartbeat.Interval = 60
+		default:
+			cfg.Heartbeat.Interval = 720
+		}
 	}
 }
 
@@ -499,6 +505,10 @@ func configureIdentity(cfg *config.Config) {
 }
 
 func configureCouncil(cfg *config.Config) {
+	// Capture the primary provider/model that was just selected.
+	cfg.Council.Primary = cfg.Agents.Defaults.Provider
+	cfg.Council.PrimaryModel = cfg.Agents.Defaults.Model
+
 	var persona string
 	huh.NewForm(
 		huh.NewGroup(
@@ -514,6 +524,50 @@ func configureCouncil(cfg *config.Config) {
 		),
 	).Run()
 
+	// Build fallback provider options (exclude the primary).
+	var fallbackProviderOptions []huh.Option[string]
+	for _, p := range traditional {
+		if p.id != cfg.Council.Primary {
+			fallbackProviderOptions = append(fallbackProviderOptions,
+				huh.NewOption(fmt.Sprintf("%s — %s", p.name, grayStyle.Render(p.desc)), p.id))
+		}
+	}
+
+	var fallbackProvider string
+	if len(fallbackProviderOptions) > 0 {
+		huh.NewForm(
+			huh.NewGroup(
+				huh.NewSelect[string]().
+					Title("Fallback Provider").
+					Description("Which AI should take over when the primary is unavailable?").
+					Options(fallbackProviderOptions...).
+					Value(&fallbackProvider),
+			),
+		).Run()
+	}
+
+	var fallbackModel string
+	if fallbackProvider != "" {
+		models := providerModels[fallbackProvider]
+		if len(models) > 0 {
+			var modelOptions []huh.Option[string]
+			for _, m := range models {
+				modelOptions = append(modelOptions, huh.NewOption(m, m))
+			}
+			huh.NewForm(
+				huh.NewGroup(
+					huh.NewSelect[string]().
+						Title("Fallback Model").
+						Description(fmt.Sprintf("Choose a model from %s to use as fallback.", fallbackProvider)).
+						Options(modelOptions...).
+						Value(&fallbackModel),
+				),
+			).Run()
+		}
+	}
+
 	cfg.Council.Enabled = true
 	cfg.Council.Persona = persona
+	cfg.Council.Fallback = fallbackProvider
+	cfg.Council.FallbackModel = fallbackModel
 }

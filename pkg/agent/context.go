@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/amit-vikramaditya/v1claw/pkg/epistemology"
 	"github.com/amit-vikramaditya/v1claw/pkg/logger"
 	"github.com/amit-vikramaditya/v1claw/pkg/providers"
 	"github.com/amit-vikramaditya/v1claw/pkg/skills"
@@ -19,6 +20,7 @@ type ContextBuilder struct {
 	skillsLoader *skills.SkillsLoader
 	memory       *MemoryStore
 	tools        *tools.ToolRegistry // Direct reference to tool registry
+	graphStore   epistemology.GraphStore
 }
 
 func getGlobalConfigDir() string {
@@ -70,6 +72,12 @@ func NewContextBuilder(workspace string) *ContextBuilder {
 // SetToolsRegistry sets the tools registry for dynamic tool summary generation.
 func (cb *ContextBuilder) SetToolsRegistry(registry *tools.ToolRegistry) {
 	cb.tools = registry
+}
+
+// SetGraphStore wires the epistemology knowledge graph so learned facts
+// are included in every system prompt as persistent memory.
+func (cb *ContextBuilder) SetGraphStore(gs epistemology.GraphStore) {
+	cb.graphStore = gs
 }
 
 func (cb *ContextBuilder) getIdentity() string {
@@ -156,6 +164,31 @@ The following skills extend your capabilities. To use a skill, read its SKILL.md
 	memoryContext := cb.memory.GetMemoryContext()
 	if memoryContext != "" {
 		parts = append(parts, "# Memory\n\n<user_memory>\n"+memoryContext+"\n</user_memory>")
+	}
+
+	// Epistemology: inject top high-confidence learned facts into the prompt
+	// so the agent remembers what it has learned across sessions.
+	if cb.graphStore != nil {
+		facts, err := cb.graphStore.Query(epistemology.Query{MinConf: 0.6})
+		if err != nil {
+			logger.WarnCF("agent", "Failed to query epistemology for system prompt", map[string]interface{}{"error": err.Error()})
+		} else if len(facts) > 0 {
+			// Cap at 20 facts to avoid bloating the prompt.
+			if len(facts) > 20 {
+				facts = facts[:20]
+			}
+			var sb strings.Builder
+			sb.WriteString("# Persistent Memory (Learned Facts)\n\n")
+			sb.WriteString("The following facts were learned from prior interactions:\n\n")
+			for _, f := range facts {
+				sb.WriteString(fmt.Sprintf("- **%s** %s **%s**", f.Subject, f.Predicate, f.Object))
+				if f.Source != "" {
+					sb.WriteString(fmt.Sprintf(" _(source: %s)_", f.Source))
+				}
+				sb.WriteString("\n")
+			}
+			parts = append(parts, sb.String())
+		}
 	}
 
 	// Join with "---" separator

@@ -196,6 +196,11 @@ func (t *WriteFileTool) Execute(ctx context.Context, tc ToolContext, args map[st
 		return ErrorResult("content is required")
 	}
 
+	const maxWriteBytes = 50 * 1024 * 1024 // 50 MB
+	if len(content) > maxWriteBytes {
+		return ErrorResult(fmt.Sprintf("content too large to write (max %d bytes)", maxWriteBytes))
+	}
+
 	resolvedPath, err := validatePath(path, t.workspace, t.restrict)
 	if err != nil {
 		if t.bus != nil && tc.Channel != "" {

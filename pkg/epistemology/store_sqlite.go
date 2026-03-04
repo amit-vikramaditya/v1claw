@@ -46,6 +46,11 @@ func NewSQLiteGraphStore(workspaceDir string) (*SQLiteGraphStore, error) {
 }
 
 func (s *SQLiteGraphStore) init() error {
+	// Enable foreign-key enforcement (SQLite disables it by default).
+	if _, err := s.db.Exec("PRAGMA foreign_keys = ON"); err != nil {
+		return fmt.Errorf("failed to enable foreign keys: %w", err)
+	}
+
 	query := `
 	CREATE TABLE IF NOT EXISTS facts (
 		id TEXT PRIMARY KEY,
@@ -59,8 +64,9 @@ func (s *SQLiteGraphStore) init() error {
 		refuted_by TEXT,
 		FOREIGN KEY(refuted_by) REFERENCES facts(id)
 	);
-	CREATE INDEX IF NOT EXISTS idx_facts_subject ON facts(subject);
+	CREATE INDEX IF NOT EXISTS idx_facts_subject   ON facts(subject);
 	CREATE INDEX IF NOT EXISTS idx_facts_predicate ON facts(predicate);
+	CREATE INDEX IF NOT EXISTS idx_facts_object    ON facts(object);
 	`
 	_, err := s.db.Exec(query)
 	return err

@@ -238,11 +238,11 @@ type ProvidersConfig struct {
 }
 
 type ProviderConfig struct {
-	APIKey      string `json:"api_key" env:"V1CLAW_PROVIDERS_{{.Name}}_API_KEY"`
-	APIBase     string `json:"api_base" env:"V1CLAW_PROVIDERS_{{.Name}}_API_BASE"`
-	Proxy       string `json:"proxy,omitempty" env:"V1CLAW_PROVIDERS_{{.Name}}_PROXY"`
-	AuthMethod  string `json:"auth_method,omitempty" env:"V1CLAW_PROVIDERS_{{.Name}}_AUTH_METHOD"`
-	ConnectMode string `json:"connect_mode,omitempty" env:"V1CLAW_PROVIDERS_{{.Name}}_CONNECT_MODE"` //only for Github Copilot, `stdio` or `grpc`
+	APIKey      string `json:"api_key"`
+	APIBase     string `json:"api_base"`
+	Proxy       string `json:"proxy,omitempty"`
+	AuthMethod  string `json:"auth_method,omitempty"`
+	ConnectMode string `json:"connect_mode,omitempty"` // only for Github Copilot, `stdio` or `grpc`
 }
 
 type GatewayConfig struct {
@@ -444,12 +444,59 @@ func LoadConfig(path string) (*Config, error) {
 		return nil, err
 	}
 
+	// Apply explicit per-provider env vars.  The ProviderConfig struct uses
+	// template-style tags that caarlos0/env cannot resolve, so we do it here.
+	applyProviderEnvOverrides(cfg)
+
 	return cfg, nil
 }
 
+// applyProviderEnvOverrides reads per-provider environment variables and
+// merges them into cfg.Providers.  An env var only overrides if it is non-empty,
+// so the JSON config file values remain as defaults.
+func applyProviderEnvOverrides(cfg *Config) {
+	type providerEntry struct {
+		name string
+		p    *ProviderConfig
+	}
+	providers := []providerEntry{
+		{"ANTHROPIC", &cfg.Providers.Anthropic},
+		{"OPENAI", &cfg.Providers.OpenAI},
+		{"OPENROUTER", &cfg.Providers.OpenRouter},
+		{"GROQ", &cfg.Providers.Groq},
+		{"ZHIPU", &cfg.Providers.Zhipu},
+		{"VLLM", &cfg.Providers.VLLM},
+		{"GEMINI", &cfg.Providers.Gemini},
+		{"NVIDIA", &cfg.Providers.Nvidia},
+		{"OLLAMA", &cfg.Providers.Ollama},
+		{"MOONSHOT", &cfg.Providers.Moonshot},
+		{"SHENGSUANYUN", &cfg.Providers.ShengSuanYun},
+		{"DEEPSEEK", &cfg.Providers.DeepSeek},
+		{"GITHUB_COPILOT", &cfg.Providers.GitHubCopilot},
+	}
+	for _, pe := range providers {
+		prefix := "V1CLAW_PROVIDERS_" + pe.name + "_"
+		if v := os.Getenv(prefix + "API_KEY"); v != "" {
+			pe.p.APIKey = v
+		}
+		if v := os.Getenv(prefix + "API_BASE"); v != "" {
+			pe.p.APIBase = v
+		}
+		if v := os.Getenv(prefix + "PROXY"); v != "" {
+			pe.p.Proxy = v
+		}
+		if v := os.Getenv(prefix + "AUTH_METHOD"); v != "" {
+			pe.p.AuthMethod = v
+		}
+		if v := os.Getenv(prefix + "CONNECT_MODE"); v != "" {
+			pe.p.ConnectMode = v
+		}
+	}
+}
+
 func SaveConfig(path string, cfg *Config) error {
-	cfg.mu.RLock()
-	defer cfg.mu.RUnlock()
+	cfg.mu.Lock()
+	defer cfg.mu.Unlock()
 
 	data, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {

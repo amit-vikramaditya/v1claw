@@ -5,6 +5,7 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -373,6 +374,10 @@ func (s *Server) handleDevices(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusBadRequest, ErrorResponse{Error: "id and name are required"})
 			return
 		}
+		if err := validateDeviceHost(req.Host); err != nil {
+			writeJSON(w, http.StatusBadRequest, ErrorResponse{Error: err.Error()})
+			return
+		}
 
 		device := devsync.DeviceInfo{
 			ID:           req.ID,
@@ -444,8 +449,59 @@ func (s *Server) Registry() *devsync.Registry {
 
 // --- Helpers ---
 
+// validateDeviceHost rejects host values that resolve to private or reserved IP
+// ranges to prevent SSRF attacks where a malicious client registers a device
+// with host=169.254.169.254 (cloud metadata service) or an internal address.
+func validateDeviceHost(host string) error {
+	if host == "" {
+		return nil // empty host is fine — device will not be contacted
+	}
+
+	// Strip port if present (e.g. "192.168.1.1:8080" → "192.168.1.1")
+	h := host
+	if parsed, _, err := net.SplitHostPort(host); err == nil {
+		h = parsed
+	}
+
+	ip := net.ParseIP(h)
+	if ip == nil {
+		// Hostname — reject if it looks like an internal hostname
+		lower := strings.ToLower(h)
+		if lower == "localhost" || strings.HasSuffix(lower, ".local") ||
+			strings.HasSuffix(lower, ".internal") || strings.HasSuffix(lower, ".corp") {
+			return fmt.Errorf("device host %q resolves to a reserved/internal name", host)
+		}
+		return nil // external hostname, accept
+	}
+
+	reserved := []net.IPNet{
+		// Loopback
+		{IP: net.ParseIP("127.0.0.0"), Mask: net.CIDRMask(8, 32)},
+		// Private RFC1918
+		{IP: net.ParseIP("10.0.0.0"), Mask: net.CIDRMask(8, 32)},
+		{IP: net.ParseIP("172.16.0.0"), Mask: net.CIDRMask(12, 32)},
+		{IP: net.ParseIP("192.168.0.0"), Mask: net.CIDRMask(16, 32)},
+		// Link-local (also used by AWS/GCP metadata service 169.254.169.254)
+		{IP: net.ParseIP("169.254.0.0"), Mask: net.CIDRMask(16, 32)},
+		// IPv6 loopback and link-local
+		{IP: net.ParseIP("::1"), Mask: net.CIDRMask(128, 128)},
+		{IP: net.ParseIP("fe80::"), Mask: net.CIDRMask(10, 128)},
+		// Unique-local (fc00::/7)
+		{IP: net.ParseIP("fc00::"), Mask: net.CIDRMask(7, 128)},
+	}
+	for _, cidr := range reserved {
+		if cidr.Contains(ip) {
+			return fmt.Errorf("device host %q is a reserved/private IP address", host)
+		}
+	}
+
+	return nil
+}
+
 func writeJSON(w http.ResponseWriter, status int, data interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(data)
+	if err := json.NewEncoder(w).Encode(data); err != nil {
+		logger.WarnCF("api", "Failed to encode JSON response", map[string]interface{}{"error": err.Error()})
+	}
 }
