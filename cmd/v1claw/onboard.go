@@ -39,6 +39,32 @@ var (
 // ─── Entry point ─────────────────────────────────────────────────────────────
 
 func onboardCmd() {
+	args := os.Args[2:]
+
+	// Fast-exit flags that don't need the wizard.
+	for _, arg := range args {
+		if arg == "--refresh" {
+			onboardRefresh()
+			return
+		}
+	}
+
+	// --auto mode: non-interactive setup via flags.
+	//   v1claw onboard --auto --provider gemini --api-key sk-...
+	//   v1claw onboard --auto --provider gemini --api-key sk-... --model gemini-3.1-pro-preview
+	//   v1claw onboard --auto --provider gemini --api-key sk-... --workspace /my/path
+	autoMode := false
+	for _, arg := range args {
+		if arg == "--auto" {
+			autoMode = true
+			break
+		}
+	}
+	if autoMode {
+		onboardAuto(args)
+		return
+	}
+
 	printOnboardWelcome()
 
 	cfg := config.DefaultConfig()
@@ -680,4 +706,162 @@ func wrapText(s string, maxWidth int, indent string) string {
 	}
 
 	return strings.Join(lines, "\n"+indent)
+}
+
+// ─── Auto (non-interactive) mode ─────────────────────────────────────────────
+
+// onboardAuto runs a fully non-interactive setup using flags:
+//
+//	--provider <id>    Required. e.g. gemini, openai, anthropic, groq, deepseek, openrouter
+//	--api-key  <key>   Required for API-key providers (not needed for vertex/bedrock).
+//	--model    <model> Optional. Defaults to the first model for the provider.
+//	--workspace <path> Optional. Defaults to ~/.v1claw/workspace.
+func onboardAuto(args []string) {
+	providerID := flagValue(args, "--provider")
+	apiKey := flagValue(args, "--api-key")
+	model := flagValue(args, "--model")
+	workspace := flagValue(args, "--workspace")
+
+	// Validate required flags.
+	if providerID == "" {
+		fmt.Printf("  %s --provider is required for --auto mode.\n\n", errorStyle.Render("✗"))
+		fmt.Printf("  Example:\n")
+		fmt.Printf("    v1claw onboard --auto --provider gemini --api-key YOUR_KEY\n\n")
+		fmt.Printf("  Providers: gemini, openai, anthropic, groq, deepseek, openrouter, openrouter, nvidia\n")
+		fmt.Printf("  Enterprise (no key needed): vertex, bedrock\n\n")
+		os.Exit(1)
+	}
+
+	needsKey := providerID != "vertex" && providerID != "bedrock"
+	if needsKey && apiKey == "" {
+		fmt.Printf("  %s --api-key is required for provider %q.\n\n", errorStyle.Render("✗"), providerID)
+		fmt.Printf("  Example:\n")
+		fmt.Printf("    v1claw onboard --auto --provider %s --api-key YOUR_KEY\n\n", providerID)
+		os.Exit(1)
+	}
+
+	fmt.Printf("\n%s V1Claw non-interactive setup\n\n", titleStyle.Render("⚡"))
+
+	configPath := getConfigPath()
+	cfg := config.DefaultConfig()
+	// Load existing config if present — don't wipe existing settings.
+	if _, err := os.Stat(configPath); err == nil {
+		if loaded, err := loadConfig(); err == nil {
+			cfg = loaded
+		}
+	}
+
+	// Set workspace.
+	if workspace != "" {
+		cfg.Workspace.Path = expandHome(workspace)
+	} else if cfg.Workspace.Path == "" {
+		home, _ := os.UserHomeDir()
+		cfg.Workspace.Path = filepath.Join(home, ".v1claw", "workspace")
+	}
+
+	// Set provider + model.
+	cfg.Agents.Defaults.Provider = providerID
+	if model != "" {
+		cfg.Agents.Defaults.Model = model
+	} else if models, ok := providerModels[providerID]; ok && len(models) > 0 {
+		cfg.Agents.Defaults.Model = models[0]
+	}
+
+	// Set API key.
+	if apiKey != "" {
+		setProviderKey(cfg, providerID, apiKey)
+	}
+
+	fmt.Printf("  %s Provider:  %s\n", successStyle.Render("✓"), providerID)
+	fmt.Printf("  %s Model:     %s\n", successStyle.Render("✓"), cfg.Agents.Defaults.Model)
+	fmt.Printf("  %s Workspace: %s\n", successStyle.Render("✓"), cfg.Workspace.Path)
+
+	// Validate the key (live test).
+	if needsKey {
+		var testErr error
+		withSpinner("Testing connection to "+providerID+"…", func() {
+			testErr = validateProviderKey(cfg)
+		})
+		if testErr != nil {
+			fmt.Printf("  %s Connection test failed: %s\n", errorStyle.Render("✗"), simplifyProviderError(testErr))
+			fmt.Printf("  %s Config was NOT saved. Check your API key and try again.\n\n", warnStyle.Render("→"))
+			os.Exit(1)
+		}
+		fmt.Printf("  %s API key validated — connection works.\n", successStyle.Render("✓"))
+	}
+
+	// Save config + seed workspace.
+	if err := config.SaveConfig(configPath, cfg); err != nil {
+		fmt.Printf("  %s Could not save config: %v\n", errorStyle.Render("✗"), err)
+		os.Exit(1)
+	}
+	createWorkspaceTemplates(cfg.Workspace.Path)
+
+	fmt.Printf("  %s Config saved to: %s\n\n", successStyle.Render("✓"), configPath)
+	fmt.Printf("  %s\n\n", titleStyle.Render("Setup complete. Try it:"))
+	fmt.Printf("    v1claw agent -m \"Hello! What can you do?\"\n\n")
+}
+
+// flagValue returns the value for a --flag <value> pair in args,
+// or "" if the flag is not present.
+func flagValue(args []string, flag string) string {
+	for i, arg := range args {
+		if arg == flag && i+1 < len(args) {
+			return args[i+1]
+		}
+		// Support --flag=value syntax too.
+		prefix := flag + "="
+		if strings.HasPrefix(arg, prefix) {
+			return arg[len(prefix):]
+		}
+	}
+	return ""
+}
+
+// ─── Refresh mode ────────────────────────────────────────────────────────────
+
+// onboardRefresh upgrades an existing install non-interactively:
+//  1. Load existing config (preserving all user values).
+//  2. Re-save it — this round-trip adds any new fields with their schema defaults
+//     without overwriting anything the user previously set.
+//  3. Re-sync workspace templates (skipping files that already exist).
+//
+// Equivalent to nanobot's "N" (keep) path in onboard. Run it after upgrading
+// v1claw to get new config fields without re-running the full wizard.
+func onboardRefresh() {
+	configPath := getConfigPath()
+	fmt.Printf("\n%s Refreshing V1Claw config…\n\n", titleStyle.Render("↻"))
+
+	cfg, err := loadConfig()
+	if err != nil {
+		if os.IsNotExist(err) {
+			fmt.Printf("  %s No config found at %s — run  v1claw onboard  first.\n",
+				errorStyle.Render("✗"), configPath)
+			return
+		}
+		fmt.Printf("  %s Failed to load config: %v\n", errorStyle.Render("✗"), err)
+		return
+	}
+
+	// Re-save: JSON marshal → write. New fields in DefaultConfig will be added
+	// with their zero/default values; existing values are preserved.
+	if err := config.SaveConfig(configPath, cfg); err != nil {
+		fmt.Printf("  %s Failed to save config: %v\n", errorStyle.Render("✗"), err)
+		return
+	}
+	fmt.Printf("  %s Config refreshed — new schema fields added with defaults.\n",
+		successStyle.Render("✓"))
+	fmt.Printf("    %s\n\n", stepStyle.Render(configPath))
+
+	// Re-sync workspace templates (only creates missing files, never overwrites).
+	workspace := cfg.WorkspacePath()
+	if workspace != "" {
+		createWorkspaceTemplates(workspace)
+		fmt.Printf("  %s Workspace templates refreshed (existing files untouched).\n",
+			successStyle.Render("✓"))
+		fmt.Printf("    %s\n\n", stepStyle.Render(workspace))
+	}
+
+	fmt.Printf("  %s Run  v1claw doctor  to verify everything is configured.\n\n",
+		stepStyle.Render("→"))
 }

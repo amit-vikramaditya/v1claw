@@ -646,6 +646,9 @@ func (al *AgentLoop) runLLMIteration(ctx context.Context, messages []providers.M
 	iteration := 0
 	var finalContent string
 
+	// Tool loop detector prevents the agent from spinning on the same tool call.
+	loopDetector := NewToolLoopDetector()
+
 	for iteration < al.maxIterations {
 		iteration++
 
@@ -903,6 +906,9 @@ func (al *AgentLoop) runLLMIteration(ctx context.Context, messages []providers.M
 					"iteration": iteration,
 				})
 
+			// Record the call BEFORE execution so the detector sees it even if the tool panics.
+			loopArgsHash := loopDetector.Record(tc.Name, tc.Arguments)
+
 			// Create async callback for tools that implement AsyncTool
 			// NOTE: Following openclaw's design, async tools do NOT send results directly to users.
 			// Instead, they notify the agent via PublishInbound, and the agent decides
@@ -945,11 +951,21 @@ func (al *AgentLoop) runLLMIteration(ctx context.Context, messages []providers.M
 					})
 			}
 
-			// Determine content for LLM based on tool result
+			// Determine content for LLM based on tool result.
 			contentForLLM := toolResult.ForLLM
 			if contentForLLM == "" && toolResult.Err != nil {
 				contentForLLM = toolResult.Err.Error()
 			}
+
+			// Hard-cap tool results so one large response cannot blow out context.
+			const maxToolResultChars = 50_000
+			const toolResultTruncSuffix = "\n\n\u26a0 [Content truncated \u2014 original exceeded size limit. Use offset/limit parameters or request specific sections for large results.]"
+			if len(contentForLLM) > maxToolResultChars {
+				contentForLLM = contentForLLM[:maxToolResultChars] + toolResultTruncSuffix
+			}
+
+			// Record outcome for loop detection (same args + same result = no progress).
+			loopDetector.RecordOutcome(loopArgsHash, contentForLLM)
 
 			toolResultMsg := providers.Message{
 				Role:       "tool",
@@ -960,6 +976,27 @@ func (al *AgentLoop) runLLMIteration(ctx context.Context, messages []providers.M
 
 			// Save tool result message to session
 			al.sessions.AddFullMessage(opts.SessionKey, toolResultMsg)
+		}
+
+		// ── Tool loop detection ──────────────────────────────────────────────
+		// Evaluated once after ALL tool calls in this iteration are complete.
+		if det := loopDetector.Check(); det.Severity > LoopNone {
+			logger.WarnCF("agent", "Tool loop detected",
+				map[string]interface{}{
+					"kind":      det.Kind,
+					"severity":  det.Severity,
+					"iteration": iteration,
+				})
+			if det.Severity == LoopCritical {
+				// Hard-stop: return agent's message to the user.
+				finalContent = det.Message
+				break
+			}
+			// Warning: inject a system note so the LLM self-corrects next turn.
+			messages = append(messages, providers.Message{
+				Role:    "user",
+				Content: "[System note: " + det.Message + "]",
+			})
 		}
 	}
 

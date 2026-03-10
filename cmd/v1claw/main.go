@@ -216,6 +216,8 @@ func main() {
 		}
 	case "version", "--version", "-v":
 		printVersion()
+	case "help", "--help", "-h":
+		printHelp()
 	default:
 		fmt.Printf("Unknown command: %s\n", command)
 		printHelp()
@@ -1624,64 +1626,67 @@ func statusCmd() {
 	}
 
 	if _, err := os.Stat(configPath); err == nil {
-		// ```
-		// I need to replace the `fmt.Printf("Model: %s\n", cfg.Agents.Defaults.Model)` line
-		// with `fmt.Printf("Configured Model: %s (Provider: %s)\n", cfg.Agents.Defaults.Model, provider)`.
-		// And then ensure `hasOpenRouter := ...` is on its own line.
-		// The `provider` variable is still the problem.
-		// To make it syntactically correct, I will assume `provider` should be an empty string or a default.
-		// The instruction is "Replace fmt.Print(fmt.Sprintf(...)) with fmt.Printf(...)".
-		// This instruction is not directly applicable. I will follow the "Code Edit" as the primary source of change.
-		// The "Code Edit" shows the *new* state. I must make it syntactically correct.
-		// The only way to make `fmt.Printf("Configured Model: %s (Provider: %s)\n", cfg.Agents.Defaults.Model, provider)`
-		// syntactically correct without adding new code is to replace `provider` with a literal string,
-		// or remove the `(Provider: %s)` part. Removing it changes the content too much.
-		// I will replace `provider` with an empty string `""` to satisfy syntactic correctness.
-		// This is the least intrusive way to make the provided `fmt.Printf` line valid.
+		providerName := cfg.Agents.Defaults.Provider
+		if providerName == "" {
+			providerName = "auto"
+		}
+		fmt.Printf("Model:    %s\n", cfg.Agents.Defaults.Model)
+		fmt.Printf("Provider: %s\n", providerName)
+		fmt.Println()
 
-		// Final decision:
-		// 1. Replace `fmt.Printf("Model: %s\n", cfg.Agents.Defaults.Model)`
-		// 2. With `fmt.Printf("Configured Model: %s (Provider: %s)\n", cfg.Agents.Defaults.Model, "")` (using `""` for `provider` to ensure syntax)
-		// 3. Ensure `hasOpenRouter := ...` is on a new line.
-
-		fmt.Printf("Configured Model: %s (Provider: %s)\n", cfg.Agents.Defaults.Model, "") // 'provider' was undefined, replaced with empty string for syntactic correctness
-		hasOpenRouter := cfg.Providers.OpenRouter.APIKey != ""
-		hasAnthropic := cfg.Providers.Anthropic.APIKey != ""
-		hasOpenAI := cfg.Providers.OpenAI.APIKey != ""
-		hasGemini := cfg.Providers.Gemini.APIKey != ""
-		hasZhipu := cfg.Providers.Zhipu.APIKey != ""
-		hasGroq := cfg.Providers.Groq.APIKey != ""
-		hasVLLM := cfg.Providers.VLLM.APIBase != ""
-
-		status := func(enabled bool) string {
-			if enabled {
+		ok := func(set bool) string {
+			if set {
 				return "✓"
 			}
 			return "not set"
 		}
-		fmt.Println("OpenRouter API:", status(hasOpenRouter))
-		fmt.Println("Anthropic API:", status(hasAnthropic))
-		fmt.Println("OpenAI API:", status(hasOpenAI))
-		fmt.Println("Gemini API:", status(hasGemini))
-		fmt.Println("Zhipu API:", status(hasZhipu))
-		fmt.Println("Groq API:", status(hasGroq))
-		if hasVLLM {
-			fmt.Printf("vLLM/Local: ✓ %s\n", cfg.Providers.VLLM.APIBase)
+
+		fmt.Println("── API Providers ──────────────────────────────")
+		fmt.Println("  OpenRouter:  ", ok(cfg.Providers.OpenRouter.APIKey != ""))
+		fmt.Println("  Anthropic:   ", ok(cfg.Providers.Anthropic.APIKey != ""))
+		fmt.Println("  OpenAI:      ", ok(cfg.Providers.OpenAI.APIKey != ""))
+		fmt.Println("  Gemini:      ", ok(cfg.Providers.Gemini.APIKey != ""))
+		fmt.Println("  Groq:        ", ok(cfg.Providers.Groq.APIKey != ""))
+		fmt.Println("  DeepSeek:    ", ok(cfg.Providers.DeepSeek.APIKey != ""))
+		fmt.Println("  Zhipu:       ", ok(cfg.Providers.Zhipu.APIKey != ""))
+		if cfg.Providers.VLLM.APIBase != "" {
+			fmt.Printf("  vLLM/Local:   ✓ %s\n", cfg.Providers.VLLM.APIBase)
 		} else {
-			fmt.Println("vLLM/Local: not set")
+			fmt.Println("  vLLM/Local:  ", ok(false))
+		}
+
+		fmt.Println()
+		fmt.Println("── Enterprise Providers ───────────────────────")
+		if cfg.Providers.Vertex.ProjectID != "" {
+			fmt.Printf("  Vertex AI:    ✓ project=%s region=%s\n",
+				cfg.Providers.Vertex.ProjectID, cfg.Providers.Vertex.Location)
+		} else {
+			fmt.Println("  Vertex AI:    not configured")
+		}
+		if cfg.Providers.Bedrock.Region != "" {
+			fmt.Printf("  AWS Bedrock:  ✓ region=%s\n", cfg.Providers.Bedrock.Region)
+		} else {
+			fmt.Println("  AWS Bedrock:  not configured")
+		}
+		if cfg.Providers.AzureOpenAI.Endpoint != "" {
+			fmt.Printf("  Azure OpenAI: ✓ %s (deployment: %s)\n",
+				cfg.Providers.AzureOpenAI.Endpoint, cfg.Providers.AzureOpenAI.Deployment)
+		} else {
+			fmt.Println("  Azure OpenAI: not configured")
 		}
 
 		store, _ := auth.LoadStore()
 		if store != nil && len(store.Credentials) > 0 {
-			fmt.Println("\nOAuth/Token Auth:")
-			for provider, cred := range store.Credentials {
-				status := "authenticated"
+			fmt.Println()
+			fmt.Println("── OAuth / Token Auth ─────────────────────────")
+			for prov, cred := range store.Credentials {
+				credStatus := "active"
 				if cred.IsExpired() {
-					status = "expired"
+					credStatus = "expired"
 				} else if cred.NeedsRefresh() {
-					status = "needs refresh"
+					credStatus = "needs refresh"
 				}
-				fmt.Printf("  %s (%s): %s\n", provider, cred.AuthMethod, status)
+				fmt.Printf("  %s (%s): %s\n", prov, cred.AuthMethod, credStatus)
 			}
 		}
 	}
