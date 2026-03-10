@@ -83,9 +83,12 @@ type providerInfo struct {
 
 var traditional = []providerInfo{
 	{id: "gemini", name: "Google Gemini", desc: "Free tier available — recommended", keyHint: "Gemini API key", keyURL: "https://aistudio.google.com/apikey"},
+	{id: "vertex", name: "Google Vertex AI", desc: "Enterprise Gemini: 10× limits, grounding, long-running tasks", keyHint: "No key needed — uses gcloud auth (run: gcloud auth application-default login)", keyURL: "https://cloud.google.com/vertex-ai"},
 	{id: "openai", name: "OpenAI", desc: "GPT-5, GPT-4o, o3", keyHint: "OpenAI API key (starts with sk-)", keyURL: "https://platform.openai.com/api-keys"},
 	{id: "anthropic", name: "Anthropic", desc: "Claude Opus 4.6, Sonnet", keyHint: "Anthropic API key (starts with sk-ant-)", keyURL: "https://console.anthropic.com/keys"},
-	{id: "groq", name: "Groq", desc: "Llama 3.3, Fast inference, free tier", keyHint: "Groq API key", keyURL: "https://console.groq.com/keys"},
+	{id: "bedrock", name: "AWS Bedrock", desc: "Claude + Llama + Titan in your own AWS account, IAM auth", keyHint: "No key needed — uses ~/.aws/credentials or AWS env vars", keyURL: "https://console.aws.amazon.com/bedrock"},
+	{id: "azure_openai", name: "Azure OpenAI", desc: "Private GPT-4o endpoint, enterprise SLAs, AD auth", keyHint: "Azure OpenAI api_key from Azure Portal", keyURL: "https://portal.azure.com"},
+	{id: "groq", name: "Groq", desc: "Llama 3.3, 500+ tok/s — blazing fast tool loops", keyHint: "Groq API key", keyURL: "https://console.groq.com/keys"},
 	{id: "deepseek", name: "DeepSeek", desc: "DeepSeek V3, Coder", keyHint: "DeepSeek API key", keyURL: "https://platform.deepseek.com/api_keys"},
 	{id: "openrouter", name: "OpenRouter", desc: "100+ models, single API key", keyHint: "OpenRouter API key", keyURL: "https://openrouter.ai/keys"},
 	{id: "nvidia", name: "NVIDIA NIM", desc: "NVIDIA hosted models", keyHint: "NVIDIA API key", keyURL: "https://build.nvidia.com"},
@@ -98,8 +101,18 @@ var providerModels = map[string][]string{
 	"gemini": {
 		"gemini-3.1-pro-preview", "gemini-3.1-pro-preview-customtools", "gemini-3-flash-preview", "gemini-2.5-pro",
 	},
+	"vertex": {
+		"gemini-3.1-pro-preview", "gemini-3.1-pro-preview-customtools", "gemini-3-flash-preview", "gemini-2.5-pro",
+	},
 	"anthropic": {
-		"claude-opus-4-6", "claude-sonnet-4-6", "claude-haiku-4-5", "claude-3-7-sonnet-latest", "claude-3-5-sonnet-20241022", "claude-3-opus-20240229",
+		"claude-opus-4-6", "claude-sonnet-4-6", "claude-haiku-4-5", "claude-3-7-sonnet-latest", "claude-3-5-sonnet-20241022",
+	},
+	"bedrock": {
+		"claude-sonnet-4-5", "claude-3-5-sonnet", "claude-3-5-haiku", "llama-3-3-70b", "llama-3-1-405b", "nova-pro", "nova-lite",
+	},
+	"azure_openai": {
+		// For Azure, the "model" is the deployment name — list common deployment names.
+		"gpt-4o", "gpt-4o-mini", "gpt-4", "gpt-35-turbo",
 	},
 	"deepseek": {
 		"deepseek-reasoner", "deepseek-coder", "deepseek-v3",
@@ -306,6 +319,84 @@ func configureModels(cfg *config.Config) {
 			}
 		}
 
+		// Keyless providers — auth comes from environment, not an API key.
+		if providerID == "vertex" || providerID == "bedrock" {
+			if providerID == "vertex" {
+				fmt.Printf("\n--- %s ---\n", cyanStyle.Render("Google Vertex AI"))
+				fmt.Printf("%s\n\n", grayStyle.Render("Auth: run  gcloud auth application-default login  first."))
+				var projectID string
+				huh.NewForm(huh.NewGroup(
+					huh.NewInput().
+						Title("Google Cloud Project ID").
+						Placeholder("my-gcp-project").
+						Value(&projectID),
+				)).Run()
+				if projectID != "" {
+					cfg.Providers.Vertex.ProjectID = projectID
+				}
+				if cfg.Providers.Vertex.Location == "" {
+					cfg.Providers.Vertex.Location = "us-central1"
+				}
+			} else {
+				fmt.Printf("\n--- %s ---\n", cyanStyle.Render("AWS Bedrock"))
+				fmt.Printf("%s\n\n", grayStyle.Render("Auth: uses ~/.aws/credentials — run  aws configure  if needed."))
+				var region string
+				huh.NewForm(huh.NewGroup(
+					huh.NewInput().
+						Title("AWS Region").
+						Placeholder("us-east-1").
+						Value(&region),
+				)).Run()
+				if region != "" {
+					cfg.Providers.Bedrock.Region = region
+				}
+			}
+			if models, ok := providerModels[providerID]; ok {
+				for _, m := range models {
+					unlockedModels = append(unlockedModels, huh.NewOption(m, m))
+				}
+			}
+			if cfg.Agents.Defaults.Provider == "" {
+				cfg.Agents.Defaults.Provider = providerID
+			}
+			continue
+		}
+
+		// Azure OpenAI needs endpoint + deployment + api_key.
+		if providerID == "azure_openai" {
+			fmt.Printf("\n--- %s ---\n", cyanStyle.Render("Azure OpenAI"))
+			fmt.Printf("%s\n\n", grayStyle.Render("Get endpoint and key from: https://portal.azure.com"))
+			var endpoint, deployment, apiKey string
+			huh.NewForm(huh.NewGroup(
+				huh.NewInput().
+					Title("Azure OpenAI Endpoint").
+					Placeholder("https://mycompany.openai.azure.com").
+					Value(&endpoint),
+				huh.NewInput().
+					Title("Deployment Name").
+					Placeholder("gpt-4o-prod").
+					Value(&deployment),
+				huh.NewInput().
+					Title("API Key").
+					EchoMode(huh.EchoModePassword).
+					Value(&apiKey),
+			)).Run()
+			if endpoint != "" {
+				cfg.Providers.AzureOpenAI.Endpoint = endpoint
+			}
+			if deployment != "" {
+				cfg.Providers.AzureOpenAI.Deployment = deployment
+				unlockedModels = append(unlockedModels, huh.NewOption(deployment, deployment))
+			}
+			if apiKey != "" {
+				cfg.Providers.AzureOpenAI.APIKey = apiKey
+			}
+			if endpoint != "" && deployment != "" && cfg.Agents.Defaults.Provider == "" {
+				cfg.Agents.Defaults.Provider = "azure_openai"
+			}
+			continue
+		}
+
 		var apiKey string
 		fmt.Printf("\n--- Key Required: %s ---\n", cyanStyle.Render(pInfo.name))
 		fmt.Printf("Get a key here: %s\n", grayStyle.Render(pInfo.keyURL))
@@ -393,7 +484,7 @@ func configureTools(cfg *config.Config) {
 				Description("Give your AI abilities to interact with the world.").
 				Options(
 					huh.NewOption("DuckDuckGo — "+grayStyle.Render("Free web search, no key required"), "ddg"),
-					huh.NewOption("Tavily — "+grayStyle.Render("Premium search tool, requires API key"), "tavily"),
+					huh.NewOption("Perplexity — "+grayStyle.Render("AI-powered search, requires API key"), "perplexity"),
 					huh.NewOption("Academic — "+grayStyle.Render("Search peer-reviewed papers (Consensus)"), "academic"),
 					huh.NewOption("Terminal — "+grayStyle.Render("Allow AI to run bash commands"), "shell"),
 					huh.NewOption("File System — "+grayStyle.Render("Allow AI to read and write files"), "fs"),
@@ -407,8 +498,8 @@ func configureTools(cfg *config.Config) {
 		switch t {
 		case "ddg":
 			cfg.Tools.Web.DuckDuckGo.Enabled = true
-		case "tavily":
-			cfg.Tools.Web.Brave.Enabled = true // Re-using brave slot for now as placeholder or we update config struct
+		case "perplexity":
+			cfg.Tools.Web.Perplexity.Enabled = true
 		case "shell":
 			cfg.Permissions.ShellHardware = true
 		}

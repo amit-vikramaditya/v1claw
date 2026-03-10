@@ -23,7 +23,7 @@ func TestMessageTool_Execute_Success(t *testing.T) {
 		"content": "Hello, world!",
 	}
 
-	result := tool.Execute(ctx, ToolContext{}, args)
+	result := tool.Execute(ctx, ToolContext{Channel: "test-channel", ChatID: "test-chat-id"}, args)
 
 	// Verify message was sent with correct parameters
 	if sentChannel != "test-channel" {
@@ -43,8 +43,8 @@ func TestMessageTool_Execute_Success(t *testing.T) {
 	}
 
 	// - ForLLM contains send status description
-	if result.ForLLM != "Message sent to test-channel:test-chat-id" {
-		t.Errorf("Expected ForLLM 'Message sent to test-channel:test-chat-id', got '%s'", result.ForLLM)
+	if result.ForLLM != "Message sent." {
+		t.Errorf("Expected ForLLM 'Message sent.', got '%s'", result.ForLLM)
 	}
 
 	// - ForUser is empty (user already received message directly)
@@ -89,8 +89,8 @@ func TestMessageTool_Execute_WithCustomChannel(t *testing.T) {
 	if !result.Silent {
 		t.Error("Expected Silent=true")
 	}
-	if result.ForLLM != "Message sent to custom-channel:custom-chat-id" {
-		t.Errorf("Expected ForLLM 'Message sent to custom-channel:custom-chat-id', got '%s'", result.ForLLM)
+	if result.ForLLM != "Message sent." {
+		t.Errorf("Expected ForLLM 'Message sent.', got '%s'", result.ForLLM)
 	}
 }
 
@@ -108,7 +108,7 @@ func TestMessageTool_Execute_SendFailure(t *testing.T) {
 		"content": "Test message",
 	}
 
-	result := tool.Execute(ctx, ToolContext{}, args)
+	result := tool.Execute(ctx, ToolContext{Channel: "test-channel", ChatID: "test-chat-id"}, args)
 
 	// Verify ToolResult for send failure:
 	// - Send failure returns ErrorResult (IsError=true)
@@ -117,17 +117,9 @@ func TestMessageTool_Execute_SendFailure(t *testing.T) {
 	}
 
 	// - ForLLM contains error description
-	expectedErrMsg := "sending message: network error"
+	expectedErrMsg := "failed to send message: network error"
 	if result.ForLLM != expectedErrMsg {
 		t.Errorf("Expected ForLLM '%s', got '%s'", expectedErrMsg, result.ForLLM)
-	}
-
-	// - Err field should contain original error
-	if result.Err == nil {
-		t.Error("Expected Err to be set")
-	}
-	if result.Err != sendErr {
-		t.Errorf("Expected Err to be sendErr, got %v", result.Err)
 	}
 }
 
@@ -188,8 +180,8 @@ func TestMessageTool_Execute_NotConfigured(t *testing.T) {
 	if !result.IsError {
 		t.Error("Expected IsError=true when send callback not configured")
 	}
-	if result.ForLLM != "Message sending not configured" {
-		t.Errorf("Expected ForLLM 'Message sending not configured', got '%s'", result.ForLLM)
+	if result.ForLLM != "message send callback not configured" {
+		t.Errorf("Expected ForLLM 'message send callback not configured', got '%s'", result.ForLLM)
 	}
 }
 

@@ -53,10 +53,11 @@ func (p *HTTPProvider) Chat(ctx context.Context, messages []Message, tools []Too
 		return nil, fmt.Errorf("API base not configured")
 	}
 
-	// Strip provider prefix from model name (e.g., moonshot/kimi-k2.5 -> kimi-k2.5, groq/openai/gpt-oss-120b -> openai/gpt-oss-120b, ollama/qwen2.5:14b -> qwen2.5:14b)
+	// Strip provider prefix from model name (e.g., moonshot/kimi-k2.5 -> kimi-k2.5,
+	// openrouter/anthropic/claude-3-opus -> anthropic/claude-3-opus).
 	if idx := strings.Index(model, "/"); idx != -1 {
 		prefix := model[:idx]
-		if prefix == "moonshot" || prefix == "nvidia" || prefix == "groq" || prefix == "ollama" {
+		if prefix == "moonshot" || prefix == "nvidia" || prefix == "groq" || prefix == "ollama" || prefix == "openrouter" {
 			model = model[idx+1:]
 		}
 	}
@@ -269,6 +270,96 @@ func createCodexAuthProvider() (LLMProvider, error) {
 	return NewCodexProviderWithTokenSource(cred.AccessToken, cred.AccountID, createCodexTokenSource()), nil
 }
 
+// CreateProviderForFallback builds an LLMProvider targeting a specific provider by name.
+// Used by the Council to switch to a different provider when the primary fails.
+// Credentials are read from cfg but the provider name and model are taken from the arguments.
+func CreateProviderForFallback(cfg *config.Config, providerName, model string) (LLMProvider, error) {
+	if providerName == "" || model == "" {
+		return nil, fmt.Errorf("council fallback: provider name and model must both be set")
+	}
+	workspace := cfg.WorkspacePath()
+	pn := strings.ToLower(providerName)
+
+	switch pn {
+	case "groq":
+		if cfg.Providers.Groq.APIKey != "" {
+			apiBase := cfg.Providers.Groq.APIBase
+			if apiBase == "" {
+				apiBase = "https://api.groq.com/openai/v1"
+			}
+			return NewHTTPProvider(cfg.Providers.Groq.APIKey, apiBase, cfg.Providers.Groq.Proxy), nil
+		}
+	case "openai", "gpt":
+		if cfg.Providers.OpenAI.APIKey != "" {
+			apiBase := cfg.Providers.OpenAI.APIBase
+			if apiBase == "" {
+				apiBase = "https://api.openai.com/v1"
+			}
+			return NewHTTPProvider(cfg.Providers.OpenAI.APIKey, apiBase, cfg.Providers.OpenAI.Proxy), nil
+		}
+	case "anthropic", "claude":
+		if cfg.Providers.Anthropic.APIKey != "" {
+			apiBase := cfg.Providers.Anthropic.APIBase
+			if apiBase == "" {
+				apiBase = "https://api.anthropic.com/v1"
+			}
+			return NewHTTPProvider(cfg.Providers.Anthropic.APIKey, apiBase, cfg.Providers.Anthropic.Proxy), nil
+		}
+	case "openrouter":
+		if cfg.Providers.OpenRouter.APIKey != "" {
+			apiBase := cfg.Providers.OpenRouter.APIBase
+			if apiBase == "" {
+				apiBase = "https://openrouter.ai/api/v1"
+			}
+			return NewHTTPProvider(cfg.Providers.OpenRouter.APIKey, apiBase, cfg.Providers.OpenRouter.Proxy), nil
+		}
+	case "gemini", "google":
+		if cfg.Providers.Gemini.APIKey != "" {
+			apiBase := cfg.Providers.Gemini.APIBase
+			if apiBase == "" {
+				apiBase = "https://generativelanguage.googleapis.com/v1beta"
+			}
+			return NewHTTPProvider(cfg.Providers.Gemini.APIKey, apiBase, cfg.Providers.Gemini.Proxy), nil
+		}
+	case "zhipu", "glm":
+		if cfg.Providers.Zhipu.APIKey != "" {
+			apiBase := cfg.Providers.Zhipu.APIBase
+			if apiBase == "" {
+				apiBase = "https://open.bigmodel.cn/api/paas/v4"
+			}
+			return NewHTTPProvider(cfg.Providers.Zhipu.APIKey, apiBase, cfg.Providers.Zhipu.Proxy), nil
+		}
+	case "deepseek":
+		if cfg.Providers.DeepSeek.APIKey != "" {
+			apiBase := cfg.Providers.DeepSeek.APIBase
+			if apiBase == "" {
+				apiBase = "https://api.deepseek.com/v1"
+			}
+			return NewHTTPProvider(cfg.Providers.DeepSeek.APIKey, apiBase, cfg.Providers.DeepSeek.Proxy), nil
+		}
+	case "nvidia":
+		if cfg.Providers.Nvidia.APIKey != "" {
+			apiBase := cfg.Providers.Nvidia.APIBase
+			if apiBase == "" {
+				apiBase = "https://integrate.api.nvidia.com/v1"
+			}
+			return NewHTTPProvider(cfg.Providers.Nvidia.APIKey, apiBase, cfg.Providers.Nvidia.Proxy), nil
+		}
+	case "claude-cli", "claude-code", "claudecode":
+		if workspace == "" {
+			workspace = "."
+		}
+		return NewClaudeCliProvider(workspace), nil
+	case "codex-cli", "codex-code":
+		if workspace == "" {
+			workspace = "."
+		}
+		return NewCodexCliProvider(workspace), nil
+	}
+
+	return nil, fmt.Errorf("council fallback: no API key configured for provider %q (model: %s)", providerName, model)
+}
+
 func CreateProvider(cfg *config.Config) (LLMProvider, error) {
 	model := cfg.Agents.Defaults.Model
 	providerName := strings.ToLower(cfg.Agents.Defaults.Provider)
@@ -363,6 +454,29 @@ func CreateProvider(cfg *config.Config) (LLMProvider, error) {
 				workspace = "."
 			}
 			return NewCodexCliProvider(workspace), nil
+
+		// ── Enterprise / cloud-native providers ──────────────────────────
+		case "vertex", "vertex_ai", "vertexai":
+			v := cfg.Providers.Vertex
+			if v.ProjectID == "" {
+				return nil, fmt.Errorf("vertex: project_id is required — set providers.vertex.project_id in config")
+			}
+			return NewVertexProvider(v.ProjectID, v.Location, v.Grounding), nil
+
+		case "bedrock", "aws_bedrock", "aws":
+			b := cfg.Providers.Bedrock
+			p, err := NewBedrockProvider(b.Region, b.AccessKeyID, b.SecretAccessKey, b.SessionToken, b.Profile)
+			if err != nil {
+				return nil, err
+			}
+			return p, nil
+
+		case "azure_openai", "azure", "azureopenai":
+			a := cfg.Providers.AzureOpenAI
+			if a.Endpoint == "" || a.Deployment == "" {
+				return nil, fmt.Errorf("azure_openai: endpoint and deployment are required — set providers.azure_openai.endpoint and .deployment in config")
+			}
+			return NewAzureOpenAIProvider(a.Endpoint, a.Deployment, a.APIKey, a.APIVersion), nil
 		case "deepseek":
 			if cfg.Providers.DeepSeek.APIKey != "" {
 				apiKey = cfg.Providers.DeepSeek.APIKey

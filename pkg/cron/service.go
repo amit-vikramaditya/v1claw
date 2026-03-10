@@ -9,10 +9,14 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/adhocore/gronx"
 )
+
+// cronIDSeq is the atomic fallback counter for generateID when crypto/rand is unavailable.
+var cronIDSeq int64
 
 type CronSchedule struct {
 	Kind    string `json:"kind"`
@@ -65,6 +69,10 @@ type CronService struct {
 	running   bool
 	stopChan  chan struct{}
 	gronx     *gronx.Gronx
+	// activeJobs counts in-flight executeJobByID() calls.
+	// Load() waits on this to prevent loadStore() from marking
+	// actively-running jobs as "interrupted" (crash-recovery path).
+	activeJobs sync.WaitGroup
 }
 
 func NewCronService(storePath string, onJob JobHandler) *CronService {
@@ -174,6 +182,10 @@ func (cs *CronService) checkJobs() {
 }
 
 func (cs *CronService) executeJobByID(jobID string) {
+	// Track this execution so Load() can wait before reloading the store.
+	cs.activeJobs.Add(1)
+	defer cs.activeJobs.Done()
+
 	startTime := time.Now().UnixMilli()
 
 	cs.mu.RLock()
@@ -301,6 +313,10 @@ func (cs *CronService) getNextWakeMS() *int64 {
 }
 
 func (cs *CronService) Load() error {
+	// Wait for in-flight jobs before reloading the store.
+	// loadStore() resets "running" entries to "interrupted" (crash recovery);
+	// doing that while a job is actively executing would corrupt its state.
+	cs.activeJobs.Wait()
 	cs.mu.Lock()
 	defer cs.mu.Unlock()
 	return cs.loadStore()
@@ -534,11 +550,13 @@ func (cs *CronService) Status() map[string]interface{} {
 }
 
 func generateID() string {
-	// Use crypto/rand for better uniqueness under concurrent access
+	// Use crypto/rand for high-entropy IDs.
 	b := make([]byte, 8)
 	if _, err := rand.Read(b); err != nil {
-		// Fallback to time-based if crypto/rand fails
-		return fmt.Sprintf("%d", time.Now().UnixNano())
+		// Fallback: nanosecond timestamp + atomic counter avoids collisions
+		// even when multiple goroutines call this simultaneously.
+		seq := atomic.AddInt64(&cronIDSeq, 1)
+		return fmt.Sprintf("%d_%d", time.Now().UnixNano(), seq)
 	}
 	return hex.EncodeToString(b)
 }

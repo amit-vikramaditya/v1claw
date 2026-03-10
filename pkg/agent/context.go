@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/amit-vikramaditya/v1claw/pkg/epistemology"
@@ -15,12 +16,22 @@ import (
 	"github.com/amit-vikramaditya/v1claw/pkg/tools"
 )
 
+// systemPromptCacheTTL is how long the built system prompt is considered fresh.
+// During rapid tool loops (multiple LLM iterations per user message) the workspace
+// files don't change, so re-reading them on every iteration is pure waste.
+const systemPromptCacheTTL = 2 * time.Second
+
 type ContextBuilder struct {
 	workspace    string
 	skillsLoader *skills.SkillsLoader
 	memory       *MemoryStore
 	tools        *tools.ToolRegistry // Direct reference to tool registry
 	graphStore   epistemology.GraphStore
+
+	// System-prompt cache: avoids redundant disk reads across tool loop iterations.
+	promptCacheMu     sync.RWMutex
+	promptCacheValue  string
+	promptCacheBuiltAt time.Time
 }
 
 func getGlobalConfigDir() string {
@@ -139,6 +150,31 @@ func (cb *ContextBuilder) buildToolsSection() string {
 }
 
 func (cb *ContextBuilder) BuildSystemPrompt() string {
+	// Fast path: return cached prompt if it is still fresh.
+	cb.promptCacheMu.RLock()
+	if time.Since(cb.promptCacheBuiltAt) < systemPromptCacheTTL && cb.promptCacheValue != "" {
+		cached := cb.promptCacheValue
+		cb.promptCacheMu.RUnlock()
+		return cached
+	}
+	cb.promptCacheMu.RUnlock()
+
+	// Slow path: rebuild from disk and update cache.
+	cb.promptCacheMu.Lock()
+	defer cb.promptCacheMu.Unlock()
+	// Double-check after acquiring write lock (another goroutine may have rebuilt).
+	if time.Since(cb.promptCacheBuiltAt) < systemPromptCacheTTL && cb.promptCacheValue != "" {
+		return cb.promptCacheValue
+	}
+
+	prompt := cb.buildSystemPrompt()
+	cb.promptCacheValue = prompt
+	cb.promptCacheBuiltAt = time.Now()
+	return prompt
+}
+
+// buildSystemPrompt is the actual (uncached) implementation.
+func (cb *ContextBuilder) buildSystemPrompt() string {
 	parts := []string{}
 
 	// Core identity section
@@ -193,6 +229,14 @@ The following skills extend your capabilities. To use a skill, read its SKILL.md
 
 	// Join with "---" separator
 	return strings.Join(parts, "\n\n---\n\n")
+}
+
+// InvalidatePromptCache forces the next BuildSystemPrompt call to rebuild from disk.
+// Call this after any tool modifies workspace files (MEMORY.md, SOUL.md, etc.)
+func (cb *ContextBuilder) InvalidatePromptCache() {
+	cb.promptCacheMu.Lock()
+	cb.promptCacheBuiltAt = time.Time{}
+	cb.promptCacheMu.Unlock()
 }
 
 func (cb *ContextBuilder) LoadBootstrapFiles() string {

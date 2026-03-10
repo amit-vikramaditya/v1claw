@@ -14,9 +14,13 @@ func extractToolCallsFromText(text string) []ToolCall {
 		return nil
 	}
 
-	// Safety: reject tool calls embedded deep in text content (likely injection).
-	// Legitimate tool calls from CLI providers appear near the start or end of output.
-	if start > 500 {
+	// Safety: reject tool calls buried deep inside text content (likely prompt
+	// injection from a tool result).  Legitimate tool calls produced by CLI
+	// providers appear near the START of the output (short answer) or near the
+	// END (model includes an explanation before the JSON block).  We only reject
+	// when the JSON is more than 500 chars from BOTH ends.
+	const edgeWindow = 500
+	if start > edgeWindow && (len(text)-start) > edgeWindow {
 		return nil
 	}
 

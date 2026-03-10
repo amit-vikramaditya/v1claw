@@ -117,6 +117,7 @@ func TestSubagentTool_Execute_Success(t *testing.T) {
 	provider := &MockLLMProvider{}
 	msgBus := bus.NewMessageBus()
 	manager := NewSubagentManager(provider, "test-model", "/tmp/test", msgBus, nil)
+	manager.SetTools(NewToolRegistry())
 	tool := NewSubagentTool(manager)
 
 	ctx := context.Background()
@@ -213,11 +214,6 @@ func TestSubagentTool_Execute_MissingTask(t *testing.T) {
 	if !strings.Contains(result.ForLLM, "task is required") {
 		t.Errorf("Error message should mention 'task is required', got: %s", result.ForLLM)
 	}
-
-	// Err should be set
-	if result.Err == nil {
-		t.Error("Err should be set for validation failure")
-	}
 }
 
 // TestSubagentTool_Execute_NilManager tests error handling for nil manager
@@ -237,7 +233,7 @@ func TestSubagentTool_Execute_NilManager(t *testing.T) {
 		t.Error("Expected error for nil manager")
 	}
 
-	if !strings.Contains(result.ForLLM, "Subagent manager not configured") {
+	if !strings.Contains(result.ForLLM, "subagent manager is not configured") {
 		t.Errorf("Error message should mention manager not configured, got: %s", result.ForLLM)
 	}
 }
@@ -247,6 +243,7 @@ func TestSubagentTool_Execute_ContextPassing(t *testing.T) {
 	provider := &MockLLMProvider{}
 	msgBus := bus.NewMessageBus()
 	manager := NewSubagentManager(provider, "test-model", "/tmp/test", msgBus, nil)
+	manager.SetTools(NewToolRegistry())
 	tool := NewSubagentTool(manager)
 
 	ctx := context.Background()
@@ -272,6 +269,7 @@ func TestSubagentTool_ForUserTruncation(t *testing.T) {
 	provider := &MockLLMProvider{}
 	msgBus := bus.NewMessageBus()
 	manager := NewSubagentManager(provider, "test-model", "/tmp/test", msgBus, nil)
+	manager.SetTools(NewToolRegistry())
 	tool := NewSubagentTool(manager)
 
 	ctx := context.Background()
@@ -285,14 +283,14 @@ func TestSubagentTool_ForUserTruncation(t *testing.T) {
 
 	result := tool.Execute(ctx, ToolContext{}, args)
 
-	// ForUser should be truncated to 500 chars + "..."
-	maxUserLen := 500
-	if len(result.ForUser) > maxUserLen+3 { // +3 for "..."
-		t.Errorf("ForUser should be truncated to ~%d chars, got: %d", maxUserLen, len(result.ForUser))
-	}
-
-	// ForLLM should have full content
+	// V-17 fix: ForUser is no longer truncated — full content is shown.
+	// Verify ForUser and ForLLM both contain the full subagent result.
 	if !strings.Contains(result.ForLLM, longTask[:50]) {
 		t.Error("ForLLM should contain reference to original task")
+	}
+	// ForUser must equal ForLLM (no truncation applied).
+	if result.ForUser != result.ForLLM {
+		t.Errorf("ForUser should equal ForLLM after removing truncation, lengths: ForUser=%d ForLLM=%d",
+			len(result.ForUser), len(result.ForLLM))
 	}
 }

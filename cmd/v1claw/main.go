@@ -42,6 +42,7 @@ import (
 	"github.com/amit-vikramaditya/v1claw/pkg/logger"
 	"github.com/amit-vikramaditya/v1claw/pkg/migrate"
 	"github.com/amit-vikramaditya/v1claw/pkg/permissions"
+	"github.com/amit-vikramaditya/v1claw/pkg/proactive"
 	"github.com/amit-vikramaditya/v1claw/pkg/providers"
 	"github.com/amit-vikramaditya/v1claw/pkg/queue"
 	"github.com/amit-vikramaditya/v1claw/pkg/skills"
@@ -144,8 +145,12 @@ func main() {
 	command := os.Args[1]
 
 	switch command {
-	case "onboard", "configure":
+	case "onboard":
+		onboardCmd()
+	case "configure":
 		configureCmd()
+	case "doctor":
+		doctorCmd()
 	case "agent":
 		agentCmd()
 	case "client":
@@ -220,20 +225,31 @@ func main() {
 
 func printHelp() {
 	fmt.Printf("%s v1claw - V1 Personal AI Assistant v%s\n\n", logo, version)
+
+	fmt.Println(titleStyle.Render("  ✨ First time here?"))
+	fmt.Printf("     %s\n\n", stepStyle.Render("Run:  v1claw onboard   ← 2-minute setup wizard"))
+
 	fmt.Println("Usage: v1claw <command>")
 	fmt.Println()
-	fmt.Println("Commands:")
-	fmt.Println("  onboard     Initialize v1claw configuration and workspace")
-	fmt.Println("  configure   Reconfigure settings (Workspace, Models, Identity) interactively")
-	fmt.Println("  agent       Interact with the agent directly")
+	fmt.Println("Getting started:")
+	fmt.Println("  onboard     Guided setup wizard — start here if you're new")
+	fmt.Println("  doctor      Check that everything is configured and working")
+	fmt.Println()
+	fmt.Println("Daily use:")
+	fmt.Println("  agent       Chat with your AI assistant")
 	fmt.Println("  client      Connect to a remote V1Claw gateway")
-	fmt.Println("  auth        Manage authentication (login, logout, status)")
 	fmt.Println("  gateway     Start V1 gateway")
 	fmt.Println("  status      Show V1 status")
+	fmt.Println()
+	fmt.Println("Management:")
+	fmt.Println("  configure   Change settings (workspace, model, channels, tools)")
+	fmt.Println("  skills      Manage skills  (install, list, remove)")
 	fmt.Println("  cron        Manage scheduled tasks")
+	fmt.Println("  auth        Manage authentication (login, logout, status)")
 	fmt.Println("  migrate     Migrate from OpenClaw to V1Claw")
-	fmt.Println("  skills      Manage skills (install, list, remove)")
 	fmt.Println("  version     Show version information")
+	fmt.Println()
+	fmt.Printf("%s\n", stepStyle.Render("  Tip: run  v1claw agent -m \"your question\"  to ask something quickly."))
 }
 
 func expandHome(path string) string {
@@ -318,6 +334,8 @@ func setProviderKey(cfg *config.Config, provider, key string) {
 		cfg.Providers.Nvidia.APIKey = key
 	case "github_copilot":
 		cfg.Providers.GitHubCopilot.APIKey = key
+	case "azure_openai", "azure":
+		cfg.Providers.AzureOpenAI.APIKey = key
 	}
 }
 
@@ -507,6 +525,21 @@ func agentCmd() {
 }
 
 func interactiveMode(agentLoop *agent.AgentLoop, sessionKey string) {
+	// Create a cancellable context so in-progress LLM calls are interrupted
+	// immediately when the user presses Ctrl+C (SIGINT).
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, os.Interrupt)
+	defer signal.Stop(sigCh)
+	go func() {
+		select {
+		case <-sigCh:
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
+
 	prompt := fmt.Sprintf("%s You: ", logo)
 
 	rl, err := readline.NewEx(&readline.Config{
@@ -546,7 +579,6 @@ func interactiveMode(agentLoop *agent.AgentLoop, sessionKey string) {
 			return
 		}
 
-		ctx := context.Background()
 		response, err := agentLoop.ProcessDirect(ctx, input, sessionKey)
 		if err != nil {
 			fmt.Printf("Error: %v\n", err)
@@ -558,6 +590,20 @@ func interactiveMode(agentLoop *agent.AgentLoop, sessionKey string) {
 }
 
 func simpleInteractiveMode(agentLoop *agent.AgentLoop, sessionKey string) {
+	// Same signal-aware context as interactiveMode so Ctrl+C cancels in-flight calls.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, os.Interrupt)
+	defer signal.Stop(sigCh)
+	go func() {
+		select {
+		case <-sigCh:
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
+
 	reader := bufio.NewReader(os.Stdin)
 	for {
 		fmt.Print(fmt.Sprintf("%s You: ", logo))
@@ -581,7 +627,6 @@ func simpleInteractiveMode(agentLoop *agent.AgentLoop, sessionKey string) {
 			return
 		}
 
-		ctx := context.Background()
 		response, err := agentLoop.ProcessDirect(ctx, input, sessionKey)
 		if err != nil {
 			fmt.Printf("Error: %v\n", err)
@@ -1093,6 +1138,11 @@ func gatewayCmd() {
 		}
 	}
 
+	// Root context for the entire gateway lifetime.  Cancelled on Ctrl+C / SIGTERM
+	// so every downstream goroutine (cron, heartbeat, agent, channels …) stops cleanly.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	cfg, err := loadConfig()
 	if err != nil {
 		fmt.Printf("Error loading config: %v\n", err)
@@ -1175,7 +1225,7 @@ func gatewayCmd() {
 
 	// Setup cron tool and service
 	execTimeout := time.Duration(cfg.Tools.Cron.ExecTimeoutMinutes) * time.Minute
-	cronService := setupCronTool(agentLoop, msgBus, cfg.WorkspacePath(), cfg.Agents.Defaults.RestrictToWorkspace, execTimeout)
+	cronService := setupCronTool(ctx, agentLoop, msgBus, cfg.WorkspacePath(), cfg.Agents.Defaults.RestrictToWorkspace, execTimeout)
 
 	heartbeatService := heartbeat.NewHeartbeatService(
 		cfg.WorkspacePath(),
@@ -1184,13 +1234,38 @@ func gatewayCmd() {
 	)
 	heartbeatService.SetBus(msgBus)
 	heartbeatService.SetProactiveEngine(agentLoop.ProactiveEngine())
+
+	// Wire proactive suggestion delivery to the last active user channel.
+	if eng := agentLoop.ProactiveEngine(); eng != nil {
+		eng.SetHandler(func(ctx context.Context, suggestion proactive.Suggestion) {
+			lastChannel := state.NewManager(cfg.WorkspacePath()).GetLastChannel()
+			if lastChannel == "" {
+				return
+			}
+			parts := strings.SplitN(lastChannel, ":", 2)
+			if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+				return
+			}
+			// Skip internal channels
+			if parts[0] == "cli" || parts[0] == "system" || parts[0] == "subagent" {
+				return
+			}
+			msgBus.PublishOutbound(bus.OutboundMessage{
+				Channel: parts[0],
+				ChatID:  parts[1],
+				Content: fmt.Sprintf("💡 %s", suggestion.Message),
+			})
+		})
+	}
+
 	heartbeatService.SetHandler(func(prompt, channel, chatID string) *tools.ToolResult {
 		// Use cli:direct as fallback if no valid channel
 		if channel == "" || chatID == "" {
 			channel, chatID = "cli", "direct"
 		}
-		// Use ProcessHeartbeat - no session history, each heartbeat is independent
-		response, err := agentLoop.ProcessHeartbeat(context.Background(), prompt, channel, chatID)
+		// Use ProcessHeartbeat - no session history, each heartbeat is independent.
+		// ctx is the gateway lifetime context — cancelled on shutdown.
+		response, err := agentLoop.ProcessHeartbeat(ctx, prompt, channel, chatID)
 		if err != nil {
 			return tools.ErrorResult(fmt.Sprintf("Heartbeat error: %v", err))
 		}
@@ -1307,9 +1382,6 @@ func gatewayCmd() {
 
 	fmt.Printf("✓ Gateway started on %s:%d\n", cfg.Gateway.Host, cfg.Gateway.Port)
 	fmt.Println("Press Ctrl+C to stop")
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 
 	if err := cronService.Start(); err != nil {
 		fmt.Printf("Error starting cron service: %v\n", err)
@@ -1839,7 +1911,7 @@ func getConfigPath() string {
 	return filepath.Join(home, ".v1claw", "config.json")
 }
 
-func setupCronTool(agentLoop *agent.AgentLoop, msgBus *bus.MessageBus, workspace string, restrict bool, execTimeout time.Duration) *cron.CronService {
+func setupCronTool(ctx context.Context, agentLoop *agent.AgentLoop, msgBus *bus.MessageBus, workspace string, restrict bool, execTimeout time.Duration) *cron.CronService {
 	cronStorePath := filepath.Join(workspace, "cron", "jobs.json")
 
 	// Create cron service
@@ -1849,9 +1921,10 @@ func setupCronTool(agentLoop *agent.AgentLoop, msgBus *bus.MessageBus, workspace
 	cronTool := tools.NewCronTool(cronService, agentLoop, msgBus, workspace, restrict, execTimeout)
 	agentLoop.RegisterTool(cronTool)
 
-	// Set the onJob handler
+	// Set the onJob handler — use the gateway lifetime context so cron jobs
+	// are cancelled when the process shuts down.
 	cronService.SetOnJob(func(job *cron.CronJob) (string, error) {
-		result := cronTool.ExecuteJob(context.Background(), job)
+		result := cronTool.ExecuteJob(ctx, job)
 		return result, nil
 	})
 

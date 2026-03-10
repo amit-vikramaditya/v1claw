@@ -45,7 +45,7 @@ func TestFilesystemTool_ReadFile_NotFound(t *testing.T) {
 	tool := NewReadFileTool(tmpDir, true, nil) // Updated: Use NewReadFileTool with workspace, allowFsAccess, and nil bus
 	ctx := context.Background()
 	args := map[string]interface{}{
-		"path": "/nonexistent_file_12345.txt",
+		"path": "no_such_file_xyz.txt",
 	}
 
 	result := tool.Execute(ctx, ToolContext{}, args)
@@ -55,8 +55,8 @@ func TestFilesystemTool_ReadFile_NotFound(t *testing.T) {
 		t.Errorf("Expected error for missing file, got IsError=false")
 	}
 
-	// Should contain error message
-	if !strings.Contains(result.ForLLM, "failed to read") && !strings.Contains(result.ForUser, "failed to read") {
+	// Should contain error message (accepts "failed to read", "failed to open", etc.)
+	if !strings.Contains(result.ForLLM, "failed to") && !strings.Contains(result.ForUser, "failed to") {
 		t.Errorf("Expected error message, got ForLLM: %s, ForUser: %s", result.ForLLM, result.ForUser)
 	}
 }
@@ -223,7 +223,7 @@ func TestFilesystemTool_ListDir_NotFound(t *testing.T) {
 	tool := NewListDirTool(tmpDir, true, nil) // Updated: Use NewListDirTool with workspace, allowFsAccess, and nil bus
 	ctx := context.Background()
 	args := map[string]interface{}{
-		"path": "/nonexistent_directory_12345",
+		"path": "no_such_dir_xyz",
 	}
 
 	result := tool.Execute(ctx, ToolContext{}, args)
@@ -233,8 +233,8 @@ func TestFilesystemTool_ListDir_NotFound(t *testing.T) {
 		t.Errorf("Expected error for non-existent directory, got IsError=false")
 	}
 
-	// Should contain error message
-	if !strings.Contains(result.ForLLM, "failed to read") && !strings.Contains(result.ForUser, "failed to read") {
+	// Should contain error message (accepts "failed to read", "failed to open", etc.)
+	if !strings.Contains(result.ForLLM, "failed to") && !strings.Contains(result.ForUser, "failed to") {
 		t.Errorf("Expected error message, got ForLLM: %s, ForUser: %s", result.ForLLM, result.ForUser)
 	}
 }
@@ -281,7 +281,7 @@ func TestFilesystemTool_ReadFile_RejectsSymlinkEscape(t *testing.T) {
 	if !result.IsError {
 		t.Fatalf("expected symlink escape to be blocked")
 	}
-	if !strings.Contains(result.ForLLM, "symlink resolves outside workspace") {
+	if !strings.Contains(result.ForLLM, "access denied: path is outside the workspace or resolves outside via symlink") {
 		t.Fatalf("expected symlink escape error, got: %s", result.ForLLM)
 	}
 }

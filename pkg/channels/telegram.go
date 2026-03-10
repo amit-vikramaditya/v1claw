@@ -39,6 +39,7 @@ type TelegramChannel struct {
 	stopThinking sync.Map // chatID -> thinkingCancel
 	authOTP      string
 	authMu       sync.Mutex
+	startedAt    time.Time // set at Start(); messages older than this are discarded
 }
 
 type thinkingCancel struct {
@@ -104,6 +105,10 @@ func (c *TelegramChannel) SetTranscriber(transcriber *voice.GroqTranscriber) {
 func (c *TelegramChannel) Start(ctx context.Context) error {
 	logger.InfoC("telegram", "Starting Telegram bot (polling mode)...")
 
+	// Record startup time. Any message with a Telegram timestamp before this
+	// moment is a stale/replayed update and will be discarded in handleMessage.
+	c.startedAt = time.Now()
+
 	updates, err := c.bot.UpdatesViaLongPolling(ctx, &telego.GetUpdatesParams{
 		Timeout: 30,
 	})
@@ -117,10 +122,29 @@ func (c *TelegramChannel) Start(ctx context.Context) error {
 	}
 
 	bh.HandleMessage(func(ctx *th.Context, message telego.Message) error {
+		// /help is only available to authorized users.
+		if !c.isAuthorized(&message) {
+			return nil
+		}
 		c.commands.Help(ctx, message)
 		return nil
 	}, th.CommandEqual("help"))
+
 	bh.HandleMessage(func(ctx *th.Context, message telego.Message) error {
+		// /start triggers OTP prompt if not yet paired, otherwise greets the user.
+		if c.authOTP != "" {
+			c.authMu.Lock()
+			otpHint := c.authOTP
+			c.authMu.Unlock()
+			if otpHint != "" {
+				c.bot.SendMessage(ctx, tu.Message(telego.ChatID{ID: message.Chat.ID},
+					fmt.Sprintf("🔒 This bot is not yet paired. Enter the 6-digit OTP shown on the server console to link your account.")))
+				return nil
+			}
+		}
+		if !c.isAuthorized(&message) {
+			return nil
+		}
 		return c.commands.Start(ctx, message)
 	}, th.CommandEqual("start"))
 
@@ -212,6 +236,47 @@ func (c *TelegramChannel) Send(ctx context.Context, msg bus.OutboundMessage) err
 	return nil
 }
 
+// isAuthorized checks whether a Telegram message should be processed.
+// It handles three cases:
+//  1. Message is stale (sent before gateway started) — always discard.
+//  2. OTP pairing is in progress — only accept the exact OTP code.
+//  3. allow_from list is configured — check membership.
+func (c *TelegramChannel) isAuthorized(message *telego.Message) bool {
+	if message == nil {
+		return false
+	}
+	// Discard messages that were sent before this gateway instance started.
+	// This prevents old Telegram updates from being replayed on every restart.
+	msgTime := time.Unix(int64(message.Date), 0)
+	if !c.startedAt.IsZero() && msgTime.Before(c.startedAt.Add(-5*time.Second)) {
+		logger.DebugCF("telegram", "Discarding stale message from before gateway start", map[string]interface{}{
+			"msg_time":   msgTime.Format(time.RFC3339),
+			"started_at": c.startedAt.Format(time.RFC3339),
+		})
+		return false
+	}
+
+	user := message.From
+	if user == nil {
+		return false
+	}
+	senderID := fmt.Sprintf("%d", user.ID)
+	if user.Username != "" {
+		senderID = fmt.Sprintf("%d|%s", user.ID, user.Username)
+	}
+
+	// During OTP pairing, no message is "authorized" for normal handling —
+	// the OTP handler in handleMessage takes care of the pairing flow.
+	c.authMu.Lock()
+	otpActive := c.authOTP != ""
+	c.authMu.Unlock()
+	if otpActive {
+		return false
+	}
+
+	return c.IsAllowed(senderID)
+}
+
 func (c *TelegramChannel) handleMessage(ctx context.Context, message *telego.Message) error {
 	if message == nil {
 		return fmt.Errorf("message is nil")
@@ -222,45 +287,53 @@ func (c *TelegramChannel) handleMessage(ctx context.Context, message *telego.Mes
 		return fmt.Errorf("message sender (user) is nil")
 	}
 
+	// Discard stale messages replayed from before this gateway started.
+	msgTime := time.Unix(int64(message.Date), 0)
+	if !c.startedAt.IsZero() && msgTime.Before(c.startedAt.Add(-5*time.Second)) {
+		logger.DebugCF("telegram", "Discarding stale replayed message", map[string]interface{}{
+			"msg_time": msgTime.Format(time.RFC3339),
+			"user_id":  user.ID,
+		})
+		return nil
+	}
+
 	senderID := fmt.Sprintf("%d", user.ID)
 	if user.Username != "" {
 		senderID = fmt.Sprintf("%d|%s", user.ID, user.Username)
 	}
 
-	// Try OTP verification first
+	// OTP pairing: if no users are authorized yet, only accept the correct OTP.
 	c.authMu.Lock()
 	if c.authOTP != "" {
 		text := strings.TrimSpace(message.Text)
 		if text == c.authOTP {
-			// Success
+			// Pairing success — clear OTP, persist, and grant access.
 			c.authOTP = ""
 			c.authMu.Unlock()
 
-			// Add to config in memory
 			c.config.Channels.Telegram.AllowFrom = append(c.config.Channels.Telegram.AllowFrom, senderID)
-
-			// Update live BaseChannel state so IsAllowed works
 			c.AddAllowedUser(senderID)
 
-			// Save to disk
 			home, _ := os.UserHomeDir()
 			configPath := filepath.Join(home, ".v1claw", "config.json")
 			if err := config.SaveConfig(configPath, c.config); err != nil {
 				logger.ErrorCF("telegram", "Failed to save config after OTP auth", map[string]interface{}{"error": err.Error()})
 			}
 
-			c.bot.SendMessage(ctx, tu.Message(telego.ChatID{ID: message.Chat.ID}, "✅ Successfully authenticated! I am now bound to your account and will only respond to you."))
+			c.bot.SendMessage(ctx, tu.Message(telego.ChatID{ID: message.Chat.ID},
+				"✅ Paired successfully! This bot is now bound exclusively to your account. Only you can send it messages."))
 			return nil
 		}
 
 		c.authMu.Unlock()
-		logger.DebugCF("telegram", "Discarded unauthorized message during OTP lock", map[string]interface{}{})
-		c.bot.SendMessage(ctx, tu.Message(telego.ChatID{ID: message.Chat.ID}, "🔒 Unauthorized. Please provide the 6-digit OTP printed on the server console to bind this bot."))
+		logger.DebugCF("telegram", "Wrong OTP attempt during pairing", map[string]interface{}{"user_id": user.ID})
+		c.bot.SendMessage(ctx, tu.Message(telego.ChatID{ID: message.Chat.ID},
+			"🔒 Not paired. Enter the 6-digit OTP shown on the server console to link your account."))
 		return nil
 	}
 	c.authMu.Unlock()
 
-	// 检查白名单，避免为被拒绝的用户下载附件
+	// Enforce allow_from list.
 	if !c.IsAllowed(senderID) {
 		logger.DebugCF("telegram", "Message rejected by allowlist", map[string]interface{}{
 			"user_id": senderID,
@@ -321,10 +394,10 @@ func (c *TelegramChannel) handleMessage(ctx context.Context, message *telego.Mes
 
 			transcribedText := ""
 			if c.transcriber != nil && c.transcriber.IsAvailable() {
-				ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-				defer cancel()
+				transCtx, transCancel := context.WithTimeout(ctx, 30*time.Second)
+				defer transCancel()
 
-				result, err := c.transcriber.Transcribe(ctx, voicePath)
+				result, err := c.transcriber.Transcribe(transCtx, voicePath)
 				if err != nil {
 					logger.ErrorCF("telegram", "Voice transcription failed", map[string]interface{}{
 						"error": err.Error(),

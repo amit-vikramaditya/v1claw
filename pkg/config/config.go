@@ -222,19 +222,22 @@ type DevicesConfig struct {
 }
 
 type ProvidersConfig struct {
-	Anthropic     ProviderConfig `json:"anthropic"`
-	OpenAI        ProviderConfig `json:"openai"`
-	OpenRouter    ProviderConfig `json:"openrouter"`
-	Groq          ProviderConfig `json:"groq"`
-	Zhipu         ProviderConfig `json:"zhipu"`
-	VLLM          ProviderConfig `json:"vllm"`
-	Gemini        ProviderConfig `json:"gemini"`
-	Nvidia        ProviderConfig `json:"nvidia"`
-	Ollama        ProviderConfig `json:"ollama"`
-	Moonshot      ProviderConfig `json:"moonshot"`
-	ShengSuanYun  ProviderConfig `json:"shengsuanyun"`
-	DeepSeek      ProviderConfig `json:"deepseek"`
-	GitHubCopilot ProviderConfig `json:"github_copilot"`
+	Anthropic     ProviderConfig    `json:"anthropic"`
+	OpenAI        ProviderConfig    `json:"openai"`
+	OpenRouter    ProviderConfig    `json:"openrouter"`
+	Groq          ProviderConfig    `json:"groq"`
+	Zhipu         ProviderConfig    `json:"zhipu"`
+	VLLM          ProviderConfig    `json:"vllm"`
+	Gemini        ProviderConfig    `json:"gemini"`
+	Nvidia        ProviderConfig    `json:"nvidia"`
+	Ollama        ProviderConfig    `json:"ollama"`
+	Moonshot      ProviderConfig    `json:"moonshot"`
+	ShengSuanYun  ProviderConfig    `json:"shengsuanyun"`
+	DeepSeek      ProviderConfig    `json:"deepseek"`
+	GitHubCopilot ProviderConfig    `json:"github_copilot"`
+	Vertex        VertexConfig      `json:"vertex"`
+	Bedrock       BedrockConfig     `json:"bedrock"`
+	AzureOpenAI   AzureOpenAIConfig `json:"azure_openai"`
 }
 
 type ProviderConfig struct {
@@ -243,6 +246,33 @@ type ProviderConfig struct {
 	Proxy       string `json:"proxy,omitempty"`
 	AuthMethod  string `json:"auth_method,omitempty"`
 	ConnectMode string `json:"connect_mode,omitempty"` // only for Github Copilot, `stdio` or `grpc`
+}
+
+// VertexConfig holds Google Cloud Vertex AI settings.
+// Authenticate with: gcloud auth application-default login
+// Or set GOOGLE_APPLICATION_CREDENTIALS to a service account JSON path.
+type VertexConfig struct {
+	ProjectID string `json:"project_id"`
+	Location  string `json:"location"`            // e.g. "us-central1" (default)
+	Grounding bool   `json:"grounding,omitempty"` // enable Google Search grounding
+}
+
+// BedrockConfig holds AWS Bedrock settings.
+// Credentials are read from config, then AWS_ACCESS_KEY_ID env, then ~/.aws/credentials.
+type BedrockConfig struct {
+	Region          string `json:"region,omitempty"`  // e.g. "us-east-1" (default)
+	Profile         string `json:"profile,omitempty"` // ~/.aws/credentials profile
+	AccessKeyID     string `json:"access_key_id,omitempty"`
+	SecretAccessKey string `json:"secret_access_key,omitempty"`
+	SessionToken    string `json:"session_token,omitempty"`
+}
+
+// AzureOpenAIConfig holds Azure OpenAI settings.
+type AzureOpenAIConfig struct {
+	Endpoint   string `json:"endpoint"`   // e.g. https://myco.openai.azure.com
+	Deployment string `json:"deployment"` // deployment name in Azure OpenAI Studio
+	APIKey     string `json:"api_key"`
+	APIVersion string `json:"api_version,omitempty"` // default: 2024-10-21
 }
 
 type GatewayConfig struct {

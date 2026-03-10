@@ -14,15 +14,25 @@ import (
 
 // CodexCliProvider implements LLMProvider by wrapping the codex CLI as a subprocess.
 type CodexCliProvider struct {
-	command   string
-	workspace string
+	command              string
+	workspace            string
+	disableDangerousFlag bool // when true, omit --dangerously-bypass-approvals-and-sandbox
 }
 
-// NewCodexCliProvider creates a new Codex CLI provider.
+// NewCodexCliProvider creates a new Codex CLI provider (autonomous mode).
 func NewCodexCliProvider(workspace string) *CodexCliProvider {
 	return &CodexCliProvider{
 		command:   "codex",
 		workspace: workspace,
+	}
+}
+
+// NewCodexCliProviderSafe creates a provider that omits --dangerously-bypass-approvals-and-sandbox.
+func NewCodexCliProviderSafe(workspace string) *CodexCliProvider {
+	return &CodexCliProvider{
+		command:              "codex",
+		workspace:            workspace,
+		disableDangerousFlag: true,
 	}
 }
 
@@ -37,19 +47,20 @@ func (p *CodexCliProvider) Chat(ctx context.Context, messages []Message, tools [
 	args := []string{
 		"exec",
 		"--json",
-		"--dangerously-bypass-approvals-and-sandbox",
 		"--skip-git-repo-check",
 		"--color", "never",
 	}
-	if model != "" && model != "codex-cli" {
+	if !p.disableDangerousFlag {
+		args = append(args, "--dangerously-bypass-approvals-and-sandbox")
+		logger.DebugC("provider", "Codex CLI invoked with --dangerously-bypass-approvals-and-sandbox (autonomous mode)")
+	}
+	if model != "" && model != "codex-cli" && model != "codex" {
 		args = append(args, "-m", model)
 	}
 	if p.workspace != "" {
 		args = append(args, "-C", p.workspace)
 	}
 	args = append(args, "-") // read prompt from stdin
-
-	logger.WarnC("provider", "Codex CLI invoked with --dangerously-bypass-approvals-and-sandbox — all safety gates bypassed")
 
 	cmd := exec.CommandContext(ctx, p.command, args...)
 	cmd.Stdin = bytes.NewReader([]byte(prompt))

@@ -223,12 +223,18 @@ func (r *Router) dispatch(event Event) {
 
 	// Execute handlers concurrently with a semaphore limit explicitly bounding goroutine creation
 	for _, sub := range matched {
-		// Acquire semaphore BEFORE spawning to prevent unbound goroutine memory bloat
-		r.semaphore <- struct{}{}
 		r.wg.Add(1)
 
 		go func(s *Subscription, e Event) {
 			defer r.wg.Done()
+			// Acquire semaphore inside the goroutine so the dispatch caller is never
+			// blocked.  Use a select so the goroutine exits cleanly on router shutdown
+			// instead of blocking indefinitely when all 100 slots are taken.
+			select {
+			case r.semaphore <- struct{}{}:
+			case <-ctx.Done():
+				return
+			}
 			defer func() { <-r.semaphore }()
 
 			// Create a task-specific context with a timeout derived from the router context

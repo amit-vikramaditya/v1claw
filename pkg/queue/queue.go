@@ -8,10 +8,14 @@ import (
 	"path/filepath"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/amit-vikramaditya/v1claw/pkg/logger"
 )
+
+// jobCounter provides collision-free job IDs within a process lifetime.
+var jobCounter atomic.Int64
 
 // Priority levels for jobs.
 const (
@@ -101,7 +105,7 @@ func (q *Queue) Enqueue(kind string, priority int, payload map[string]interface{
 	}
 
 	job := &Job{
-		ID:          fmt.Sprintf("job_%d", time.Now().UnixNano()),
+		ID:          fmt.Sprintf("job_%d", jobCounter.Add(1)),
 		Kind:        kind,
 		Priority:    priority,
 		Payload:     payload,

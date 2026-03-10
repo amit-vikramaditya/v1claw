@@ -279,6 +279,8 @@ func TestAuthMiddleware_InvalidKey(t *testing.T) {
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
 }
 
+// TestAuthMiddleware_QueryParam verifies that API keys in URL query parameters
+// are rejected (V-20 security fix: keys in query params appear in server logs).
 func TestAuthMiddleware_QueryParam(t *testing.T) {
 	srv, _ := newTestServer(t)
 	srv.apiKey = "secret123"
@@ -291,7 +293,8 @@ func TestAuthMiddleware_QueryParam(t *testing.T) {
 	w := httptest.NewRecorder()
 	handler(w, req)
 
-	assert.Equal(t, http.StatusOK, w.Code)
+	// Query-param auth must be rejected — use Authorization header instead.
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
 }
 
 func TestNewServer_DefaultAddr(t *testing.T) {

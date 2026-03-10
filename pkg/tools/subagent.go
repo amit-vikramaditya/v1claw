@@ -68,8 +68,7 @@ func (t *SubagentTool) Execute(ctx context.Context, tc ToolContext, args map[str
 
 	userContent := fmt.Sprintf("Subagent '%s' completed task in %d iterations.\nResult:\n%s",
 		labelStr, loopResult.Iterations, loopResult.Content)
-	llmContent := fmt.Sprintf("Subagent '%s' completed task in %d iterations.\nResult:\n%s",
-		labelStr, loopResult.Iterations, loopResult.Content)
+	llmContent := userContent
 
 	return &ToolResult{
 		ForLLM:  llmContent,

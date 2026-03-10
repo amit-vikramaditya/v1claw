@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -38,21 +39,32 @@ type AgentLoop struct {
 	workspace      string
 	model          string
 	modelMu        sync.RWMutex // Protects model field for concurrent goroutine access
-	contextWindow  int          // Maximum context window size in tokens
+	contextWindow  int          // Maximum context window size in tokens (max_tokens)
+	temperature    float64      // Sampling temperature read from config
 	maxIterations  int
 	sessions       *session.SessionManager
 	state          *state.Manager
 	contextBuilder *ContextBuilder
 	tools          *tools.ToolRegistry
 	running        atomic.Bool
-	summarizing    sync.Map // Tracks which sessions are currently being summarized
+	summarizing    sync.Map       // Tracks which sessions are currently being summarized
+	summarizeWg    sync.WaitGroup // Waits for in-flight summarizations during Stop
 	channelManager *channels.Manager
 	cooldowns      sync.Map // Tracks provider/model fatigue and cooldown expiration
+
+	// rootCtx / rootCancel — cancelled when Stop() is called.
+	// All goroutines spawned by the agent (summarization, async tools) should
+	// derive their context from rootCtx so they exit cleanly on shutdown.
+	rootCtx    context.Context
+	rootCancel context.CancelFunc
 
 	// Cached council configuration — avoids a config.json disk read on every LLM call.
 	councilEnabled       bool
 	councilFallbackModel string
 	councilMu            sync.RWMutex
+	// Pre-built provider for council cross-provider fallback.
+	// Nil when council is disabled or no fallback provider is configured.
+	fallbackProvider providers.LLMProvider
 
 	// toolTimeout caps per-tool execution to prevent a single hung tool from
 	// blocking the agent indefinitely. Defaults to 5 minutes.
@@ -61,6 +73,22 @@ type AgentLoop struct {
 	// proactiveEngine learns user behavior patterns and suggests routines.
 	// May be nil if initialization fails (non-critical).
 	proactiveEngine *proactive.Engine
+}
+
+// llmOptions returns the LLM call options derived from config.
+// contextWindow falls back to a safe 8192 if the config value is zero.
+func (al *AgentLoop) llmOptions() map[string]interface{} {
+	maxTok := al.contextWindow
+	if maxTok <= 0 {
+		maxTok = 8192
+	}
+	// Trust the configured temperature value unchanged.
+	// DefaultConfig() sets 0.7 so zero here means the user explicitly wants 0
+	// (greedy/deterministic decoding) — we must not silently override it.
+	return map[string]interface{}{
+		"max_tokens":  maxTok,
+		"temperature": al.temperature,
+	}
 }
 
 // getModel returns the current primary model name, safe for concurrent reads.
@@ -93,6 +121,13 @@ func (al *AgentLoop) getCouncilConfig() (enabled bool, fallbackModel string) {
 	return al.councilEnabled, al.councilFallbackModel
 }
 
+// getFallbackProvider returns the pre-built council fallback provider (may be nil).
+func (al *AgentLoop) getFallbackProvider() providers.LLMProvider {
+	al.councilMu.RLock()
+	defer al.councilMu.RUnlock()
+	return al.fallbackProvider
+}
+
 // processOptions configures how a message is processed
 type processOptions struct {
 	SessionKey      string // Session identifier for history/context
@@ -103,6 +138,58 @@ type processOptions struct {
 	EnableSummary   bool   // Whether to trigger summarization
 	SendResponse    bool   // Whether to send response via bus
 	NoHistory       bool   // If true, don't load session history (for heartbeat)
+}
+
+// buildCLIProviders discovers and initializes available CLI workers as LLMProvider instances.
+// It loads user-defined workers from workspace/workers.json and merges with built-in profiles.
+// Only workers whose CLI command is present in PATH are registered.
+func buildCLIProviders(cfg *config.Config, workspace string) map[string]providers.LLMProvider {
+	result := make(map[string]providers.LLMProvider)
+
+	// Load user-defined workers from workspace/workers.json (non-fatal if missing).
+	workers, err := config.LoadCLIWorkers(workspace)
+	if err != nil {
+		logger.WarnCF("agent", "Failed to load CLI workers config", map[string]interface{}{"error": err.Error()})
+		workers = nil
+	}
+
+	// Merge user-defined workers with built-in profiles.
+	profiles := providers.LoadProfilesFromConfig(workers)
+
+	for name, profile := range profiles {
+		// Skip CLIs that are not installed on this machine.
+		if _, err := exec.LookPath(profile.Command); err != nil {
+			continue
+		}
+
+		// Use dedicated providers for claude and codex — they have full JSON output parsing.
+		// When the workspace is sandboxed, omit the dangerous bypass flags.
+		sandboxed := cfg.Workspace.Sandboxed
+		switch name {
+		case "claude":
+			if sandboxed {
+				result[name] = providers.NewClaudeCliProviderSafe(workspace)
+			} else {
+				result[name] = providers.NewClaudeCliProvider(workspace)
+			}
+		case "codex":
+			if sandboxed {
+				result[name] = providers.NewCodexCliProviderSafe(workspace)
+			} else {
+				result[name] = providers.NewCodexCliProvider(workspace)
+			}
+		default:
+			// All other CLIs use their AutonomousCLIWorker profile (handles --yolo, -y, etc.)
+			result[name] = &providers.AutonomousCLIWorker{Profile: profile}
+		}
+
+		logger.InfoCF("agent", "CLI worker registered", map[string]interface{}{
+			"name":    name,
+			"command": profile.Command,
+		})
+	}
+
+	return result
 }
 
 // createToolRegistry creates a tool registry with common tools.
@@ -183,7 +270,8 @@ func NewAgentLoop(cfg *config.Config, msgBus *bus.MessageBus, provider providers
 	toolsRegistry := createToolRegistry(workspace, restrict, cfg, msgBus, graphStore)
 
 	// Create subagent manager with its own tool registry
-	cliProviders := make(map[string]providers.LLMProvider) // This will be loaded from config/discovery later
+	// Discover and register available CLI workers as LLM providers.
+	cliProviders := buildCLIProviders(cfg, workspace)
 	subagentManager := tools.NewSubagentManager(provider, cfg.Agents.Defaults.Model, workspace, msgBus, cliProviders)
 	subagentTools := createToolRegistry(workspace, restrict, cfg, msgBus, graphStore)
 	// Subagent doesn't need spawn/subagent tools to avoid recursion
@@ -202,6 +290,10 @@ func NewAgentLoop(cfg *config.Config, msgBus *bus.MessageBus, provider providers
 	delegateTool := tools.NewDelegateTaskTool(subagentManager)
 	toolsRegistry.Register(delegateTool)
 
+	// Register notify_user tool (main agent only — subagents must not send completion notifications)
+	notifyTool := tools.NewNotifyUserTool()
+	toolsRegistry.Register(notifyTool)
+
 	sessionsManager := session.NewSessionManager(filepath.Join(workspace, "sessions"))
 
 	// Create state manager for atomic state persistence
@@ -212,12 +304,19 @@ func NewAgentLoop(cfg *config.Config, msgBus *bus.MessageBus, provider providers
 	contextBuilder.SetToolsRegistry(toolsRegistry)
 	contextBuilder.SetGraphStore(graphStore)
 
+	// Inject the real BuildMessages function so subagents receive a fully-hydrated
+	// system prompt (identity, memory, skills) instead of the bare stub fallback.
+	subagentManager.SetMessageBuilder(contextBuilder.BuildMessages)
+
+	rootCtx, rootCancel := context.WithCancel(context.Background())
+
 	al := &AgentLoop{
 		bus:                  msgBus,
 		provider:             provider,
 		workspace:            workspace,
 		model:                cfg.Agents.Defaults.Model,
 		contextWindow:        cfg.Agents.Defaults.MaxTokens,
+		temperature:          cfg.Agents.Defaults.Temperature,
 		maxIterations:        cfg.Agents.Defaults.MaxToolIterations,
 		sessions:             sessionsManager,
 		state:                stateManager,
@@ -228,6 +327,8 @@ func NewAgentLoop(cfg *config.Config, msgBus *bus.MessageBus, provider providers
 		councilEnabled:       cfg.Council.Enabled,
 		councilFallbackModel: cfg.Council.FallbackModel,
 		toolTimeout:          5 * time.Minute,
+		rootCtx:              rootCtx,
+		rootCancel:           rootCancel,
 	}
 
 	// Initialize proactive engine for behavior-pattern learning.
@@ -236,6 +337,23 @@ func NewAgentLoop(cfg *config.Config, msgBus *bus.MessageBus, provider providers
 		al.proactiveEngine = eng
 	} else {
 		logger.WarnCF("agent", "Proactive engine init failed (non-fatal)", map[string]interface{}{"error": err.Error()})
+	}
+
+	// Initialize council fallback provider if configured.
+	// Non-fatal: without it, council falls back to using primary provider with fallback model.
+	if cfg.Council.Enabled && cfg.Council.Fallback != "" && cfg.Council.FallbackModel != "" {
+		if fp, err := providers.CreateProviderForFallback(cfg, cfg.Council.Fallback, cfg.Council.FallbackModel); err == nil {
+			al.fallbackProvider = fp
+			logger.InfoCF("agent", "Council fallback provider initialized", map[string]interface{}{
+				"fallback_provider": cfg.Council.Fallback,
+				"fallback_model":    cfg.Council.FallbackModel,
+			})
+		} else {
+			logger.WarnCF("agent", "Council fallback provider init failed (non-fatal)", map[string]interface{}{
+				"provider": cfg.Council.Fallback,
+				"error":    err.Error(),
+			})
+		}
 	}
 
 	return al
@@ -285,6 +403,8 @@ func (al *AgentLoop) Run(ctx context.Context) error {
 
 func (al *AgentLoop) Stop() {
 	al.running.Store(false)
+	al.rootCancel()
+	al.summarizeWg.Wait() // let any in-flight summarizations finish writing
 }
 
 func (al *AgentLoop) RegisterTool(tool tools.Tool) {
@@ -388,13 +508,14 @@ func (al *AgentLoop) processSystemMessage(ctx context.Context, msg bus.InboundMe
 			"chat_id":   msg.ChatID,
 		})
 
-	// Parse origin channel from chat_id (format: "channel:chat_id")
-	var originChannel string
+	// Parse origin channel and chat_id from chat_id field (format: "channel:chat_id")
+	var originChannel, originChatID string
 	if idx := strings.Index(msg.ChatID, ":"); idx > 0 {
 		originChannel = msg.ChatID[:idx]
+		originChatID = msg.ChatID[idx+1:]
 	} else {
-		// Fallback
 		originChannel = "cli"
+		originChatID = msg.ChatID
 	}
 
 	// Extract subagent result from message content
@@ -404,7 +525,7 @@ func (al *AgentLoop) processSystemMessage(ctx context.Context, msg bus.InboundMe
 		content = content[idx+8:] // Extract just the result part
 	}
 
-	// Skip internal channels - only log, don't send to user
+	// Skip internal channels — only log
 	if constants.IsInternalChannel(originChannel) {
 		logger.InfoCF("agent", "Subagent completed (internal channel)",
 			map[string]interface{}{
@@ -415,8 +536,6 @@ func (al *AgentLoop) processSystemMessage(ctx context.Context, msg bus.InboundMe
 		return "", nil
 	}
 
-	// Agent acts as dispatcher only - subagent handles user interaction via message tool
-	// Don't forward result here, subagent should use message tool to communicate with user
 	logger.InfoCF("agent", "Subagent completed",
 		map[string]interface{}{
 			"sender_id":   msg.SenderID,
@@ -424,7 +543,16 @@ func (al *AgentLoop) processSystemMessage(ctx context.Context, msg bus.InboundMe
 			"content_len": len(content),
 		})
 
-	// Agent only logs, does not respond to user
+	// For CLI workers (delegate_task), forward the result directly to the user.
+	// Standard subagents communicate with the user via their own message tool.
+	if strings.HasPrefix(msg.SenderID, "worker:") && al.bus != nil {
+		al.bus.PublishOutbound(bus.OutboundMessage{
+			Channel: originChannel,
+			ChatID:  originChatID,
+			Content: content,
+		})
+	}
+
 	return "", nil
 }
 
@@ -537,8 +665,8 @@ func (al *AgentLoop) runLLMIteration(ctx context.Context, messages []providers.M
 				"model":             al.getModel(),
 				"messages_count":    len(messages),
 				"tools_count":       len(providerToolDefs),
-				"max_tokens":        8192,
-				"temperature":       0.7,
+				"max_tokens":        al.contextWindow,
+				"temperature":       al.temperature,
 				"system_prompt_len": len(messages[0].Content),
 			})
 
@@ -583,10 +711,7 @@ func (al *AgentLoop) runLLMIteration(ctx context.Context, messages []providers.M
 			callModel := currentModel
 
 			if !skipPrimary {
-				response, err = al.provider.Chat(ctx, messages, providerToolDefs, callModel, map[string]interface{}{
-					"max_tokens":  8192,
-					"temperature": 0.7,
-				})
+				response, err = al.provider.Chat(ctx, messages, providerToolDefs, callModel, al.llmOptions())
 			} else {
 				err = fmt.Errorf("council: primary %s skipped due to active cooldown cache", currentModel)
 			}
@@ -599,9 +724,9 @@ func (al *AgentLoop) runLLMIteration(ctx context.Context, messages []providers.M
 
 					isAuthError := strings.Contains(errStr, "401") || strings.Contains(errStr, "403") ||
 						strings.Contains(errStr, "unauthorized") || strings.Contains(errStr, "forbidden")
-					isRateLimit := strings.Contains(errStr, "429") || strings.Contains(errStr, "400") ||
+					isRateLimit := strings.Contains(errStr, "429") ||
 						strings.Contains(errStr, "too many requests") || strings.Contains(errStr, "quota") ||
-						strings.Contains(errStr, "exhausted")
+						strings.Contains(errStr, "exhausted") || strings.Contains(errStr, "rate limit")
 					isOverloaded := strings.Contains(errStr, "503") || strings.Contains(errStr, "timeout") ||
 						strings.Contains(errStr, "service unavailable")
 					isCacheSkip := strings.Contains(errStr, "active cooldown cache")
@@ -620,7 +745,7 @@ func (al *AgentLoop) runLLMIteration(ctx context.Context, messages []providers.M
 								al.cooldowns.Store(currentModel, time.Now().Add(1*time.Minute))
 								notifyMsg = fmt.Sprintf("⚠️ `%s` servers are overloaded (503). Retrying on fallback model (`%s`).", currentModel, councilFallback)
 							}
-							if notifyMsg != "" && opts.SendResponse && !constants.IsInternalChannel(opts.Channel) {
+							if notifyMsg != "" && !constants.IsInternalChannel(opts.Channel) {
 								al.bus.PublishOutbound(bus.OutboundMessage{
 									Channel: opts.Channel,
 									ChatID:  opts.ChatID,
@@ -634,12 +759,14 @@ func (al *AgentLoop) runLLMIteration(ctx context.Context, messages []providers.M
 							})
 						}
 
-						// Execute fallback without mutating any shared field.
+						// Execute fallback using the pre-built fallback provider (correct API endpoint).
 						callModel = councilFallback
-						response, err = al.provider.Chat(ctx, messages, providerToolDefs, callModel, map[string]interface{}{
-							"max_tokens":  8192,
-							"temperature": 0.7,
-						})
+						fallbackProv := al.getFallbackProvider()
+						if fallbackProv == nil {
+							// No dedicated fallback provider — use primary with fallback model (best effort).
+							fallbackProv = al.provider
+						}
+						response, err = fallbackProv.Chat(ctx, messages, providerToolDefs, callModel, al.llmOptions())
 					}
 				}
 			}
@@ -678,7 +805,7 @@ func (al *AgentLoop) runLLMIteration(ctx context.Context, messages []providers.M
 				})
 
 				// Notify user on first retry only
-				if retry == 0 && !constants.IsInternalChannel(opts.Channel) && opts.SendResponse {
+				if retry == 0 && !constants.IsInternalChannel(opts.Channel) {
 					al.bus.PublishOutbound(bus.OutboundMessage{
 						Channel: opts.Channel,
 						ChatID:  opts.ChatID,
@@ -800,6 +927,7 @@ func (al *AgentLoop) runLLMIteration(ctx context.Context, messages []providers.M
 				SenderID:   "", // SenderID is generally unused by subagents here
 				Bus:        al.bus,
 				Async:      asyncCallback,
+				AsyncCtx:   al.rootCtx,
 			})
 			toolCancel()
 
@@ -846,7 +974,9 @@ func (al *AgentLoop) maybeSummarize(sessionKey, channel, chatID string) {
 
 	if len(newHistory) > 20 || tokenEstimate > threshold {
 		if _, loading := al.summarizing.LoadOrStore(sessionKey, true); !loading {
+			al.summarizeWg.Add(1)
 			go func() {
+				defer al.summarizeWg.Done()
 				defer al.summarizing.Delete(sessionKey)
 				// Notify user about optimization if not an internal channel
 				if !constants.IsInternalChannel(channel) {
@@ -967,7 +1097,7 @@ func formatToolsForLog(tools []providers.ToolDefinition) string {
 
 // summarizeSession summarizes the conversation history for a session.
 func (al *AgentLoop) summarizeSession(sessionKey string) {
-	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	ctx, cancel := context.WithTimeout(al.rootCtx, 120*time.Second)
 	defer cancel()
 
 	history := al.sessions.GetHistory(sessionKey)
@@ -1069,6 +1199,12 @@ func (al *AgentLoop) estimateTokens(messages []providers.Message) int {
 	totalChars := 0
 	for _, m := range messages {
 		totalChars += utf8.RuneCountInString(m.Content)
+		// Count ToolCall argument bytes — large tool results can dominate token usage.
+		for _, tc := range m.ToolCalls {
+			if tc.Function != nil {
+				totalChars += utf8.RuneCountInString(tc.Function.Arguments)
+			}
+		}
 	}
 	// 2.5 chars per token = totalChars * 2 / 5
 	return totalChars * 2 / 5
@@ -1109,7 +1245,7 @@ func (al *AgentLoop) handleCommand(ctx context.Context, msg bus.InboundMessage) 
 		switch args[0] {
 		case "models":
 			// TODO: Fetch available models dynamically if possible
-			return "Available models: glm-4.7, claude-3-5-sonnet, gpt-4o (configured in config.json/env)", true
+			return "Available models depend on your configured provider (e.g. gemini-3.1-pro-preview, claude-opus-4-6, gpt-5, llama-3.3-70b). Edit model in config.json or run: v1claw configure", true
 		case "channels":
 			if al.channelManager == nil {
 				return "Channel manager not initialized", true

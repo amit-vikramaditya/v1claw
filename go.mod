@@ -1,6 +1,6 @@
 module github.com/amit-vikramaditya/v1claw
 
-go 1.25.6
+go 1.25.5
 
 require (
 	github.com/adhocore/gronx v1.19.6

@@ -170,9 +170,13 @@ func (s *Server) handleWSChat(client *wsClient, msg WSMessage) {
 
 		response, err := handler(ctx, text, sessionKey)
 		if err != nil {
+			logger.WarnCF("api", "WebSocket chat handler error", map[string]interface{}{
+				"session": sessionKey,
+				"error":   err.Error(),
+			})
 			s.sendToClient(client, WSMessage{
 				Type:      "error",
-				Data:      err.Error(),
+				Data:      "internal error processing request",
 				Timestamp: time.Now(),
 			})
 			return

@@ -23,7 +23,7 @@ type JSONGraphStore struct {
 // NewJSONGraphStore creates or loads a JSON-backed knowledge graph.
 func NewJSONGraphStore(workspaceDir string) (*JSONGraphStore, error) {
 	dir := filepath.Join(workspaceDir, "epistemology")
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := os.MkdirAll(dir, 0700); err != nil {
 		return nil, fmt.Errorf("failed to create epistemology dir: %w", err)
 	}
 
@@ -189,7 +189,7 @@ func (s *JSONGraphStore) save() {
 	}
 
 	tmpPath := s.filePath + ".tmp"
-	if err := os.WriteFile(tmpPath, data, 0644); err != nil {
+	if err := os.WriteFile(tmpPath, data, 0600); err != nil {
 		logger.ErrorC("epistemology", fmt.Sprintf("failed to write tmp graph file: %v", err))
 		return
 	}
