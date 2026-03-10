@@ -29,8 +29,8 @@ type ContextBuilder struct {
 	graphStore   epistemology.GraphStore
 
 	// System-prompt cache: avoids redundant disk reads across tool loop iterations.
-	promptCacheMu     sync.RWMutex
-	promptCacheValue  string
+	promptCacheMu      sync.RWMutex
+	promptCacheValue   string
 	promptCacheBuiltAt time.Time
 }
 
