@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sync"
 
 	"github.com/caarlos0/env/v11"
@@ -470,6 +471,10 @@ func LoadConfig(path string) (*Config, error) {
 		}
 	}
 
+	// Expand ${VAR_NAME} references in provider string fields.
+	// This lets users write: api_key: "${OPENAI_API_KEY}" in config.json.
+	expandConfigEnvVars(cfg)
+
 	if err := env.Parse(cfg); err != nil {
 		return nil, err
 	}
@@ -479,6 +484,54 @@ func LoadConfig(path string) (*Config, error) {
 	applyProviderEnvOverrides(cfg)
 
 	return cfg, nil
+}
+
+// envVarPattern matches ${UPPER_SNAKE_CASE} references in config string values.
+var envVarPattern = regexp.MustCompile(`\$\{([A-Z_][A-Z0-9_]*)\}`)
+
+// expandEnvVar replaces ${VAR_NAME} in s with the matching environment variable.
+// Unset variables are left unexpanded so misconfiguration is visible.
+func expandEnvVar(s string) string {
+	return envVarPattern.ReplaceAllStringFunc(s, func(match string) string {
+		name := match[2 : len(match)-1] // strip ${ and }
+		if v := os.Getenv(name); v != "" {
+			return v
+		}
+		return match // leave unchanged — keeps the error visible
+	})
+}
+
+// expandConfigEnvVars expands ${VAR} references in all ProviderConfig string
+// fields so users can write api_key: "${OPENAI_API_KEY}" in config.json.
+func expandConfigEnvVars(cfg *Config) {
+	expand := func(p *ProviderConfig) {
+		p.APIKey = expandEnvVar(p.APIKey)
+		p.APIBase = expandEnvVar(p.APIBase)
+		p.Proxy = expandEnvVar(p.Proxy)
+	}
+	expand(&cfg.Providers.Gemini)
+	expand(&cfg.Providers.OpenAI)
+	expand(&cfg.Providers.Anthropic)
+	expand(&cfg.Providers.OpenRouter)
+	expand(&cfg.Providers.Groq)
+	expand(&cfg.Providers.DeepSeek)
+	expand(&cfg.Providers.Nvidia)
+	expand(&cfg.Providers.Zhipu)
+	expand(&cfg.Providers.Moonshot)
+	expand(&cfg.Providers.ShengSuanYun)
+	expand(&cfg.Providers.VLLM)
+	expand(&cfg.Providers.Ollama)
+	expand(&cfg.Providers.GitHubCopilot)
+	// Enterprise providers: expand structured credential fields.
+	cfg.Providers.Vertex.ProjectID = expandEnvVar(cfg.Providers.Vertex.ProjectID)
+	cfg.Providers.Vertex.Location = expandEnvVar(cfg.Providers.Vertex.Location)
+	cfg.Providers.Bedrock.Region = expandEnvVar(cfg.Providers.Bedrock.Region)
+	cfg.Providers.Bedrock.AccessKeyID = expandEnvVar(cfg.Providers.Bedrock.AccessKeyID)
+	cfg.Providers.Bedrock.SecretAccessKey = expandEnvVar(cfg.Providers.Bedrock.SecretAccessKey)
+	cfg.Providers.AzureOpenAI.Endpoint = expandEnvVar(cfg.Providers.AzureOpenAI.Endpoint)
+	cfg.Providers.AzureOpenAI.APIKey = expandEnvVar(cfg.Providers.AzureOpenAI.APIKey)
+	// API server
+	cfg.V1API.APIKey = expandEnvVar(cfg.V1API.APIKey)
 }
 
 // applyProviderEnvOverrides reads per-provider environment variables and

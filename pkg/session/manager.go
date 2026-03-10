@@ -258,6 +258,11 @@ func (sm *SessionManager) loadSessions() error {
 			continue
 		}
 
+		// Repair orphaned tool calls: an assistant message may have ToolCalls
+		// that lack a matching tool result (e.g., from a crash mid-turn).
+		// Sending such a transcript to the provider causes a 400 error.
+		session.Messages = repairOrphanedToolCalls(session.Messages)
+
 		sm.sessions[session.Key] = &session
 	}
 
@@ -341,4 +346,68 @@ func deepCopyMessages(src []providers.Message) []providers.Message {
 		}
 	}
 	return dst
+}
+
+// repairOrphanedToolCalls fixes transcripts where an assistant message contains
+// ToolCalls that have no matching tool result.  This happens when the gateway
+// crashes or is killed mid-turn.  Sending such a transcript to a provider
+// (OpenAI, Anthropic) causes a 400 error that permanently poisons the session.
+//
+// Repair strategy: after each assistant message, collect the set of expected
+// tool-call IDs; if any are missing in the messages that follow, insert a
+// synthetic "tool" error result so the transcript is structurally valid.
+func repairOrphanedToolCalls(msgs []providers.Message) []providers.Message {
+	if len(msgs) == 0 {
+		return msgs
+	}
+
+	// Collect all tool-result IDs present in the transcript.
+	satisfied := make(map[string]bool, len(msgs))
+	for _, m := range msgs {
+		if m.Role == "tool" && m.ToolCallID != "" {
+			satisfied[m.ToolCallID] = true
+		}
+	}
+
+	// Walk forward; after each assistant message with ToolCalls, inject synthetics
+	// for any IDs not yet satisfied.
+	out := make([]providers.Message, 0, len(msgs))
+	for i, m := range msgs {
+		out = append(out, m)
+
+		if m.Role != "assistant" || len(m.ToolCalls) == 0 {
+			continue
+		}
+
+		// Determine which tool-call IDs from this assistant turn are orphaned.
+		// An ID is orphaned if it is not present in the satisfied set AND the next
+		// message in the original slice is not already the matching tool result.
+		for _, tc := range m.ToolCalls {
+			if satisfied[tc.ID] {
+				continue
+			}
+			// Check whether the immediately following messages (still in the tail)
+			// contain the result — only needed if msgs wasn't already walked.
+			found := false
+			for _, future := range msgs[i+1:] {
+				if future.Role == "tool" && future.ToolCallID == tc.ID {
+					found = true
+					break
+				}
+				// Stop searching past the next assistant turn.
+				if future.Role == "assistant" {
+					break
+				}
+			}
+			if !found {
+				out = append(out, providers.Message{
+					Role:       "tool",
+					ToolCallID: tc.ID,
+					Content:    "[Tool call was interrupted — no result was recorded]",
+				})
+				satisfied[tc.ID] = true // prevent duplicate insertion
+			}
+		}
+	}
+	return out
 }

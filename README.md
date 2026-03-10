@@ -130,20 +130,30 @@ Pick your device. Follow the steps. You'll have a working AI assistant in under 
 
 ---
 
-### ⚡ Zero-Touch Quickstart (All Platforms)
-If you already have your binary built, you can instantly configure your V1Claw without the interactive wizard using the `--auto` flag:
+### ⚡ Quick Install — macOS & Linux (no Go required)
+
+Run one command. The script detects your OS, downloads the right binary, and adds it to your PATH.
 
 ```bash
-./v1claw onboard --auto --provider gemini --api-key "YOUR_API_KEY_HERE"
+curl -fsSL https://raw.githubusercontent.com/amit-vikramaditya/V1Claw/main/install.sh | bash
 ```
 
-*This will instantly provision the `config.json` with secure defaults, allowing you to bypass the interactive menus entirely.*
+Then run the 2-minute setup wizard:
 
-Or, you can skip `config.json` entirely and run purely via **Environment Variables**:
 ```bash
-export V1CLAW_PROVIDERS_GEMINI_API_KEY="your_api_key_here"
-./v1claw gateway
+v1claw onboard
 ```
+
+Or skip the wizard entirely with one line — replace `YOUR_KEY`:
+
+```bash
+v1claw onboard --auto --provider gemini --api-key "YOUR_KEY"
+```
+
+Other providers: `openai` · `anthropic` · `groq` · `deepseek` · `openrouter` · `nvidia`
+Enterprise (no key needed): `vertex` (uses `gcloud auth`) · `bedrock` (uses `~/.aws/credentials`)
+
+> **Windows users:** Download the `.zip` from the [Releases page](https://github.com/amit-vikramaditya/V1Claw/releases/latest), extract `v1claw.exe`, and double-click to run `v1claw onboard`.
 
 ---
 
@@ -297,6 +307,26 @@ kill $(cat v1claw.pid 2>/dev/null || pgrep v1claw)
 <details>
 <summary><b>Click to expand — full step-by-step macOS setup</b></summary>
 
+#### Option A: Pre-built binary (recommended — no Go required)
+
+Open **Terminal** (`Cmd+Space` → "Terminal") and run:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/amit-vikramaditya/V1Claw/main/install.sh | bash
+```
+
+Then run the setup wizard:
+
+```bash
+v1claw onboard
+```
+
+That's it. Skip to **Step 5: Test it** below.
+
+---
+
+#### Option B: Build from source (for developers)
+
 #### Step 1: Install Go (if you don't have it)
 
 Open **Terminal** (press `Cmd+Space`, type "Terminal", press Enter).
@@ -379,6 +409,24 @@ v1claw gateway
 
 <details>
 <summary><b>Click to expand — full step-by-step Linux setup</b></summary>
+
+#### Option A: Pre-built binary (recommended — no Go required)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/amit-vikramaditya/V1Claw/main/install.sh | bash
+```
+
+Then run the setup wizard:
+
+```bash
+v1claw onboard
+```
+
+That's it. Skip to **Step 5: Test it** below.
+
+---
+
+#### Option B: Build from source (for developers)
 
 #### Step 1: Install Go, Git, and Make
 
@@ -650,14 +698,21 @@ Permissions are **frozen after startup** — the AI cannot escalate its own acce
 ## CLI Commands
 
 ```
-v1claw onboard              # First-time setup
+v1claw --help               # Show help
+v1claw onboard              # First-time setup wizard
+v1claw onboard --refresh    # Upgrade existing config to new schema (non-destructive)
+v1claw onboard --auto \     # Non-interactive setup (CI/scripts)
+  --provider gemini \
+  --api-key YOUR_KEY
 v1claw agent                # Interactive chat
 v1claw agent -m "query"     # One-shot query
 v1claw gateway              # Start 24/7 daemon
 v1claw client -s host:port  # Connect to a remote gateway
+v1claw configure            # Change settings interactively
 v1claw auth login           # Authenticate
 v1claw auth status          # Check auth status
 v1claw status               # Show system status
+v1claw doctor               # Health check (connectivity, config, workspace)
 v1claw cron                 # Manage scheduled tasks
 v1claw skills list          # List installed skills
 v1claw skills install <url> # Install a skill
