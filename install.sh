@@ -3,14 +3,14 @@
 # Downloads a pre-built binary from GitHub Releases — no Go required.
 #
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/amit-vikramaditya/V1Claw/main/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/amit-vikramaditya/v1claw/main/install.sh | bash
 #
 # Or with a specific version:
 #   curl -fsSL .../install.sh | bash -s -- --version v1.2.0
 
 set -euo pipefail
 
-REPO="amit-vikramaditya/V1Claw"
+REPO="amit-vikramaditya/v1claw"
 BINARY="v1claw"
 INSTALL_DIR="${INSTALL_DIR:-}"   # can be overridden by environment
 

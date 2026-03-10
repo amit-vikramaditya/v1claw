@@ -135,7 +135,7 @@ Pick your device. Follow the steps. You'll have a working AI assistant in under 
 Run one command. The script detects your OS, downloads the right binary, and adds it to your PATH.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/amit-vikramaditya/V1Claw/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/amit-vikramaditya/v1claw/main/install.sh | bash
 ```
 
 Then run the 2-minute setup wizard:
@@ -153,7 +153,7 @@ v1claw onboard --auto --provider gemini --api-key "YOUR_KEY"
 Other providers: `openai` · `anthropic` · `groq` · `deepseek` · `openrouter` · `nvidia`
 Enterprise (no key needed): `vertex` (uses `gcloud auth`) · `bedrock` (uses `~/.aws/credentials`)
 
-> **Windows users:** Download the `.zip` from the [Releases page](https://github.com/amit-vikramaditya/V1Claw/releases/latest), extract `v1claw.exe`, and double-click to run `v1claw onboard`.
+> **Windows users:** Download the `.zip` from the [Releases page](https://github.com/amit-vikramaditya/v1claw/releases/latest), extract `v1claw.exe`, and double-click to run `v1claw onboard`.
 
 ---
 
@@ -201,7 +201,7 @@ This installs Git, Go (the programming language), Make, and the Termux API tools
 #### Step 4: Download V1Claw
 
 ```bash
-git clone https://github.com/amit-vikramaditya/V1Claw.git
+git clone https://github.com/amit-vikramaditya/v1claw.git
 ```
 
 ```bash
@@ -312,7 +312,7 @@ kill $(cat v1claw.pid 2>/dev/null || pgrep v1claw)
 Open **Terminal** (`Cmd+Space` → "Terminal") and run:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/amit-vikramaditya/V1Claw/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/amit-vikramaditya/v1claw/main/install.sh | bash
 ```
 
 Then run the setup wizard:
@@ -356,7 +356,7 @@ make --version
 #### Step 2: Download V1Claw
 
 ```bash
-git clone https://github.com/amit-vikramaditya/V1Claw.git
+git clone https://github.com/amit-vikramaditya/v1claw.git
 cd V1Claw
 ```
 
@@ -413,7 +413,7 @@ v1claw gateway
 #### Option A: Pre-built binary (recommended — no Go required)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/amit-vikramaditya/V1Claw/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/amit-vikramaditya/v1claw/main/install.sh | bash
 ```
 
 Then run the setup wizard:
@@ -453,7 +453,7 @@ go version
 #### Step 2: Download V1Claw
 
 ```bash
-git clone https://github.com/amit-vikramaditya/V1Claw.git
+git clone https://github.com/amit-vikramaditya/v1claw.git
 cd V1Claw
 ```
 
@@ -535,7 +535,7 @@ git --version
 #### Step 2: Download V1Claw
 
 ```bash
-git clone https://github.com/amit-vikramaditya/V1Claw.git
+git clone https://github.com/amit-vikramaditya/v1claw.git
 cd V1Claw
 ```
 
@@ -584,7 +584,7 @@ If you have Docker installed, this is the fastest way:
 
 ```bash
 # Clone the project
-git clone https://github.com/amit-vikramaditya/V1Claw.git
+git clone https://github.com/amit-vikramaditya/v1claw.git
 cd V1Claw
 
 # Copy the example config and edit it
@@ -608,7 +608,7 @@ Have a fast PC and want to build V1Claw for a different device (e.g., build on y
 
 ```bash
 # On your PC:
-git clone https://github.com/amit-vikramaditya/V1Claw.git
+git clone https://github.com/amit-vikramaditya/v1claw.git
 cd V1Claw
 
 # Build for Android (ARM64)
