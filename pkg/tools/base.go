@@ -22,7 +22,10 @@ type ToolContext struct {
 	SenderID   string
 	Async      AsyncCallback
 	Bus        *bus.MessageBus
-	// Add other necessary context here (e.g., config, logger, etc.)
+	// AsyncCtx is the agent's root context, propagated to async tool goroutines so
+	// they are cancelled cleanly when Stop() is called.  Falls back to
+	// context.Background() when nil for backwards-compatible call sites.
+	AsyncCtx context.Context
 }
 
 // Tool is the interface that all tools must implement.

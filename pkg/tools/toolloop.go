@@ -169,7 +169,15 @@ type SubagentManager struct {
 	tools        *ToolRegistry
 	mu           sync.RWMutex
 	cliProviders map[string]providers.LLMProvider // Registered CLI workers
+	// msgBuilder is the injected real ContextBuilder.BuildMessages function.
+	// When nil, the local stub is used — subagents get bare prompts with no identity/memory.
+	// Inject via SetMessageBuilder to break the tools→agent import cycle.
+	msgBuilder MessageBuilderFn
 }
+
+// MessageBuilderFn is the function signature for building initial subagent messages.
+// Matches (*agent.ContextBuilder).BuildMessages, enabling injection without import cycles.
+type MessageBuilderFn func(history []providers.Message, summary, userMessage string, media []string, channel, chatID string) []providers.Message
 
 // NewSubagentManager creates a new SubagentManager.
 func NewSubagentManager(provider providers.LLMProvider, model, workspace string, msgBus *bus.MessageBus, cliProviders map[string]providers.LLMProvider) *SubagentManager {
@@ -189,11 +197,20 @@ func (sm *SubagentManager) SetTools(tools *ToolRegistry) {
 	sm.tools = tools
 }
 
+// SetMessageBuilder injects the real context-builder function from the agent layer.
+// Once set, subagents receive a fully hydrated system prompt (identity, memory, skills).
+func (sm *SubagentManager) SetMessageBuilder(fn MessageBuilderFn) {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	sm.msgBuilder = fn
+}
+
 // Spawn starts a subagent in a separate goroutine and returns a message indicating its creation.
 // The subagent will run for a limited number of iterations and report its final answer via the message bus.
 func (sm *SubagentManager) Spawn(ctx context.Context, task, label string, tc ToolContext) (string, error) { // Updated to accept ToolContext
 	sm.mu.RLock()
 	subagentTools := sm.tools // Get a reference to the tools
+	msgBuilder := sm.msgBuilder
 	sm.mu.RUnlock()
 
 	if subagentTools == nil {
@@ -202,31 +219,32 @@ func (sm *SubagentManager) Spawn(ctx context.Context, task, label string, tc Too
 
 	logSource := fmt.Sprintf("subagent:%s", label)
 
-	// Create a new context builder for the subagent.
-	// We do NOT use the main agent's context builder here to prevent context pollution.
-	subagentContextBuilder := &ContextBuilder{
-		workspace: sm.workspace,
-		// No need to set tools registry here as the tools are passed directly via ToolLoopConfig
+	// Build initial messages for the subagent.
+	// Prefer the injected msgBuilder (real ContextBuilder.BuildMessages) from the agent layer.
+	// Fall back to the local stub — subagents get bare prompts with no identity/memory.
+	var subagentMessages []providers.Message
+	if msgBuilder != nil {
+		subagentMessages = msgBuilder(nil, "", task, nil, tc.Channel, tc.ChatID)
+	} else {
+		stub := &ContextBuilder{workspace: sm.workspace}
+		subagentMessages = stub.BuildMessages(nil, "", task, nil, tc.Channel, tc.ChatID)
 	}
 
-	// Build initial messages for the subagent.
-	// The subagent gets its own fresh prompt, independent of the main agent's history.
-	subagentMessages := subagentContextBuilder.BuildMessages(
-		nil,  // No history for subagent init
-		"",   // No summary for subagent init
-		task, // The task is the primary user message for the subagent
-		subagentTools,
-		tc.Channel, // Use ToolContext for channel
-		tc.ChatID,  // Use ToolContext for chatID
-	)
-
 	go func() {
+		// Resolve the async callback context — prefer the agent's root context so
+		// the goroutine is cancelled cleanly on Stop().  Fall back to
+		// context.Background() for call sites that have not wired AsyncCtx.
+		asyncCtx := tc.AsyncCtx
+		if asyncCtx == nil {
+			asyncCtx = context.Background()
+		}
+
 		// Recover from panics in subagent goroutine.
 		defer func() {
 			if r := recover(); r != nil {
 				logger.ErrorCF(logSource, "Subagent panicked", map[string]interface{}{"error": fmt.Sprintf("%v", r)})
 				if tc.Async != nil { // Use tc.Async
-					tc.Async(context.Background(), ErrorResult(fmt.Sprintf("Subagent panicked: %v", r)))
+					tc.Async(asyncCtx, ErrorResult(fmt.Sprintf("Subagent panicked: %v", r)))
 				}
 			}
 		}()
@@ -248,7 +266,7 @@ func (sm *SubagentManager) Spawn(ctx context.Context, task, label string, tc Too
 		if err != nil {
 			logger.ErrorCF(logSource, "Subagent failed", map[string]interface{}{"error": err.Error()})
 			if tc.Async != nil {
-				tc.Async(context.Background(), ErrorResult(fmt.Sprintf("Subagent failed: %v", err)))
+				tc.Async(asyncCtx, ErrorResult(fmt.Sprintf("Subagent failed: %v", err)))
 			}
 			return
 		}
@@ -256,7 +274,7 @@ func (sm *SubagentManager) Spawn(ctx context.Context, task, label string, tc Too
 		logger.InfoCF(logSource, "Subagent completed", map[string]interface{}{"iterations": loopResult.Iterations})
 
 		if tc.Async != nil {
-			tc.Async(context.Background(), NewToolResult(loopResult.Content))
+			tc.Async(asyncCtx, NewToolResult(loopResult.Content))
 		} else {
 			logger.InfoCF(logSource, "Subagent completed without explicit callback", map[string]interface{}{"result": loopResult.Content})
 		}
@@ -269,26 +287,21 @@ func (sm *SubagentManager) Spawn(ctx context.Context, task, label string, tc Too
 func (sm *SubagentManager) RunToolLoop(ctx context.Context, task, label, channel, chatID, sessionKey string) (*ToolLoopResult, error) {
 	sm.mu.RLock()
 	subagentTools := sm.tools // Get a reference to the tools
+	msgBuilder := sm.msgBuilder
 	sm.mu.RUnlock()
 
 	if subagentTools == nil {
 		return nil, fmt.Errorf("subagent tools not set")
 	}
 
-	// Create a new context builder for the subagent.
-	subagentContextBuilder := &ContextBuilder{
-		workspace: sm.workspace,
+	// Build initial messages using the injected builder or the stub fallback.
+	var subagentMessages []providers.Message
+	if msgBuilder != nil {
+		subagentMessages = msgBuilder(nil, "", task, nil, channel, chatID)
+	} else {
+		stub := &ContextBuilder{workspace: sm.workspace}
+		subagentMessages = stub.BuildMessages(nil, "", task, nil, channel, chatID)
 	}
-
-	// Build initial messages for the subagent.
-	subagentMessages := subagentContextBuilder.BuildMessages(
-		nil,  // No history for subagent init
-		"",   // No summary for subagent init
-		task, // The task is the primary user message for the subagent
-		subagentTools,
-		channel,
-		chatID,
-	)
 
 	toolLoopConfig := ToolLoopConfig{
 		Provider:      sm.provider,
@@ -317,7 +330,12 @@ func (sm *SubagentManager) RunToolLoop(ctx context.Context, task, label, channel
 func (sm *SubagentManager) CLIProviders() map[string]providers.LLMProvider {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
-	return sm.cliProviders
+	// Return a shallow copy so callers cannot inadvertently mutate the internal map.
+	copy := make(map[string]providers.LLMProvider, len(sm.cliProviders))
+	for k, v := range sm.cliProviders {
+		copy[k] = v
+	}
+	return copy
 }
 
 // ContextBuilder (placeholder for the actual implementation in agent/context.go)
@@ -328,9 +346,9 @@ type ContextBuilder struct {
 	// Add other necessary fields as per agent/context.go
 }
 
-// BuildMessages (placeholder)
-func (cb *ContextBuilder) BuildMessages(history []providers.Message, summary, userMessage string, tools *ToolRegistry, channel, chatID string) []providers.Message {
-	// Simplified for compilation within tools package
+// BuildMessages (placeholder — used as fallback when no injected builder is available)
+func (cb *ContextBuilder) BuildMessages(history []providers.Message, summary, userMessage string, media []string, channel, chatID string) []providers.Message {
+	// Minimal stub: produces a bare prompt with no agent identity or memory.
 	messages := []providers.Message{}
 	if summary != "" {
 		messages = append(messages, providers.Message{Role: "system", Content: "Summary: " + summary})

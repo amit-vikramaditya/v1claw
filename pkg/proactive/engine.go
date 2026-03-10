@@ -48,18 +48,22 @@ type ActivityLog struct {
 
 // Engine manages proactive intelligence — routines, suggestions, anomalies.
 type Engine struct {
-	mu          sync.RWMutex
-	dataDir     string
-	routines    []Routine
-	activities  []ActivityLog
-	suggestions []Suggestion
-	handler     func(ctx context.Context, suggestion Suggestion)
+	mu           sync.RWMutex
+	dataDir      string
+	routines     []Routine
+	activities   []ActivityLog
+	suggestions  []Suggestion
+	handler      func(ctx context.Context, suggestion Suggestion)
+	engineCtx    context.Context
+	engineCancel context.CancelFunc
 }
 
 // NewEngine creates a proactive intelligence engine.
 func NewEngine(dataDir string) (*Engine, error) {
-	e := &Engine{dataDir: dataDir}
+	ctx, cancel := context.WithCancel(context.Background())
+	e := &Engine{dataDir: dataDir, engineCtx: ctx, engineCancel: cancel}
 	if err := e.load(); err != nil {
+		cancel()
 		return nil, fmt.Errorf("proactive engine load: %w", err)
 	}
 	logger.InfoCF("proactive", "Proactive engine loaded", map[string]interface{}{
@@ -67,6 +71,11 @@ func NewEngine(dataDir string) (*Engine, error) {
 		"activities": len(e.activities),
 	})
 	return e, nil
+}
+
+// Close cancels the engine's lifecycle context, stopping all handler goroutines.
+func (e *Engine) Close() {
+	e.engineCancel()
 }
 
 // SetHandler sets the callback for proactive suggestions.
@@ -240,7 +249,7 @@ func (e *Engine) Suggest(sugType, message string, priority int, expiresIn time.D
 	e.suggestions = append(e.suggestions, s)
 
 	if e.handler != nil {
-		go e.handler(context.Background(), s)
+		go e.handler(e.engineCtx, s)
 	}
 }
 

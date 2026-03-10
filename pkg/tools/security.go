@@ -36,10 +36,13 @@ func (m *AllowlistMiddleware) VerifyCommand(command string) (string, error) {
 	return "", fmt.Errorf("command %q is not in the security allowlist", baseCmd)
 }
 
-// DefaultAllowlist provides a minimal safe subset — read-only utilities and
-// version-control tools.  Dynamic language interpreters (python, node, etc.)
-// are intentionally excluded because they can execute arbitrary code.  Use
-// DevAllowlist in development workspaces where interpreter access is required.
+// DefaultAllowlist provides a minimal safe subset of commands the shell tool
+// may run.  Dynamic language interpreters (python, node, etc.) are excluded
+// because they give arbitrary code execution.  curl and wget are included
+// because the agent legitimately needs HTTP read access (weather, APIs, etc.);
+// the effective exfiltration defence is that bash/sh/exec are NOT in the list,
+// so `curl … | sh`-style attacks are blocked at the shell-tool level.
+// Use DevAllowlist in development workspaces where build tools are required.
 var DefaultAllowlist = []string{
 	"ls", "cat", "grep", "find", "wc", "head", "tail", "du", "df",
 	"awk", "sed", "sort", "uniq", "tr", "cut", "paste", "tee",

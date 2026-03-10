@@ -13,15 +13,27 @@ import (
 
 // ClaudeCliProvider implements LLMProvider using the claude CLI as a subprocess.
 type ClaudeCliProvider struct {
-	command   string
-	workspace string
+	command              string
+	workspace            string
+	disableDangerousFlag bool // when true, omit --dangerously-skip-permissions
 }
 
 // NewClaudeCliProvider creates a new Claude CLI provider.
+// Pass disableDangerousFlag=true to run without --dangerously-skip-permissions
+// (the CLI may then require interactive approval for certain actions).
 func NewClaudeCliProvider(workspace string) *ClaudeCliProvider {
 	return &ClaudeCliProvider{
 		command:   "claude",
 		workspace: workspace,
+	}
+}
+
+// NewClaudeCliProviderSafe creates a provider that omits --dangerously-skip-permissions.
+func NewClaudeCliProviderSafe(workspace string) *ClaudeCliProvider {
+	return &ClaudeCliProvider{
+		command:              "claude",
+		workspace:            workspace,
+		disableDangerousFlag: true,
 	}
 }
 
@@ -30,7 +42,11 @@ func (p *ClaudeCliProvider) Chat(ctx context.Context, messages []Message, tools 
 	systemPrompt := p.buildSystemPrompt(messages, tools)
 	prompt := p.messagesToPrompt(messages)
 
-	args := []string{"-p", "--output-format", "json", "--dangerously-skip-permissions", "--no-chrome"}
+	args := []string{"-p", "--output-format", "json", "--no-chrome"}
+	if !p.disableDangerousFlag {
+		args = append(args, "--dangerously-skip-permissions")
+		logger.DebugC("provider", "Claude CLI invoked with --dangerously-skip-permissions (autonomous mode)")
+	}
 	if systemPrompt != "" {
 		args = append(args, "--system-prompt", systemPrompt)
 	}
@@ -38,8 +54,6 @@ func (p *ClaudeCliProvider) Chat(ctx context.Context, messages []Message, tools 
 		args = append(args, "--model", model)
 	}
 	args = append(args, "-") // read from stdin
-
-	logger.WarnC("provider", "Claude CLI invoked with --dangerously-skip-permissions — all safety gates bypassed")
 
 	cmd := exec.CommandContext(ctx, p.command, args...)
 	if p.workspace != "" {

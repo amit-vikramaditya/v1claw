@@ -41,11 +41,29 @@ func validatePath(path, workspace string, restrict bool) (string, error) {
 			return "", fmt.Errorf("failed to resolve workspace symlink: %w", err)
 		}
 
-		// Resolve the real path of the given path
+		// Resolve the real path of the given path. For non-existent paths (e.g. a
+		// file about to be created), EvalSymlinks fails with IsNotExist. In that
+		// case we walk up the ancestor chain until we find an existing directory and
+		// resolve from there, so that platform symlinks (macOS /var→/private/var)
+		// don't cause false "outside workspace" rejections for new nested paths.
 		pathReal := absPath
 		if resolved, err := filepath.EvalSymlinks(absPath); err == nil {
 			pathReal = resolved
-		} else if !os.IsNotExist(err) && !os.IsPermission(err) { // Ignore permission errors on non-existent files
+		} else if os.IsNotExist(err) {
+			// Walk up ancestors until we find one that can be resolved.
+			absDir := filepath.Dir(absPath)
+			suffix := filepath.Base(absPath)
+			for absDir != filepath.Dir(absDir) { // stop at filesystem root
+				if resolved, rerr := filepath.EvalSymlinks(absDir); rerr == nil {
+					pathReal = filepath.Join(resolved, suffix)
+					break
+				} else if !os.IsNotExist(rerr) {
+					break // unexpected error, leave pathReal as absPath
+				}
+				suffix = filepath.Join(filepath.Base(absDir), suffix)
+				absDir = filepath.Dir(absDir)
+			}
+		} else if !os.IsPermission(err) {
 			return "", fmt.Errorf("failed to resolve path symlink: %w", err)
 		}
 
@@ -218,22 +236,19 @@ func (t *WriteFileTool) Execute(ctx context.Context, tc ToolContext, args map[st
 		return ErrorResult(fmt.Sprintf("failed to create directory: %v", err))
 	}
 
-	f, err := os.OpenFile(resolvedPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
+	// V1: Symlink check BEFORE open — prevents TOCTOU where O_TRUNC would
+	// destroy the target before the check runs.
+	if t.restrict {
+		if li, lerr := os.Lstat(resolvedPath); lerr == nil && (li.Mode()&os.ModeSymlink != 0) {
+			return ErrorResult("access denied: path resolves to a symlink")
+		}
+	}
+
+	f, err := os.OpenFile(resolvedPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
 	if err != nil {
 		return ErrorResult(fmt.Sprintf("failed to open file for writing: %v", err))
 	}
 	defer f.Close()
-
-	if t.restrict {
-		// TOCTOU mitigation for writes
-		fi, err := f.Stat()
-		if err == nil {
-			li, lerr := os.Lstat(resolvedPath)
-			if lerr == nil && !os.SameFile(fi, li) {
-				return ErrorResult("access denied: symlink race detected (TOCTOU)")
-			}
-		}
-	}
 
 	if _, err := f.Write([]byte(content)); err != nil {
 		return ErrorResult(fmt.Sprintf("failed to write file: %v", err))

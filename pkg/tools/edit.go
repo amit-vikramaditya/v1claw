@@ -94,7 +94,13 @@ func (t *EditFileTool) Execute(ctx context.Context, tc ToolContext, args map[str
 
 	newContent := strings.Replace(contentStr, oldText, newText, 1)
 
-	if err := os.WriteFile(resolvedPath, []byte(newContent), 0644); err != nil {
+	// Preserve the original file's permissions; default to 0600 for new files.
+	var mode os.FileMode = 0600
+	if fi, err := os.Stat(resolvedPath); err == nil {
+		mode = fi.Mode().Perm()
+	}
+
+	if err := os.WriteFile(resolvedPath, []byte(newContent), mode); err != nil {
 		return ErrorResult(fmt.Sprintf("failed to write file: %v", err))
 	}
 
@@ -151,7 +157,7 @@ func (t *AppendFileTool) Execute(ctx context.Context, tc ToolContext, args map[s
 		return ErrorResult(err.Error())
 	}
 
-	f, err := os.OpenFile(resolvedPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	f, err := os.OpenFile(resolvedPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
 	if err != nil {
 		return ErrorResult(fmt.Sprintf("failed to open file: %v", err))
 	}

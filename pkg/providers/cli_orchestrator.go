@@ -1,7 +1,10 @@
 package providers
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"fmt"
 	"os/exec"
 	"strings"
 
@@ -100,6 +103,34 @@ type AutonomousCLIWorker struct {
 	Profile CLIInteractionProfile
 }
 
+// Chat implements the LLMProvider interface so AutonomousCLIWorker can be used as an agent brain.
+// It extracts the last user message as the task and runs the CLI autonomously.
+func (w *AutonomousCLIWorker) Chat(ctx context.Context, messages []Message, tools []ToolDefinition, model string, options map[string]interface{}) (*LLMResponse, error) {
+	var lastTask string
+	for i := len(messages) - 1; i >= 0; i-- {
+		if messages[i].Role == "user" {
+			lastTask = messages[i].Content
+			break
+		}
+	}
+	if lastTask == "" {
+		return nil, fmt.Errorf("no user message found for CLI worker %q", w.Profile.Name)
+	}
+	result, err := w.Execute(ctx, lastTask)
+	if err != nil {
+		return nil, err
+	}
+	return &LLMResponse{
+		Content:      result,
+		FinishReason: "stop",
+	}, nil
+}
+
+// GetDefaultModel returns the CLI worker's name as its model identifier.
+func (w *AutonomousCLIWorker) GetDefaultModel() string {
+	return w.Profile.Name
+}
+
 func (w *AutonomousCLIWorker) Execute(ctx context.Context, task string) (string, error) {
 	args := []string{}
 
@@ -108,8 +139,20 @@ func (w *AutonomousCLIWorker) Execute(ctx context.Context, task string) (string,
 		args = append(args, w.Profile.PromptFlag)
 	}
 
-	// 2. Add the task itself
-	args = append(args, task)
+	// 2. Add the task itself.
+	// Guard against argument injection: if the task string begins with a dash (-) it
+	// could be mistaken by the target CLI as a flag.  We sanitise by prepending a
+	// "--" end-of-options marker when the prompt flag is empty (positional mode),
+	// and by limiting the task length to prevent excessively long argument strings.
+	safeTask := task
+	if len(safeTask) > 32768 {
+		safeTask = safeTask[:32768]
+	}
+	if w.Profile.PromptFlag == "" && strings.HasPrefix(safeTask, "-") {
+		// Insert end-of-options marker before positional task argument.
+		args = append(args, "--")
+	}
+	args = append(args, safeTask)
 
 	// 3. Add auto-approval flags to bypass "Human-in-Loop" prompts
 	args = append(args, w.Profile.AutoApproveFlags...)
@@ -127,8 +170,39 @@ func (w *AutonomousCLIWorker) Execute(ctx context.Context, task string) (string,
 	})
 
 	cmd := exec.CommandContext(ctx, w.Profile.Command, args...)
-	output, err := cmd.CombinedOutput()
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
 
-	// We return output even on error as it often contains the AI's explanation of the failure
-	return string(output), err
+	runErr := cmd.Run()
+	out := strings.TrimSpace(stdout.String())
+
+	if runErr != nil {
+		// Include stderr in the error so callers know what went wrong
+		errMsg := strings.TrimSpace(stderr.String())
+		if errMsg == "" {
+			errMsg = runErr.Error()
+		}
+		// Still return whatever stdout we got — it may contain a partial/explanation
+		if out != "" {
+			return out, fmt.Errorf("%s: %s", w.Profile.Name, errMsg)
+		}
+		return errMsg, fmt.Errorf("%s: %s", w.Profile.Name, errMsg)
+	}
+
+	// For CLIs that return JSON (e.g. gemini --output-format json), extract the
+	// "response" field so the agent brain receives plain text, not a stats blob.
+	if strings.HasPrefix(out, "{") {
+		var envelope struct {
+			Response string `json:"response"`
+		}
+		if err := json.Unmarshal([]byte(out), &envelope); err == nil && envelope.Response != "" {
+			logger.InfoCF("orchestrator", "Extracted response from CLI JSON output", map[string]interface{}{
+				"worker": w.Profile.Name,
+			})
+			return envelope.Response, nil
+		}
+	}
+
+	return out, nil
 }

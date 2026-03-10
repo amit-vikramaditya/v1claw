@@ -95,9 +95,7 @@ func (sm *SessionManager) GetHistory(key string) []providers.Message {
 		return []providers.Message{}
 	}
 
-	history := make([]providers.Message, len(session.Messages))
-	copy(history, session.Messages)
-	return history
+	return deepCopyMessages(session.Messages)
 }
 
 func (sm *SessionManager) GetSummary(key string) string {
@@ -178,16 +176,11 @@ func (sm *SessionManager) Save(key string) error {
 	}
 
 	snapshot := Session{
-		Key:     stored.Key,
-		Summary: stored.Summary,
-		Created: stored.Created,
-		Updated: stored.Updated,
-	}
-	if len(stored.Messages) > 0 {
-		snapshot.Messages = make([]providers.Message, len(stored.Messages))
-		copy(snapshot.Messages, stored.Messages)
-	} else {
-		snapshot.Messages = []providers.Message{}
+		Key:      stored.Key,
+		Summary:  stored.Summary,
+		Created:  stored.Created,
+		Updated:  stored.Updated,
+		Messages: deepCopyMessages(stored.Messages),
 	}
 	sm.mu.RUnlock()
 
@@ -278,11 +271,7 @@ func (sm *SessionManager) SetHistory(key string, history []providers.Message) {
 
 	session, ok := sm.sessions[key]
 	if ok {
-		// Create a deep copy to strictly isolate internal state
-		// from the caller's slice.
-		msgs := make([]providers.Message, len(history))
-		copy(msgs, history)
-		session.Messages = msgs
+		session.Messages = deepCopyMessages(history)
 		session.Updated = time.Now()
 	}
 }
@@ -309,6 +298,47 @@ func (sm *SessionManager) SummarizeAndTruncate(key string, summary string, keepL
 	}
 
 	if len(session.Messages) > keepLast {
-		session.Messages = session.Messages[len(session.Messages)-keepLast:]
+		// Allocate a fresh slice so the old backing array can be GC'd.
+		session.Messages = deepCopyMessages(session.Messages[len(session.Messages)-keepLast:])
 	}
+}
+
+// deepCopyMessages returns a new slice where each Message and its pointer
+// fields (ToolCall.Function *FunctionCall, ToolCall.Arguments map) are fully
+// independent from the originals.  This prevents data races when multiple
+// goroutines hold references to the same session history.
+func deepCopyMessages(src []providers.Message) []providers.Message {
+	if len(src) == 0 {
+		return []providers.Message{}
+	}
+	dst := make([]providers.Message, len(src))
+	for i, m := range src {
+		dst[i] = providers.Message{
+			Role:       m.Role,
+			Content:    m.Content,
+			ToolCallID: m.ToolCallID,
+		}
+		if len(m.ToolCalls) > 0 {
+			dst[i].ToolCalls = make([]providers.ToolCall, len(m.ToolCalls))
+			for j, tc := range m.ToolCalls {
+				dst[i].ToolCalls[j] = providers.ToolCall{
+					ID:   tc.ID,
+					Type: tc.Type,
+					Name: tc.Name,
+				}
+				if tc.Function != nil {
+					fn := *tc.Function // copy struct value
+					dst[i].ToolCalls[j].Function = &fn
+				}
+				if tc.Arguments != nil {
+					argsCopy := make(map[string]interface{}, len(tc.Arguments))
+					for k, v := range tc.Arguments {
+						argsCopy[k] = v
+					}
+					dst[i].ToolCalls[j].Arguments = argsCopy
+				}
+			}
+		}
+	}
+	return dst
 }

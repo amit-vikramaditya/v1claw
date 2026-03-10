@@ -10,10 +10,20 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/amit-vikramaditya/v1claw/pkg/logger"
 )
 
 const (
 	userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+)
+
+// Package-level compiled regexes — avoids per-call recompilation.
+// [^<]+ instead of [\s\S]*? eliminates catastrophic backtracking risk.
+var (
+	ddgLinkPattern    = regexp.MustCompile(`<a[^>]+class="[^"]*result__a[^"]*"[^>]+href="([^"]+)"[^>]*>([^<]+)</a>`)
+	ddgSnippetPattern = regexp.MustCompile(`<a[^>]+class="result__snippet[^"]*"[^>]*>([^<]+)</a>`)
+	htmlTagPattern    = regexp.MustCompile(`<[^>]+>`)
 )
 
 type SearchProvider interface {
@@ -59,8 +69,7 @@ func (p *BraveSearchProvider) Search(ctx context.Context, query string, count in
 	}
 
 	if err := json.Unmarshal(body, &searchResp); err != nil {
-		// Log error body for debugging
-		fmt.Printf("Brave API Error Body: %s\n", string(body))
+		logger.WarnCF("web", "Brave API error response", map[string]interface{}{"body": string(body)})
 		return "", fmt.Errorf("failed to parse response: %w", err)
 	}
 
@@ -112,14 +121,7 @@ func (p *DuckDuckGoSearchProvider) Search(ctx context.Context, query string, cou
 }
 
 func (p *DuckDuckGoSearchProvider) extractResults(html string, count int, query string) (string, error) {
-	// Simple regex based extraction for DDG HTML
-	// Strategy: Find all result containers or key anchors directly
-
-	// Try finding the result links directly first, as they are the most critical
-	// Pattern: <a class="result__a" href="...">Title</a>
-	// The previous regex was a bit strict. Let's make it more flexible for attributes order/content
-	reLink := regexp.MustCompile(`<a[^>]*class="[^"]*result__a[^"]*"[^>]*href="([^"]+)"[^>]*>([\s\S]*?)</a>`)
-	matches := reLink.FindAllStringSubmatch(html, count+5)
+	matches := ddgLinkPattern.FindAllStringSubmatch(html, count+5)
 
 	if len(matches) == 0 {
 		return fmt.Sprintf("No results found or extraction failed. Query: %s", query), nil
@@ -128,16 +130,7 @@ func (p *DuckDuckGoSearchProvider) extractResults(html string, count int, query 
 	var lines []string
 	lines = append(lines, fmt.Sprintf("Results for: %s (via DuckDuckGo)", query))
 
-	// Pre-compile snippet regex to run inside the loop
-	// We'll search for snippets relative to the link position or just globally if needed
-	// But simple global search for snippets might mismatch order.
-	// Since we only have the raw HTML string, let's just extract snippets globally and assume order matches (risky but simple for regex)
-	// Or better: Let's assume the snippet follows the link in the HTML
-
-	// A better regex approach: iterate through text and find matches in order
-	// But for now, let's grab all snippets too
-	reSnippet := regexp.MustCompile(`<a class="result__snippet[^"]*".*?>([\s\S]*?)</a>`)
-	snippetMatches := reSnippet.FindAllStringSubmatch(html, count+5)
+	snippetMatches := ddgSnippetPattern.FindAllStringSubmatch(html, count+5)
 
 	maxItems := min(len(matches), count)
 
@@ -172,8 +165,7 @@ func (p *DuckDuckGoSearchProvider) extractResults(html string, count int, query 
 }
 
 func stripTags(content string) string {
-	re := regexp.MustCompile(`<[^>]+>`)
-	return re.ReplaceAllString(content, "")
+	return htmlTagPattern.ReplaceAllString(content, "")
 }
 
 type PerplexitySearchProvider struct {

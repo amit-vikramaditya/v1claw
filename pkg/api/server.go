@@ -32,7 +32,10 @@ type Server struct {
 	httpServer  *http.Server
 	wsClients   map[string]*wsClient
 	chatHandler ChatHandler
-	rateLimiter *rate.Limiter
+	// Per-IP rate limiting — prevents a single client from monopolising the API.
+	ipLimiters sync.Map   // map[string]*rate.Limiter
+	rateLimit  rate.Limit // configured req/s; 0 = disabled
+	rateBurst  int        // token bucket burst size
 }
 
 // ChatHandler processes chat messages from the API and returns responses.
@@ -64,8 +67,12 @@ func NewServer(cfg Config, msgBus *bus.MessageBus, router *events.Router, stateM
 	}
 
 	if cfg.RateLimit > 0 {
-		srv.rateLimiter = rate.NewLimiter(rate.Limit(cfg.RateLimit), int(cfg.RateLimit))
-		logger.InfoC("api", fmt.Sprintf("API rate limit enabled: %.2f req/s", cfg.RateLimit))
+		srv.rateLimit = rate.Limit(cfg.RateLimit)
+		srv.rateBurst = int(cfg.RateLimit)
+		if srv.rateBurst < 1 {
+			srv.rateBurst = 1
+		}
+		logger.InfoC("api", fmt.Sprintf("API rate limit enabled: %.2f req/s per IP", cfg.RateLimit))
 	} else {
 		logger.InfoC("api", "API rate limiting disabled")
 	}
@@ -117,6 +124,28 @@ func (s *Server) Start(ctx context.Context) error {
 
 	logger.InfoC("api", fmt.Sprintf("API server starting on %s", s.addr))
 
+	// Warn loudly when authentication is disabled so operators don't miss it.
+	if s.apiKey == "" {
+		logger.WarnC("api", "SECURITY WARNING: API authentication is disabled — set api.api_key in config before exposing this server")
+	}
+
+	// Prevent ipLimiters from growing without bound: sweep stale entries hourly.
+	go func() {
+		ticker := time.NewTicker(time.Hour)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				s.ipLimiters.Range(func(k, _ interface{}) bool {
+					s.ipLimiters.Delete(k)
+					return true
+				})
+			}
+		}
+	}()
+
 	go func() {
 		<-ctx.Done()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -152,12 +181,9 @@ func (s *Server) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 
-		// Check Authorization header
+		// Only accept the Authorization header — never URL query parameters.
+		// Query-param keys appear in server access logs (plain text) and proxy logs.
 		auth := r.Header.Get("Authorization")
-		if auth == "" {
-			// Also check query param for WebSocket connections
-			auth = r.URL.Query().Get("api_key")
-		}
 
 		token := strings.TrimPrefix(auth, "Bearer ")
 		if subtle.ConstantTimeCompare([]byte(token), []byte(s.apiKey)) != 1 {
@@ -169,14 +195,28 @@ func (s *Server) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
+// limiterForIP returns the per-IP token-bucket rate limiter, creating one if needed.
+func (s *Server) limiterForIP(ip string) *rate.Limiter {
+	if v, ok := s.ipLimiters.Load(ip); ok {
+		return v.(*rate.Limiter)
+	}
+	l := rate.NewLimiter(s.rateLimit, s.rateBurst)
+	actual, _ := s.ipLimiters.LoadOrStore(ip, l)
+	return actual.(*rate.Limiter)
+}
+
 func (s *Server) rateLimitMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if s.rateLimiter == nil {
+		if s.rateLimit == 0 {
 			next(w, r)
 			return
 		}
 
-		if !s.rateLimiter.Allow() {
+		ip, _, err := net.SplitHostPort(r.RemoteAddr)
+		if err != nil {
+			ip = r.RemoteAddr
+		}
+		if !s.limiterForIP(ip).Allow() {
 			writeJSON(w, http.StatusTooManyRequests, ErrorResponse{Error: "rate limit exceeded"})
 			return
 		}

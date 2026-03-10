@@ -15,6 +15,10 @@ import (
 	"github.com/amit-vikramaditya/v1claw/pkg/permissions"
 )
 
+// pathExtractPattern matches absolute paths in command strings (Windows & POSIX).
+// Compiled once at package init to avoid per-call overhead.
+var pathExtractPattern = regexp.MustCompile(`[A-Za-z]:\\[^\\\"'\s]+|/[^\s\"']+`)
+
 type ExecTool struct {
 	workingDir          string
 	timeout             time.Duration
@@ -294,7 +298,7 @@ func (t *ExecTool) guardCommand(command, cwd string) string {
 			return ""
 		}
 
-		pathPattern := regexp.MustCompile(`[A-Za-z]:\\[^\\\"'\s]+|/[^\s\"']+`)
+		pathPattern := pathExtractPattern
 		matches := pathPattern.FindAllString(cmd, -1)
 
 		for _, raw := range matches {

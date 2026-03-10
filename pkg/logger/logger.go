@@ -124,11 +124,11 @@ func logMessage(level LogLevel, component string, message string, fields map[str
 	if hasFile {
 		jsonData, err := json.Marshal(entry)
 		if err == nil {
-			mu.RLock()
+			mu.Lock()
 			if logger.file != nil {
 				_, _ = logger.file.WriteString(string(jsonData) + "\n")
 			}
-			mu.RUnlock()
+			mu.Unlock()
 		}
 	}
 

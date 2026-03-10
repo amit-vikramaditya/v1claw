@@ -3,7 +3,8 @@
     "defaults": {
       "workspace": "~/.v1claw/workspace",
       "restrict_to_workspace": true,
-      "model": "gemini-2.0-flash-lite",
+      "provider": "gemini",
+      "model": "gemini-3.1-pro-preview",
       "max_tokens": 8192,
       "temperature": 0.7,
       "max_tool_iterations": 20
@@ -96,6 +97,21 @@
     "gemini": {
       "api_key": "",
       "api_base": ""
+    },
+    "vertex": {
+      "project_id": "YOUR_GCP_PROJECT_ID",
+      "location": "us-central1",
+      "grounding": false
+    },
+    "bedrock": {
+      "region": "us-east-1",
+      "profile": "default"
+    },
+    "azure_openai": {
+      "endpoint": "https://YOUR_RESOURCE.openai.azure.com",
+      "deployment": "gpt-4o",
+      "api_key": "",
+      "api_version": "2024-10-21"
     },
     "vllm": {
       "api_key": "",

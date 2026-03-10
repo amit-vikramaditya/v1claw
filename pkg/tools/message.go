@@ -69,6 +69,10 @@ func (t *MessageTool) Execute(ctx context.Context, tc ToolContext, args map[stri
 		return ErrorResult("message send callback not configured")
 	}
 
+	if targetChannel == "" || targetChatID == "" {
+		return ErrorResult("No target channel/chat specified")
+	}
+
 	if err := t.sendCallback(targetChannel, targetChatID, content); err != nil {
 		return ErrorResult(fmt.Sprintf("failed to send message: %v", err))
 	}

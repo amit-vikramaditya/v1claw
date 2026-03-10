@@ -4,6 +4,7 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/amit-vikramaditya/v1claw/pkg/logger"
+	"golang.org/x/crypto/pbkdf2"
 )
 
 // MasterKeyEnvVar is the environment variable where the master encryption key is expected.
@@ -236,16 +238,23 @@ func DeleteAllCredentials() error {
 	return nil
 }
 
-// getMasterKey retrieves the 32-byte AES master key from the environment.
+// authKDFSalt is the application-level PBKDF2 salt.
+// NOTE: Changing this value invalidates all previously encrypted credentials.
+const authKDFSalt = "v1claw-auth-kdf-v1"
+
+// getMasterKey derives a 32-byte AES-256 key from the master passphrase using
+// PBKDF2-SHA256 (100 000 iterations).  The passphrase is read from the
+// V1CLAW_AUTH_MASTER_KEY environment variable and can be any non-empty string.
+// Using PBKDF2 provides two guarantees over raw key material:
+//   - Any length passphrase is accepted — no awkward "must be 32 bytes" constraint.
+//   - An attacker who steals auth.json must run 100 000 SHA-256 rounds per guess,
+//     making brute-force of weak passphrases significantly more expensive.
 func getMasterKey() ([]byte, error) {
 	keyStr := os.Getenv(MasterKeyEnvVar)
 	if keyStr == "" {
 		return nil, fmt.Errorf("environment variable %s is not set", MasterKeyEnvVar)
 	}
-	if len(keyStr) != 32 {
-		return nil, fmt.Errorf("master key must be 32 bytes long, got %d", len(keyStr))
-	}
-	return []byte(keyStr), nil
+	return pbkdf2.Key([]byte(keyStr), []byte(authKDFSalt), 100_000, 32, sha256.New), nil
 }
 
 // encrypt encrypts plaintext using AES-GCM.

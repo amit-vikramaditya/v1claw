@@ -7,6 +7,13 @@ import (
 	"time"
 )
 
+// TestMain sets required environment variables before running auth store tests.
+func TestMain(m *testing.M) {
+	// Auth store tests require a 32-byte AES master key.
+	os.Setenv("V1CLAW_AUTH_MASTER_KEY", "v1claw-test-master-key-32chars!!")
+	os.Exit(m.Run())
+}
+
 func TestAuthCredentialIsExpired(t *testing.T) {
 	tests := []struct {
 		name      string
