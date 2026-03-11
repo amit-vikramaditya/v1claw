@@ -200,10 +200,10 @@ try {
         }
     } else {
         $goCmd = Get-Command go -ErrorAction Stop
-        $source = Get-SourceDir -TempDir $tempDir
+        $sourceInfo = Get-SourceDir -TempDir $tempDir
 
         Write-Info "Building from source with $(& $goCmd.Source version)..."
-        Push-Location $source.Path
+        Push-Location $sourceInfo.Path
         try {
             & $goCmd.Source build -o $binaryPath ./cmd/v1claw
         } finally {
@@ -212,7 +212,7 @@ try {
         if (-not (Test-Path $binaryPath)) {
             Fail 'Source build failed.'
         }
-        $SourceDescription = $source.Description
+        $SourceDescription = $sourceInfo.Description
     }
 
     $targetPath = Join-Path $resolvedInstallDir $Binary
