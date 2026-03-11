@@ -24,6 +24,10 @@ Status: hardening pass paused; work committed for resume later
 - Fixed provider onboarding order so providers without built-in default models are configured first, then modeled, then validated instead of failing before a model is chosen.
 - Added explicit runtime support and regression coverage for keyless/self-hosted providers: `ollama`, `vllm`, and `github_copilot`, plus explicit `moonshot` provider creation.
 - Synced README setup docs with the real non-interactive/local-provider flows, including `--api-base` support and keyless/local provider examples.
+- Hardened release automation so the manual release workflow now reruns formatting, vet, test, and installer smoke jobs before tagging, refuses duplicate tags, and no longer hard-fails when Docker Hub credentials are intentionally absent.
+- Made Docker publishing configuration optional-safe in both GoReleaser and the Docker workflow, so GitHub releases and GHCR publishing are not blocked by missing Docker Hub secrets or repository variables.
+- Improved local-provider diagnostics in `doctor` and onboarding so down `ollama`, `vllm`, or `github_copilot` endpoints report actionable local fixes instead of generic API-key/internet advice.
+- Updated installer end-of-run guidance to show both cloud-key and local-provider setup examples.
 
 ## Validation completed
 
@@ -35,9 +39,10 @@ Status: hardening pass paused; work committed for resume later
 - Clean-home onboarding smoke test with `V1CLAW_HOME`
 - Custom-workspace onboarding smoke test
 - Targeted provider/setup regression tests covering CLI setup, migration, and provider creation
+- Clean local-provider smoke test with a stub OpenAI-compatible endpoint: installer, `onboard --auto`, `doctor`, and `agent -m` all passed end-to-end
+- Workflow/YAML parse validation for build, PR, release, Docker, and GoReleaser config
 
 ## Remaining work when resuming
 
 - Run live Windows/PowerShell install verification on a Windows machine.
-- Continue publish-readiness audit for remaining feature-claim gaps and first-run UX edges outside the provider/setup surface.
-- Final release pass: tag/release flow verification, install verification against published artifacts, and final README tightening.
+- Publish a tagged GitHub release and verify the installer against the real release artifacts once they exist.

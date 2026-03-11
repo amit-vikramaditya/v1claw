@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/amit-vikramaditya/v1claw/pkg/config"
@@ -82,4 +83,16 @@ func TestProviderCredentialStatus_OllamaUsesDefaultLocalEndpoint(t *testing.T) {
 	assert.Equal(t, "local Ollama endpoint at http://localhost:11434/v1", label)
 	assert.True(t, ready)
 	assert.Empty(t, hint)
+}
+
+func TestProviderConnectionHint_Ollama(t *testing.T) {
+	cfg := config.DefaultConfig()
+
+	assert.Equal(t, "Start Ollama and make sure http://localhost:11434/v1 is reachable.", providerConnectionHint(cfg, "ollama"))
+}
+
+func TestSimplifyProviderErrorFor_LocalProvider(t *testing.T) {
+	err := errors.New("dial tcp 127.0.0.1:11434: connect: connection refused")
+
+	assert.Equal(t, "Cannot reach the configured local endpoint.", simplifyProviderErrorFor("ollama", err))
 }

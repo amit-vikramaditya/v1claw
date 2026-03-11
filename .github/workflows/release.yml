@@ -19,8 +19,92 @@ on:
         default: false
 
 jobs:
+  fmt-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Check formatting
+        run: |
+          make fmt
+          git diff --exit-code || (echo "::error::Code is not formatted. Run 'make fmt' and commit the changes." && exit 1)
+
+  vet:
+    runs-on: ubuntu-latest
+    needs: fmt-check
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Run go vet
+        run: go vet ./...
+
+  test:
+    runs-on: ubuntu-latest
+    needs: fmt-check
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Run go test
+        run: go test ./...
+
+  installer-smoke:
+    runs-on: ubuntu-latest
+    needs: fmt-check
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Smoke test installer
+        run: |
+          INSTALL_DIR="$RUNNER_TEMP/v1claw-bin" bash ./install.sh --source
+          "$RUNNER_TEMP/v1claw-bin/v1claw" version
+
+  windows-installer-smoke:
+    runs-on: windows-latest
+    needs: fmt-check
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Smoke test PowerShell installer
+        shell: pwsh
+        run: |
+          $installDir = Join-Path $env:RUNNER_TEMP 'v1claw-bin'
+          Set-ExecutionPolicy Bypass -Scope Process -Force
+          .\install.ps1 -InstallDir $installDir -Source
+          & (Join-Path $installDir 'v1claw.exe') version
+
   create-tag:
     name: Create Git Tag
+    needs: [fmt-check, vet, test, installer-smoke, windows-installer-smoke]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -37,6 +121,10 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+          if git ls-remote --exit-code --tags origin "refs/tags/$RELEASE_TAG" >/dev/null 2>&1; then
+            echo "::error::Tag $RELEASE_TAG already exists on origin."
+            exit 1
+          fi
           git tag -a "$RELEASE_TAG" -m "Release $RELEASE_TAG"
           git push origin "$RELEASE_TAG"
 
@@ -73,6 +161,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Login to Docker Hub
+        if: ${{ secrets.DOCKERHUB_USERNAME != '' && secrets.DOCKERHUB_TOKEN != '' && vars.DOCKERHUB_REPOSITORY != '' }}
         uses: docker/login-action@v3
         with:
           registry: docker.io
