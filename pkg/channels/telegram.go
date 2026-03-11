@@ -57,17 +57,18 @@ func NewTelegramChannel(cfg *config.Config, bus *bus.MessageBus) (*TelegramChann
 	var opts []telego.BotOption
 	telegramCfg := cfg.Channels.Telegram
 
+	transport := &http.Transport{}
 	if telegramCfg.Proxy != "" {
 		proxyURL, parseErr := url.Parse(telegramCfg.Proxy)
 		if parseErr != nil {
 			return nil, fmt.Errorf("invalid proxy URL %q: %w", telegramCfg.Proxy, parseErr)
 		}
-		opts = append(opts, telego.WithHTTPClient(&http.Client{
-			Transport: &http.Transport{
-				Proxy: http.ProxyURL(proxyURL),
-			},
-		}))
+		transport.Proxy = http.ProxyURL(proxyURL)
 	}
+	opts = append(opts, telego.WithHTTPClient(&http.Client{
+		Transport: transport,
+		Timeout:   30 * time.Second,
+	}))
 
 	bot, err := telego.NewBot(telegramCfg.Token, opts...)
 	if err != nil {
@@ -113,15 +114,30 @@ func (c *TelegramChannel) Start(ctx context.Context) error {
 	}
 
 	c.setRunning(true)
+	username := ""
+	meCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	me, meErr := c.bot.GetMe(meCtx)
+	cancel()
+	if meErr != nil {
+		logger.WarnCF("telegram", "Telegram bot connected but failed to resolve bot profile", map[string]interface{}{
+			"error": meErr.Error(),
+		})
+	} else {
+		username = me.Username
+	}
 	logger.InfoCF("telegram", "Telegram bot connected", map[string]interface{}{
-		"username": c.bot.Username(),
+		"username": username,
 	})
 
 	if c.authOTP != "" {
 		fmt.Printf("\n=======================================================\n")
 		fmt.Printf("🔒 TELEGRAM BOT SECURITY: ACTION REQUIRED 🔒\n")
 		fmt.Printf("Your bot is running, but no users are authorized.\n")
-		fmt.Printf("Open Telegram, find your bot (@%s), and send this OTP:\n", c.bot.Username())
+		if username != "" {
+			fmt.Printf("Open Telegram, find your bot (@%s), and send this OTP:\n", username)
+		} else {
+			fmt.Printf("Open Telegram, find your bot, and send this OTP:\n")
+		}
 		fmt.Printf("OTP PIN: %s\n", c.authOTP)
 		fmt.Printf("=======================================================\n\n")
 	}
