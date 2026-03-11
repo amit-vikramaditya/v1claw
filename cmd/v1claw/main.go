@@ -204,6 +204,8 @@ func main() {
 		migrateCmd()
 	case "auth":
 		authCmd()
+	case "telegram":
+		telegramCmd()
 	case "cron":
 		cronCmd()
 	case "skills":
@@ -289,6 +291,7 @@ func printHelp() {
 	fmt.Println("  skills      Manage skills  (install, list, remove)")
 	fmt.Println("  cron        Manage scheduled tasks")
 	fmt.Println("  auth        Manage authentication (login, logout, status)")
+	fmt.Println("  telegram    Manage Telegram pairing and access")
 	fmt.Println("  migrate     Migrate from OpenClaw to V1Claw")
 	fmt.Println("  version     Show version information")
 	fmt.Println()

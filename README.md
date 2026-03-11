@@ -180,6 +180,11 @@ If you enabled Telegram, Discord, or other channels during onboarding, keep them
 v1claw gateway
 ```
 
+Telegram first-use pairing:
+- user sends any message to the bot
+- bot replies with a 6-digit OTP
+- approve it from the terminal with `v1claw telegram pairing <otp>`
+
 <details>
 <summary><b>Advanced non-interactive setup</b></summary>
 
