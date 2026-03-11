@@ -26,6 +26,8 @@ type OAuthProviderConfig struct {
 	Port       int
 }
 
+var oauthHTTPTimeout = 30 * time.Second
+
 func OpenAIOAuthConfig() OAuthProviderConfig {
 	return OAuthProviderConfig{
 		Issuer:     "https://auth.openai.com",
@@ -171,16 +173,35 @@ func parseFlexibleInt(raw json.RawMessage) (int, error) {
 	return 0, fmt.Errorf("invalid integer value: %s", string(raw))
 }
 
+func newOAuthHTTPClient() *http.Client {
+	return &http.Client{Timeout: oauthHTTPTimeout}
+}
+
+func doOAuthRequest(client *http.Client, method, endpoint, contentType string, body io.Reader) (*http.Response, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), oauthHTTPTimeout)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, method, endpoint, body)
+	if err != nil {
+		return nil, err
+	}
+	if contentType != "" {
+		req.Header.Set("Content-Type", contentType)
+	}
+	return client.Do(req)
+}
+
+func doOAuthFormPost(client *http.Client, endpoint string, data url.Values) (*http.Response, error) {
+	return doOAuthRequest(client, http.MethodPost, endpoint, "application/x-www-form-urlencoded", strings.NewReader(data.Encode()))
+}
+
 func LoginDeviceCode(cfg OAuthProviderConfig) (*AuthCredential, error) {
+	client := newOAuthHTTPClient()
 	reqBody, _ := json.Marshal(map[string]string{
 		"client_id": cfg.ClientID,
 	})
 
-	resp, err := http.Post(
-		cfg.Issuer+"/api/accounts/deviceauth/usercode",
-		"application/json",
-		strings.NewReader(string(reqBody)),
-	)
+	resp, err := doOAuthRequest(client, http.MethodPost, cfg.Issuer+"/api/accounts/deviceauth/usercode", "application/json", strings.NewReader(string(reqBody)))
 	if err != nil {
 		return nil, fmt.Errorf("requesting device code: %w", err)
 	}
@@ -212,7 +233,7 @@ func LoginDeviceCode(cfg OAuthProviderConfig) (*AuthCredential, error) {
 		case <-deadline:
 			return nil, fmt.Errorf("device code authentication timed out after 15 minutes")
 		case <-ticker.C:
-			cred, err := pollDeviceCode(cfg, deviceResp.DeviceAuthID, deviceResp.UserCode)
+			cred, err := pollDeviceCode(client, cfg, deviceResp.DeviceAuthID, deviceResp.UserCode)
 			if err != nil {
 				continue
 			}
@@ -223,17 +244,13 @@ func LoginDeviceCode(cfg OAuthProviderConfig) (*AuthCredential, error) {
 	}
 }
 
-func pollDeviceCode(cfg OAuthProviderConfig, deviceAuthID, userCode string) (*AuthCredential, error) {
+func pollDeviceCode(client *http.Client, cfg OAuthProviderConfig, deviceAuthID, userCode string) (*AuthCredential, error) {
 	reqBody, _ := json.Marshal(map[string]string{
 		"device_auth_id": deviceAuthID,
 		"user_code":      userCode,
 	})
 
-	resp, err := http.Post(
-		cfg.Issuer+"/api/accounts/deviceauth/token",
-		"application/json",
-		strings.NewReader(string(reqBody)),
-	)
+	resp, err := doOAuthRequest(client, http.MethodPost, cfg.Issuer+"/api/accounts/deviceauth/token", "application/json", strings.NewReader(string(reqBody)))
 	if err != nil {
 		return nil, err
 	}
@@ -255,7 +272,7 @@ func pollDeviceCode(cfg OAuthProviderConfig, deviceAuthID, userCode string) (*Au
 	}
 
 	redirectURI := cfg.Issuer + "/deviceauth/callback"
-	return exchangeCodeForTokens(cfg, tokenResp.AuthorizationCode, tokenResp.CodeVerifier, redirectURI)
+	return exchangeCodeForTokensWithClient(client, cfg, tokenResp.AuthorizationCode, tokenResp.CodeVerifier, redirectURI)
 }
 
 func RefreshAccessToken(cred *AuthCredential, cfg OAuthProviderConfig) (*AuthCredential, error) {
@@ -270,7 +287,7 @@ func RefreshAccessToken(cred *AuthCredential, cfg OAuthProviderConfig) (*AuthCre
 		"scope":         {"openid profile email"},
 	}
 
-	resp, err := http.PostForm(cfg.Issuer+"/oauth/token", data)
+	resp, err := doOAuthFormPost(newOAuthHTTPClient(), cfg.Issuer+"/oauth/token", data)
 	if err != nil {
 		return nil, fmt.Errorf("refreshing token: %w", err)
 	}
@@ -320,6 +337,10 @@ func buildAuthorizeURL(cfg OAuthProviderConfig, pkce PKCECodes, state, redirectU
 }
 
 func exchangeCodeForTokens(cfg OAuthProviderConfig, code, codeVerifier, redirectURI string) (*AuthCredential, error) {
+	return exchangeCodeForTokensWithClient(newOAuthHTTPClient(), cfg, code, codeVerifier, redirectURI)
+}
+
+func exchangeCodeForTokensWithClient(client *http.Client, cfg OAuthProviderConfig, code, codeVerifier, redirectURI string) (*AuthCredential, error) {
 	data := url.Values{
 		"grant_type":    {"authorization_code"},
 		"code":          {code},
@@ -328,7 +349,7 @@ func exchangeCodeForTokens(cfg OAuthProviderConfig, code, codeVerifier, redirect
 		"code_verifier": {codeVerifier},
 	}
 
-	resp, err := http.PostForm(cfg.Issuer+"/oauth/token", data)
+	resp, err := doOAuthFormPost(client, cfg.Issuer+"/oauth/token", data)
 	if err != nil {
 		return nil, fmt.Errorf("exchanging code for tokens: %w", err)
 	}

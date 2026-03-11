@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 )
 
 func makeJWTForClaims(t *testing.T, claims map[string]interface{}) string {
@@ -316,6 +317,64 @@ func TestRefreshAccessTokenPreservesRefreshAndAccountID(t *testing.T) {
 	}
 	if refreshed.AccountID != "acc_existing" {
 		t.Errorf("AccountID = %q, want %q", refreshed.AccountID, "acc_existing")
+	}
+}
+
+func TestExchangeCodeForTokens_UsesRequestTimeout(t *testing.T) {
+	oldTimeout := oauthHTTPTimeout
+	oauthHTTPTimeout = 20 * time.Millisecond
+	defer func() { oauthHTTPTimeout = oldTimeout }()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(100 * time.Millisecond)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"access_token":"late-token"}`))
+	}))
+	defer server.Close()
+
+	cfg := OAuthProviderConfig{
+		Issuer:   server.URL,
+		ClientID: "test-client",
+	}
+
+	_, err := exchangeCodeForTokens(cfg, "test-code", "test-verifier", "http://localhost:1455/auth/callback")
+	if err == nil {
+		t.Fatal("expected timeout error")
+	}
+	if !strings.Contains(err.Error(), "deadline exceeded") && !strings.Contains(err.Error(), "Client.Timeout") {
+		t.Fatalf("expected timeout-related error, got: %v", err)
+	}
+}
+
+func TestRefreshAccessToken_UsesRequestTimeout(t *testing.T) {
+	oldTimeout := oauthHTTPTimeout
+	oauthHTTPTimeout = 20 * time.Millisecond
+	defer func() { oauthHTTPTimeout = oldTimeout }()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(100 * time.Millisecond)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"access_token":"late-token"}`))
+	}))
+	defer server.Close()
+
+	cfg := OAuthProviderConfig{
+		Issuer:   server.URL,
+		ClientID: "test-client",
+	}
+	cred := &AuthCredential{
+		AccessToken:  "old-token",
+		RefreshToken: "old-refresh-token",
+		Provider:     "openai",
+		AuthMethod:   "oauth",
+	}
+
+	_, err := RefreshAccessToken(cred, cfg)
+	if err == nil {
+		t.Fatal("expected timeout error")
+	}
+	if !strings.Contains(err.Error(), "deadline exceeded") && !strings.Contains(err.Error(), "Client.Timeout") {
+		t.Fatalf("expected timeout-related error, got: %v", err)
 	}
 }
 

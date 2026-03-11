@@ -79,13 +79,10 @@ all: build
 
 ## generate: Run generate
 generate:
-	@echo "Run generate..."
-	@rm -r ./$(CMD_DIR)/workspace 2>/dev/null || true
-	@$(GO) generate ./...
-	@echo "Run generate complete"
+	@echo "No generated assets required"
 
 ## build: Build the v1claw binary for current platform
-build: generate
+build:
 	@echo "Building $(BINARY_NAME) for $(PLATFORM)/$(ARCH)..."
 	@mkdir -p $(BUILD_DIR)
 	@$(GO) build $(GOFLAGS) $(LDFLAGS) -o $(BINARY_PATH) ./$(CMD_DIR)
@@ -93,7 +90,7 @@ build: generate
 	@ln -sf $(BINARY_NAME)-$(PLATFORM)-$(ARCH) $(BUILD_DIR)/$(BINARY_NAME)
 
 ## build-all: Build v1claw for all platforms
-build-all: generate
+build-all:
 	@echo "Building for multiple platforms..."
 	@mkdir -p $(BUILD_DIR)
 	GOOS=linux GOARCH=amd64 $(GO) build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-linux-amd64 ./$(CMD_DIR)
@@ -181,7 +178,8 @@ help:
 	@echo ""
 	@echo "Environment Variables:"
 	@echo "  INSTALL_PREFIX          # Installation prefix (default: ~/.local)"
-	@echo "  WORKSPACE_DIR           # Workspace directory (default: ~/.v1claw/workspace)"
+	@echo "  V1CLAW_HOME            # App home directory (default: $(V1CLAW_HOME))"
+	@echo "  WORKSPACE_DIR           # Workspace directory (default: $(WORKSPACE_DIR))"
 	@echo "  VERSION                 # Version string (default: git describe)"
 	@echo ""
 	@echo "Current Configuration:"

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 )
@@ -242,6 +243,27 @@ func TestWebTool_SSRF_AllowedHosts(t *testing.T) {
 	}
 }
 
+func TestWebFetch_CheckRedirectBlocksPrivateHosts(t *testing.T) {
+	client := newWebFetchHTTPClient()
+
+	err := client.CheckRedirect(&http.Request{URL: mustParseURL(t, "http://localhost/path")}, []*http.Request{
+		{URL: mustParseURL(t, "https://example.com")},
+	})
+	if err == nil {
+		t.Fatal("expected redirect to blocked host to fail")
+	}
+	if !strings.Contains(err.Error(), "URL blocked") {
+		t.Fatalf("expected SSRF block, got: %v", err)
+	}
+}
+
+func TestWebFetch_BuildResultIncludesFetchedTextForLLM(t *testing.T) {
+	result := buildFetchResult("https://example.com", http.StatusOK, "text", false, "hello from the page")
+	if !strings.Contains(result, "\"text\": \"hello from the page\"") {
+		t.Fatalf("expected fetched text in result JSON, got: %s", result)
+	}
+}
+
 // TestWebTool_WebFetch_MissingDomain verifies error handling for URL without domain
 func TestWebTool_WebFetch_MissingDomain(t *testing.T) {
 	tool := NewWebFetchTool(50000)
@@ -261,4 +283,13 @@ func TestWebTool_WebFetch_MissingDomain(t *testing.T) {
 	if !strings.Contains(result.ForLLM, "domain") && !strings.Contains(result.ForUser, "domain") {
 		t.Errorf("Expected domain error message, got ForLLM: %s", result.ForLLM)
 	}
+}
+
+func mustParseURL(t *testing.T, raw string) *url.URL {
+	t.Helper()
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		t.Fatalf("parse URL %q: %v", raw, err)
+	}
+	return parsed
 }

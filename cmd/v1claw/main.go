@@ -9,7 +9,6 @@ package main
 import (
 	"bufio"
 	"context"
-	"embed"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -17,6 +16,7 @@ import (
 	"io/fs"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -25,9 +25,11 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
+	v1clawassets "github.com/amit-vikramaditya/v1claw"
 	"github.com/amit-vikramaditya/v1claw/pkg/agent"
 	"github.com/amit-vikramaditya/v1claw/pkg/api"
 	"github.com/amit-vikramaditya/v1claw/pkg/auth"
@@ -55,9 +57,7 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-//go:generate cp -r ../../workspace .
-//go:embed workspace
-var embeddedFiles embed.FS
+var embeddedFiles = v1clawassets.Workspace
 
 var (
 	version   = "dev"
@@ -68,7 +68,48 @@ var (
 
 const logo = "🤖"
 
+const (
+	clientWSWriteWait = 10 * time.Second
+	clientHTTPTimeout = 15 * time.Second
+)
+
 var microphoneSleep = time.Sleep
+
+type clientWSWriteConn interface {
+	WriteMessage(messageType int, data []byte) error
+	SetWriteDeadline(t time.Time) error
+}
+
+type clientWSWriter struct {
+	conn clientWSWriteConn
+	mu   sync.Mutex
+}
+
+func newClientWSWriter(conn clientWSWriteConn) *clientWSWriter {
+	return &clientWSWriter{conn: conn}
+}
+
+func (w *clientWSWriter) WriteJSON(payload interface{}) error {
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	return w.WriteMessage(websocket.TextMessage, data)
+}
+
+func (w *clientWSWriter) WriteMessage(messageType int, data []byte) error {
+	if w == nil || w.conn == nil {
+		return fmt.Errorf("websocket writer not initialized")
+	}
+
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	if err := w.conn.SetWriteDeadline(time.Now().Add(clientWSWriteWait)); err != nil {
+		return err
+	}
+	return w.conn.WriteMessage(messageType, data)
+}
 
 // formatVersion returns the version string with optional git commit
 func formatVersion() string {
@@ -372,6 +413,14 @@ func copyEmbeddedToTarget(targetDir string) error {
 		// Build target file path
 		targetPath := filepath.Join(targetDir, new_path)
 
+		// Never clobber an existing workspace file. Users are expected to
+		// customize these templates, so only seed missing files.
+		if _, err := os.Stat(targetPath); err == nil {
+			return nil
+		} else if !os.IsNotExist(err) {
+			return fmt.Errorf("Failed to stat existing file %s: %w", targetPath, err)
+		}
+
 		// Ensure target file's directory exists
 		if err := os.MkdirAll(filepath.Dir(targetPath), 0755); err != nil {
 			return fmt.Errorf("Failed to create directory %s: %w", filepath.Dir(targetPath), err)
@@ -455,14 +504,25 @@ func migrateHelp() {
 	fmt.Println("  --config-only      Only migrate config, skip workspace files")
 	fmt.Println("  --workspace-only   Only migrate workspace files, skip config")
 	fmt.Println("  --force            Skip confirmation prompts")
-	fmt.Println("  --openclaw-home    Override OpenClaw home directory (default: ~/.openclaw)")
-	fmt.Println("  --v1claw-home    Override V1Claw home directory (default: ~/.v1claw)")
+	fmt.Printf("  --openclaw-home    Override OpenClaw home directory (default: %s)\n", defaultOpenClawHome())
+	fmt.Printf("  --v1claw-home      Override V1Claw home directory (default: %s)\n", config.HomeDir())
 	fmt.Println()
 	fmt.Println("Examples:")
 	fmt.Println("  v1claw migrate              Detect and migrate from OpenClaw")
 	fmt.Println("  v1claw migrate --dry-run    Show what would be migrated")
 	fmt.Println("  v1claw migrate --refresh    Re-sync workspace files")
 	fmt.Println("  v1claw migrate --force      Migrate without confirmation")
+}
+
+func defaultOpenClawHome() string {
+	if envHome := os.Getenv("OPENCLAW_HOME"); envHome != "" {
+		return envHome
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ".openclaw"
+	}
+	return filepath.Join(home, ".openclaw")
 }
 
 func agentCmd() {
@@ -546,7 +606,7 @@ func interactiveMode(agentLoop *agent.AgentLoop, sessionKey string) {
 
 	rl, err := readline.NewEx(&readline.Config{
 		Prompt:          prompt,
-		HistoryFile:     filepath.Join(os.TempDir(), ".v1claw_history"),
+		HistoryFile:     historyFilePath("agent.history"),
 		HistoryLimit:    100,
 		InterruptPrompt: "^C",
 		EOFPrompt:       "exit",
@@ -644,6 +704,7 @@ func clientCmd() {
 	apiKey := ""
 	deviceName := ""
 	message := ""
+	advertiseHost := ""
 
 	args := os.Args[2:]
 	for i := 0; i < len(args); i++ {
@@ -663,6 +724,11 @@ func clientCmd() {
 				deviceName = args[i+1]
 				i++
 			}
+		case "--advertise-host":
+			if i+1 < len(args) {
+				advertiseHost = args[i+1]
+				i++
+			}
 		case "--debug", "-d":
 			logger.SetLevel(logger.DEBUG)
 			fmt.Println("🔍 Debug mode enabled")
@@ -675,18 +741,21 @@ func clientCmd() {
 	}
 
 	if server == "" {
-		fmt.Println("Usage: v1claw client --server <host:port> [options]")
+		fmt.Println("Usage: v1claw client --server <host[:port]|url> [options]")
 		fmt.Println()
 		fmt.Println("Options:")
-		fmt.Println("  --server, -s    Gateway address (required, e.g., 192.168.1.10:18791)")
+		fmt.Println("  --server, -s    Gateway address or URL (required)")
 		fmt.Println("  --api-key, -k   API key for authentication")
 		fmt.Println("  --name, -n      Device name (defaults to hostname)")
+		fmt.Println("  --advertise-host Hostname/IP this device should publish to the gateway")
 		fmt.Println("  --message, -m   Send a single message and exit")
 		fmt.Println("  --debug, -d     Enable debug logging")
 		fmt.Println()
 		fmt.Println("Examples:")
 		fmt.Println("  v1claw client --server mypc.tail1234.ts.net:18791")
+		fmt.Println("  v1claw client --server https://gateway.example.com")
 		fmt.Println("  v1claw client --server 100.91.10.18:18791 --api-key mykey")
+		fmt.Println("  v1claw client --server https://example.com/v1 --advertise-host phone.local")
 		fmt.Println("  v1claw client -s 192.168.1.10:18791 -m \"Hello from my phone\"")
 		os.Exit(1)
 	}
@@ -695,17 +764,23 @@ func clientCmd() {
 		deviceName, _ = os.Hostname()
 	}
 
+	endpoints, err := resolveClientEndpoints(server)
+	if err != nil {
+		fmt.Printf("Invalid gateway address: %v\n", err)
+		os.Exit(1)
+	}
+
 	// Detect local capabilities.
 	capabilities := detectCapabilities()
 
 	deviceID := fmt.Sprintf("%s-%s-%s", deviceName, runtime.GOOS, runtime.GOARCH)
 
-	fmt.Printf("%s Connecting to gateway at %s...\n", logo, server)
+	fmt.Printf("%s Connecting to gateway at %s...\n", logo, endpoints.HTTPBase)
 
 	// Build WebSocket URL — never append the API key as a query parameter
 	// because URLs appear in server logs and shell history in plaintext.
 	// The key is sent exclusively via the Authorization header below.
-	wsURL := fmt.Sprintf("ws://%s/api/v1/ws", server)
+	wsURL := endpoints.WSURL
 
 	header := http.Header{}
 	if apiKey != "" {
@@ -723,6 +798,8 @@ func clientCmd() {
 		os.Exit(1)
 	}
 	defer conn.Close()
+	wsWriter := newClientWSWriter(conn)
+	httpClient := &http.Client{Timeout: clientHTTPTimeout}
 
 	// Read welcome message to get client ID.
 	var welcomeMsg struct {
@@ -734,38 +811,46 @@ func clientCmd() {
 		os.Exit(1)
 	}
 	wsClientID := ""
+	wsRegisterToken := ""
 	if welcomeMsg.Data != nil {
 		if cid, ok := welcomeMsg.Data["client_id"].(string); ok {
 			wsClientID = cid
+		}
+		if token, ok := welcomeMsg.Data["registration_token"].(string); ok {
+			wsRegisterToken = token
 		}
 	}
 
 	fmt.Printf("%s Connected! (client: %s)\n", logo, wsClientID)
 
 	// Register this device with the gateway.
-	registerURL := fmt.Sprintf("http://%s/api/v1/devices", server)
+	registerURL := endpoints.DevicesURL
 	regBody := map[string]interface{}{
-		"id":           deviceID,
-		"name":         deviceName,
-		"host":         getOutboundIP(),
-		"platform":     runtime.GOOS,
-		"capabilities": capabilities,
-		"version":      version,
-		"ws_client_id": wsClientID,
+		"id":                deviceID,
+		"name":              deviceName,
+		"host":              getAdvertisedHost(endpoints.RouteTarget, advertiseHost),
+		"platform":          runtime.GOOS,
+		"capabilities":      capabilities,
+		"version":           version,
+		"ws_client_id":      wsClientID,
+		"ws_register_token": wsRegisterToken,
 	}
 	regData, _ := json.Marshal(regBody)
 
-	regReq, _ := http.NewRequest("POST", registerURL, strings.NewReader(string(regData)))
+	regReq, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, registerURL, strings.NewReader(string(regData)))
 	regReq.Header.Set("Content-Type", "application/json")
 	if apiKey != "" {
 		regReq.Header.Set("Authorization", "Bearer "+apiKey)
 	}
-	regResp, err := http.DefaultClient.Do(regReq)
+	regResp, err := httpClient.Do(regReq)
 	if err != nil {
 		fmt.Printf("⚠ Could not register device: %v\n", err)
 	} else {
+		body, _ := io.ReadAll(io.LimitReader(regResp.Body, 1024))
 		regResp.Body.Close()
-		if len(capabilities) > 0 {
+		if regResp.StatusCode != http.StatusOK {
+			fmt.Printf("⚠ Gateway rejected device registration (%s): %s\n", regResp.Status, strings.TrimSpace(string(body)))
+		} else if len(capabilities) > 0 {
 			fmt.Printf("✓ Device registered as %s (capabilities: %v)\n", deviceID, capabilities)
 		} else {
 			fmt.Printf("✓ Device registered as %s\n", deviceID)
@@ -778,7 +863,7 @@ func clientCmd() {
 
 	responseCh := make(chan string, 16)
 
-	go clientReadPump(ctx, conn, responseCh, capabilities)
+	go clientReadPump(ctx, conn, wsWriter, responseCh, capabilities)
 
 	// Send periodic heartbeats.
 	go func() {
@@ -788,8 +873,12 @@ func clientCmd() {
 			select {
 			case <-ticker.C:
 				msg := map[string]interface{}{"type": "ping", "timestamp": time.Now()}
-				data, _ := json.Marshal(msg)
-				conn.WriteMessage(websocket.TextMessage, data)
+				if err := wsWriter.WriteJSON(msg); err != nil {
+					logger.DebugC("client", fmt.Sprintf("Heartbeat write failed: %v", err))
+					cancel()
+					_ = conn.Close()
+					return
+				}
 			case <-ctx.Done():
 				return
 			}
@@ -798,7 +887,10 @@ func clientCmd() {
 
 	if message != "" {
 		// One-shot mode.
-		sendChat(conn, message, "client:"+deviceID)
+		if err := sendChat(wsWriter, message, "client:"+deviceID); err != nil {
+			fmt.Printf("Error sending message: %v\n", err)
+			return
+		}
 		select {
 		case resp := <-responseCh:
 			fmt.Printf("\n%s %s\n", logo, resp)
@@ -808,20 +900,23 @@ func clientCmd() {
 	} else {
 		// Interactive mode.
 		fmt.Printf("%s Interactive mode (Ctrl+C to exit)\n\n", logo)
-		clientInteractiveMode(conn, responseCh, deviceID)
+		clientInteractiveMode(wsWriter, responseCh, deviceID)
 	}
 
 	// Deregister on exit.
-	deregURL := fmt.Sprintf("http://%s/api/v1/devices/%s", server, deviceID)
-	deregReq, _ := http.NewRequest("DELETE", deregURL, nil)
+	deregURL := fmt.Sprintf("%s/%s", endpoints.DevicesURL, deviceID)
+	deregReq, _ := http.NewRequestWithContext(context.Background(), http.MethodDelete, deregURL, nil)
 	if apiKey != "" {
 		deregReq.Header.Set("Authorization", "Bearer "+apiKey)
 	}
-	http.DefaultClient.Do(deregReq)
+	if resp, err := httpClient.Do(deregReq); err == nil && resp != nil {
+		io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+	}
 	fmt.Println("\n✓ Disconnected from gateway")
 }
 
-func clientReadPump(ctx context.Context, conn *websocket.Conn, responseCh chan<- string, capabilities []string) {
+func clientReadPump(ctx context.Context, conn *websocket.Conn, writer *clientWSWriter, responseCh chan<- string, capabilities []string) {
 	for {
 		select {
 		case <-ctx.Done():
@@ -868,7 +963,7 @@ func clientReadPump(ctx context.Context, conn *websocket.Conn, responseCh chan<-
 			if err := json.Unmarshal(msg.Data, &req); err != nil {
 				continue
 			}
-			go handleCapabilityRequest(conn, req.RequestID, req.Capability, req.Action, req.Params)
+			go handleCapabilityRequest(writer, req.RequestID, req.Capability, req.Action, req.Params)
 
 		case "pong":
 			// Heartbeat acknowledged.
@@ -881,7 +976,7 @@ func clientReadPump(ctx context.Context, conn *websocket.Conn, responseCh chan<-
 	}
 }
 
-func handleCapabilityRequest(conn *websocket.Conn, requestID, capability, action string, params map[string]interface{}) {
+func handleCapabilityRequest(writer *clientWSWriter, requestID, capability, action string, params map[string]interface{}) {
 	logger.InfoCF("client", "Capability request received", map[string]interface{}{
 		"request_id": requestID, "capability": capability, "action": action,
 	})
@@ -911,7 +1006,9 @@ func handleCapabilityRequest(conn *websocket.Conn, requestID, capability, action
 		"timestamp": time.Now(),
 	}
 	data, _ := json.Marshal(resp)
-	conn.WriteMessage(websocket.TextMessage, data)
+	if err := writer.WriteMessage(websocket.TextMessage, data); err != nil {
+		logger.DebugC("client", fmt.Sprintf("Capability response write failed: %v", err))
+	}
 }
 
 func executeLocalCapability(capability, action string, params map[string]interface{}, termuxRootOverride string) (interface{}, string) {
@@ -1009,7 +1106,7 @@ func base64Encode(data []byte) string {
 	return base64.StdEncoding.EncodeToString(data)
 }
 
-func sendChat(conn *websocket.Conn, message, sessionKey string) {
+func sendChat(writer *clientWSWriter, message, sessionKey string) error {
 	msg := map[string]interface{}{
 		"type": "chat",
 		"data": map[string]interface{}{
@@ -1018,17 +1115,16 @@ func sendChat(conn *websocket.Conn, message, sessionKey string) {
 		},
 		"timestamp": time.Now(),
 	}
-	data, _ := json.Marshal(msg)
-	conn.WriteMessage(websocket.TextMessage, data)
+	return writer.WriteJSON(msg)
 }
 
-func clientInteractiveMode(conn *websocket.Conn, responseCh <-chan string, deviceID string) {
+func clientInteractiveMode(writer *clientWSWriter, responseCh <-chan string, deviceID string) {
 	prompt := fmt.Sprintf("%s You: ", logo)
 	sessionKey := "client:" + deviceID
 
 	rl, err := readline.NewEx(&readline.Config{
 		Prompt:          prompt,
-		HistoryFile:     filepath.Join(os.TempDir(), ".v1claw_client_history"),
+		HistoryFile:     historyFilePath("client.history"),
 		HistoryLimit:    100,
 		InterruptPrompt: "^C",
 		EOFPrompt:       "exit",
@@ -1057,7 +1153,10 @@ func clientInteractiveMode(conn *websocket.Conn, responseCh <-chan string, devic
 			return
 		}
 
-		sendChat(conn, input, sessionKey)
+		if err := sendChat(writer, input, sessionKey); err != nil {
+			fmt.Printf("\n⚠ Error sending message: %v\n", err)
+			return
+		}
 
 		select {
 		case resp := <-responseCh:
@@ -1119,14 +1218,244 @@ func detectCapabilities() []string {
 	return unique
 }
 
-func getOutboundIP() string {
-	conn, err := net.Dial("udp", "8.8.8.8:80")
+type clientEndpoints struct {
+	HTTPBase    string
+	WSURL       string
+	DevicesURL  string
+	RouteTarget string
+}
+
+func resolveClientEndpoints(server string) (clientEndpoints, error) {
+	raw := strings.TrimSpace(server)
+	if raw == "" {
+		return clientEndpoints{}, fmt.Errorf("gateway address is empty")
+	}
+
+	if strings.Contains(raw, "://") {
+		return resolveClientEndpointsFromURL(raw)
+	}
+
+	host, port, err := splitClientHostPort(raw)
 	if err != nil {
-		return "unknown"
+		return clientEndpoints{}, err
+	}
+
+	hostPort := net.JoinHostPort(host, port)
+	httpBase := fmt.Sprintf("http://%s", hostPort)
+	return clientEndpoints{
+		HTTPBase:    httpBase,
+		WSURL:       fmt.Sprintf("ws://%s/api/v1/ws", hostPort),
+		DevicesURL:  fmt.Sprintf("%s/api/v1/devices", httpBase),
+		RouteTarget: hostPort,
+	}, nil
+}
+
+func resolveClientEndpointsFromURL(raw string) (clientEndpoints, error) {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return clientEndpoints{}, err
+	}
+	if u.Host == "" {
+		return clientEndpoints{}, fmt.Errorf("gateway URL must include a host")
+	}
+	if u.RawQuery != "" || u.Fragment != "" {
+		return clientEndpoints{}, fmt.Errorf("gateway URL must not include query parameters or fragments")
+	}
+
+	httpScheme, wsScheme, err := clientTransportSchemes(strings.ToLower(u.Scheme))
+	if err != nil {
+		return clientEndpoints{}, err
+	}
+
+	pathPrefix := strings.TrimRight(u.EscapedPath(), "/")
+	httpBase := fmt.Sprintf("%s://%s%s", httpScheme, u.Host, pathPrefix)
+	return clientEndpoints{
+		HTTPBase:    httpBase,
+		WSURL:       fmt.Sprintf("%s://%s%s/api/v1/ws", wsScheme, u.Host, pathPrefix),
+		DevicesURL:  fmt.Sprintf("%s/api/v1/devices", httpBase),
+		RouteTarget: routeTargetForURL(u, httpScheme),
+	}, nil
+}
+
+func clientTransportSchemes(scheme string) (httpScheme string, wsScheme string, err error) {
+	switch scheme {
+	case "http", "ws":
+		return "http", "ws", nil
+	case "https", "wss":
+		return "https", "wss", nil
+	default:
+		return "", "", fmt.Errorf("unsupported gateway URL scheme %q", scheme)
+	}
+}
+
+func splitClientHostPort(raw string) (string, string, error) {
+	if raw == "" {
+		return "", "", fmt.Errorf("gateway address is empty")
+	}
+
+	if strings.HasPrefix(raw, "[") {
+		host, port, err := net.SplitHostPort(raw)
+		if err != nil {
+			return "", "", fmt.Errorf("invalid gateway address %q", raw)
+		}
+		return host, port, nil
+	}
+
+	if ip := net.ParseIP(raw); ip != nil {
+		return raw, "18791", nil
+	}
+
+	if host, port, err := net.SplitHostPort(raw); err == nil {
+		return host, port, nil
+	}
+
+	if !strings.Contains(raw, ":") {
+		return raw, "18791", nil
+	}
+
+	return "", "", fmt.Errorf("invalid gateway address %q", raw)
+}
+
+func routeTargetForURL(u *url.URL, httpScheme string) string {
+	if u == nil {
+		return ""
+	}
+	if u.Port() != "" {
+		return u.Host
+	}
+
+	port := "80"
+	if httpScheme == "https" {
+		port = "443"
+	}
+	return net.JoinHostPort(u.Hostname(), port)
+}
+
+func getAdvertisedHost(routeTarget string, override string) string {
+	if host := strings.TrimSpace(override); host != "" {
+		return host
+	}
+	if host := strings.TrimSpace(os.Getenv("V1CLAW_ADVERTISE_HOST")); host != "" {
+		return host
+	}
+	if host := advertisedHostFromRoute(routeTarget); host != "" {
+		return host
+	}
+	return advertisedHostFromInterfaces()
+}
+
+func advertisedHostFromRoute(routeTarget string) string {
+	if strings.TrimSpace(routeTarget) == "" {
+		return ""
+	}
+
+	conn, err := net.Dial("udp", routeTarget)
+	if err != nil {
+		return ""
 	}
 	defer conn.Close()
-	localAddr := conn.LocalAddr().(*net.UDPAddr)
+
+	localAddr, ok := conn.LocalAddr().(*net.UDPAddr)
+	if !ok || !isAdvertisableIP(localAddr.IP) {
+		return ""
+	}
 	return localAddr.IP.String()
+}
+
+func advertisedHostFromInterfaces() string {
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return ""
+	}
+
+	var candidates []net.IP
+	for _, iface := range ifaces {
+		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+
+		addrs, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, addr := range addrs {
+			ip := ipFromNetAddr(addr)
+			if isAdvertisableIP(ip) {
+				candidates = append(candidates, ip)
+			}
+		}
+	}
+
+	return selectAdvertisedIP(candidates)
+}
+
+func ipFromNetAddr(addr net.Addr) net.IP {
+	switch v := addr.(type) {
+	case *net.IPNet:
+		return v.IP
+	case *net.IPAddr:
+		return v.IP
+	default:
+		return nil
+	}
+}
+
+func isAdvertisableIP(ip net.IP) bool {
+	if ip == nil {
+		return false
+	}
+	return !ip.IsLoopback() &&
+		!ip.IsUnspecified() &&
+		!ip.IsMulticast() &&
+		!ip.IsLinkLocalUnicast() &&
+		!ip.IsLinkLocalMulticast()
+}
+
+func selectAdvertisedIP(candidates []net.IP) string {
+	bestRank := 999
+	bestIP := ""
+	for _, ip := range candidates {
+		rank := advertiseIPRank(ip)
+		if rank < bestRank || (rank == bestRank && ip.String() < bestIP) {
+			bestRank = rank
+			bestIP = ip.String()
+		}
+	}
+	return bestIP
+}
+
+func advertiseIPRank(ip net.IP) int {
+	if !isAdvertisableIP(ip) {
+		return 999
+	}
+
+	if ip4 := ip.To4(); ip4 != nil {
+		switch {
+		case ip4.IsPrivate() || isCarrierGradeNAT(ip4):
+			return 0
+		case ip4.IsGlobalUnicast():
+			return 1
+		default:
+			return 4
+		}
+	}
+
+	switch {
+	case ip.IsPrivate():
+		return 2
+	case ip.IsGlobalUnicast():
+		return 3
+	default:
+		return 4
+	}
+}
+
+func isCarrierGradeNAT(ip net.IP) bool {
+	ip4 := ip.To4()
+	if ip4 == nil {
+		return false
+	}
+	return ip4[0] == 100 && ip4[1] >= 64 && ip4[1] <= 127
 }
 
 func gatewayCmd() {
@@ -1182,6 +1511,8 @@ func gatewayCmd() {
 		permissions.Clipboard:     cfg.Permissions.Clipboard,
 		permissions.Sensors:       cfg.Permissions.Sensors,
 		permissions.ShellHardware: cfg.Permissions.ShellHardware,
+		permissions.Notifications: cfg.Permissions.Notifications,
+		permissions.Screen:        cfg.Permissions.Screen,
 	}); err != nil {
 		fmt.Printf("Error setting permissions: %v\n", err)
 		os.Exit(1)
@@ -1227,7 +1558,7 @@ func gatewayCmd() {
 
 	// Setup cron tool and service
 	execTimeout := time.Duration(cfg.Tools.Cron.ExecTimeoutMinutes) * time.Minute
-	cronService := setupCronTool(ctx, agentLoop, msgBus, cfg.WorkspacePath(), cfg.Agents.Defaults.RestrictToWorkspace, execTimeout)
+	cronService := setupCronTool(ctx, agentLoop, msgBus, cfg.WorkspacePath(), cfg.Agents.Defaults.RestrictToWorkspace, cfg.Workspace.Sandboxed, execTimeout)
 
 	heartbeatService := heartbeat.NewHeartbeatService(
 		cfg.WorkspacePath(),
@@ -1912,18 +2243,25 @@ func authStatusCmd() {
 }
 
 func getConfigPath() string {
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".v1claw", "config.json")
+	return config.ConfigPath()
 }
 
-func setupCronTool(ctx context.Context, agentLoop *agent.AgentLoop, msgBus *bus.MessageBus, workspace string, restrict bool, execTimeout time.Duration) *cron.CronService {
+func historyFilePath(name string) string {
+	historyDir := filepath.Join(config.HomeDir(), "history")
+	if err := os.MkdirAll(historyDir, 0700); err == nil {
+		return filepath.Join(historyDir, name)
+	}
+	return filepath.Join(os.TempDir(), name)
+}
+
+func setupCronTool(ctx context.Context, agentLoop *agent.AgentLoop, msgBus *bus.MessageBus, workspace string, restrict bool, sandboxed bool, execTimeout time.Duration) *cron.CronService {
 	cronStorePath := filepath.Join(workspace, "cron", "jobs.json")
 
 	// Create cron service
 	cronService := cron.NewCronService(cronStorePath, nil)
 
 	// Create and register CronTool
-	cronTool := tools.NewCronTool(cronService, agentLoop, msgBus, workspace, restrict, execTimeout)
+	cronTool := tools.NewCronTool(cronService, agentLoop, msgBus, workspace, restrict, sandboxed, execTimeout)
 	agentLoop.RegisterTool(cronTool)
 
 	// Set the onJob handler — use the gateway lifetime context so cron jobs
@@ -2225,7 +2563,7 @@ func skillsRemoveCmd(installer *skills.SkillInstaller, skillName string) {
 func detectBuiltinSkillsDir(workspace string) string {
 	candidates := []string{
 		filepath.Join(workspace, "skills"),
-		filepath.Join(filepath.Dir(getConfigPath()), "v1claw", "skills"),
+		config.GlobalSkillsDir(),
 		filepath.Join(".", "workspace", "skills"),
 		filepath.Join(".", "cmd", "v1claw", "workspace", "skills"),
 		filepath.Join(".", "skills"),

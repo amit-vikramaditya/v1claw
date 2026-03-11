@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/amit-vikramaditya/v1claw/pkg/config"
@@ -56,13 +57,7 @@ func printCurrentState(cfg *config.Config) {
 	}
 
 	channels := "None"
-	var activeChannels []string
-	if cfg.Channels.Telegram.Enabled {
-		activeChannels = append(activeChannels, "Telegram")
-	}
-	if cfg.Channels.Discord.Enabled {
-		activeChannels = append(activeChannels, "Discord")
-	}
+	activeChannels := enabledChannelNames(cfg)
 	if len(activeChannels) > 0 {
 		channels = strings.Join(activeChannels, ", ")
 	}
@@ -148,7 +143,8 @@ func configureCmd() {
 						huh.NewOption("🏠 The Home — "+grayStyle.Render("Workspace & Security"), "workspace"),
 						huh.NewOption("🧠 The Brain — "+grayStyle.Render("Providers & Council"), "models"),
 						huh.NewOption("🧰 Tools — "+grayStyle.Render("Skills & Search"), "tools"),
-						huh.NewOption("📡 Channels — "+grayStyle.Render("Telegram & Discord"), "channels"),
+						huh.NewOption("🔐 Permissions — "+grayStyle.Render("Camera, mic, screen, notifications"), "permissions"),
+						huh.NewOption("📡 Channels — "+grayStyle.Render("Telegram, Slack, WhatsApp, LINE, and more"), "channels"),
 						huh.NewOption("🧬 Identity — "+grayStyle.Render("Soul & User"), "identity"),
 						huh.NewOption("💾 Save & Exit", "save"),
 					).
@@ -169,6 +165,8 @@ func configureCmd() {
 			configureModels(cfg)
 		case "tools":
 			configureTools(cfg)
+		case "permissions":
+			configurePermissions(cfg)
 		case "channels":
 			configureChannels(cfg)
 		case "identity":
@@ -538,10 +536,72 @@ func configureTools(cfg *config.Config) {
 	}
 }
 
+func configurePermissions(cfg *config.Config) {
+	fmt.Println(headerStyle.Render("┌  Permissions (What the AI may touch)"))
+
+	selected := enabledPermissionIDs(cfg)
+	huh.NewForm(
+		huh.NewGroup(
+			huh.NewMultiSelect[string]().
+				Title("Select hardware and system permissions").
+				Description("Everything is deny-by-default. Only enable what you want the AI to access.").
+				Options(
+					huh.NewOption("Camera — "+grayStyle.Render("Take photos and analyze images"), "camera"),
+					huh.NewOption("Microphone — "+grayStyle.Render("Record audio and use voice input"), "microphone"),
+					huh.NewOption("Screen — "+grayStyle.Render("Capture screenshots"), "screen"),
+					huh.NewOption("Notifications — "+grayStyle.Render("Show Android notifications and toasts"), "notifications"),
+					huh.NewOption("Clipboard — "+grayStyle.Render("Read and write clipboard text"), "clipboard"),
+					huh.NewOption("Location — "+grayStyle.Render("GPS and Wi-Fi location info"), "location"),
+					huh.NewOption("SMS — "+grayStyle.Render("Send and read text messages"), "sms"),
+					huh.NewOption("Phone Calls — "+grayStyle.Render("Initiate phone calls"), "phone_calls"),
+					huh.NewOption("Sensors — "+grayStyle.Render("Read device sensor data"), "sensors"),
+					huh.NewOption("Hardware Shell — "+grayStyle.Render("Termux hardware shell commands, SPI/I2C"), "shell_hardware"),
+				).
+				Value(&selected),
+		),
+	).Run()
+
+	cfg.Permissions.Camera = false
+	cfg.Permissions.Microphone = false
+	cfg.Permissions.Screen = false
+	cfg.Permissions.Notifications = false
+	cfg.Permissions.Clipboard = false
+	cfg.Permissions.Location = false
+	cfg.Permissions.SMS = false
+	cfg.Permissions.PhoneCalls = false
+	cfg.Permissions.Sensors = false
+	cfg.Permissions.ShellHardware = false
+
+	for _, permissionID := range selected {
+		switch permissionID {
+		case "camera":
+			cfg.Permissions.Camera = true
+		case "microphone":
+			cfg.Permissions.Microphone = true
+		case "screen":
+			cfg.Permissions.Screen = true
+		case "notifications":
+			cfg.Permissions.Notifications = true
+		case "clipboard":
+			cfg.Permissions.Clipboard = true
+		case "location":
+			cfg.Permissions.Location = true
+		case "sms":
+			cfg.Permissions.SMS = true
+		case "phone_calls":
+			cfg.Permissions.PhoneCalls = true
+		case "sensors":
+			cfg.Permissions.Sensors = true
+		case "shell_hardware":
+			cfg.Permissions.ShellHardware = true
+		}
+	}
+}
+
 func configureChannels(cfg *config.Config) {
 	fmt.Println(headerStyle.Render("┌  Channels (Where to talk)"))
 
-	var selectedChannels []string
+	selectedChannels := enabledChannelIDs(cfg)
 	huh.NewForm(
 		huh.NewGroup(
 			huh.NewMultiSelect[string]().
@@ -550,28 +610,191 @@ func configureChannels(cfg *config.Config) {
 					huh.NewOption("Telegram — "+grayStyle.Render("Talk via Telegram bot"), "telegram"),
 					huh.NewOption("Discord — "+grayStyle.Render("Connect to your server"), "discord"),
 					huh.NewOption("Slack — "+grayStyle.Render("Integrate with workspace"), "slack"),
+					huh.NewOption("WhatsApp — "+grayStyle.Render("Bridge via WebSocket service"), "whatsapp"),
+					huh.NewOption("LINE — "+grayStyle.Render("Official account webhook"), "line"),
+					huh.NewOption("DingTalk — "+grayStyle.Render("Enterprise chat"), "dingtalk"),
+					huh.NewOption("Feishu/Lark — "+grayStyle.Render("Event subscription bot"), "feishu"),
+					huh.NewOption("QQ — "+grayStyle.Render("Official bot API"), "qq"),
+					huh.NewOption("OneBot — "+grayStyle.Render("QQ bridge / v11 WebSocket"), "onebot"),
+					huh.NewOption("MaixCam — "+grayStyle.Render("IoT TCP device channel"), "maixcam"),
 				).
 				Value(&selectedChannels),
 		),
 	).Run()
 
+	disableAllChannels(cfg)
+
 	for _, ch := range selectedChannels {
-		if ch == "telegram" {
-			var token string
-			huh.NewForm(
-				huh.NewGroup(
-					huh.NewInput().
-						Title("Enter Telegram Bot Token").
-						Description("Get this from @BotFather").
-						Value(&token),
-				),
-			).Run()
-			if token != "" {
-				cfg.Channels.Telegram.Enabled = true
-				cfg.Channels.Telegram.Token = token
-			}
+		switch ch {
+		case "telegram":
+			promptChannelInput("Telegram Bot Token", "Get this from @BotFather", &cfg.Channels.Telegram.Token)
+			cfg.Channels.Telegram.Enabled = strings.TrimSpace(cfg.Channels.Telegram.Token) != ""
+		case "discord":
+			promptChannelInput("Discord Bot Token", "Create this in the Discord developer portal", &cfg.Channels.Discord.Token)
+			cfg.Channels.Discord.Enabled = strings.TrimSpace(cfg.Channels.Discord.Token) != ""
+		case "slack":
+			promptChannelInput("Slack Bot Token", "Starts with xoxb-", &cfg.Channels.Slack.BotToken)
+			promptChannelInput("Slack App Token", "Starts with xapp-", &cfg.Channels.Slack.AppToken)
+			cfg.Channels.Slack.Enabled = strings.TrimSpace(cfg.Channels.Slack.BotToken) != "" && strings.TrimSpace(cfg.Channels.Slack.AppToken) != ""
+		case "whatsapp":
+			promptChannelInput("WhatsApp Bridge URL", "Example: ws://127.0.0.1:3001", &cfg.Channels.WhatsApp.BridgeURL)
+			promptChannelInput("WhatsApp Bridge Token (optional)", "Leave empty if your bridge does not require auth", &cfg.Channels.WhatsApp.BridgeToken)
+			cfg.Channels.WhatsApp.Enabled = strings.TrimSpace(cfg.Channels.WhatsApp.BridgeURL) != ""
+		case "line":
+			promptChannelInput("LINE Channel Secret", "From your LINE Official Account settings", &cfg.Channels.LINE.ChannelSecret)
+			promptChannelInput("LINE Channel Access Token", "Messaging API access token", &cfg.Channels.LINE.ChannelAccessToken)
+			promptChannelInput("LINE Webhook Host", "Public host that LINE can reach", &cfg.Channels.LINE.WebhookHost)
+			promptChannelInt("LINE Webhook Port", "HTTP port for the local webhook server", &cfg.Channels.LINE.WebhookPort)
+			promptChannelInput("LINE Webhook Path", "Example: /webhook/line", &cfg.Channels.LINE.WebhookPath)
+			cfg.Channels.LINE.Enabled = strings.TrimSpace(cfg.Channels.LINE.ChannelSecret) != "" && strings.TrimSpace(cfg.Channels.LINE.ChannelAccessToken) != ""
+		case "dingtalk":
+			promptChannelInput("DingTalk Client ID", "From your DingTalk app settings", &cfg.Channels.DingTalk.ClientID)
+			promptChannelInput("DingTalk Client Secret", "From your DingTalk app settings", &cfg.Channels.DingTalk.ClientSecret)
+			cfg.Channels.DingTalk.Enabled = strings.TrimSpace(cfg.Channels.DingTalk.ClientID) != "" && strings.TrimSpace(cfg.Channels.DingTalk.ClientSecret) != ""
+		case "feishu":
+			promptChannelInput("Feishu App ID", "From your Feishu/Lark app settings", &cfg.Channels.Feishu.AppID)
+			promptChannelInput("Feishu App Secret", "From your Feishu/Lark app settings", &cfg.Channels.Feishu.AppSecret)
+			promptChannelInput("Feishu Encrypt Key (optional)", "Required only if your app uses encrypted events", &cfg.Channels.Feishu.EncryptKey)
+			promptChannelInput("Feishu Verification Token (optional)", "Required if your event subscription uses a token", &cfg.Channels.Feishu.VerificationToken)
+			cfg.Channels.Feishu.Enabled = strings.TrimSpace(cfg.Channels.Feishu.AppID) != "" && strings.TrimSpace(cfg.Channels.Feishu.AppSecret) != ""
+		case "qq":
+			promptChannelInput("QQ App ID", "From your QQ bot app settings", &cfg.Channels.QQ.AppID)
+			promptChannelInput("QQ App Secret", "From your QQ bot app settings", &cfg.Channels.QQ.AppSecret)
+			cfg.Channels.QQ.Enabled = strings.TrimSpace(cfg.Channels.QQ.AppID) != "" && strings.TrimSpace(cfg.Channels.QQ.AppSecret) != ""
+		case "onebot":
+			promptChannelInput("OneBot WebSocket URL", "Example: ws://127.0.0.1:3001", &cfg.Channels.OneBot.WSUrl)
+			promptChannelInput("OneBot Access Token (optional)", "Leave empty if your bridge does not require auth", &cfg.Channels.OneBot.AccessToken)
+			promptChannelInt("OneBot Reconnect Interval (seconds)", "How long to wait before reconnecting", &cfg.Channels.OneBot.ReconnectInterval)
+			cfg.Channels.OneBot.Enabled = strings.TrimSpace(cfg.Channels.OneBot.WSUrl) != ""
+		case "maixcam":
+			promptChannelInput("MaixCam Bind Host", "Example: 0.0.0.0", &cfg.Channels.MaixCam.Host)
+			promptChannelInt("MaixCam Port", "TCP port for incoming device connections", &cfg.Channels.MaixCam.Port)
+			promptChannelInput("MaixCam Token (optional)", "Leave empty if devices do not require a shared token", &cfg.Channels.MaixCam.Token)
+			cfg.Channels.MaixCam.Enabled = strings.TrimSpace(cfg.Channels.MaixCam.Host) != "" && cfg.Channels.MaixCam.Port > 0
 		}
-		// Repeat for other channels...
+	}
+}
+
+func enabledChannelNames(cfg *config.Config) []string {
+	type channelState struct {
+		name    string
+		enabled bool
+	}
+	states := []channelState{
+		{name: "Telegram", enabled: cfg.Channels.Telegram.Enabled},
+		{name: "Discord", enabled: cfg.Channels.Discord.Enabled},
+		{name: "Slack", enabled: cfg.Channels.Slack.Enabled},
+		{name: "WhatsApp", enabled: cfg.Channels.WhatsApp.Enabled},
+		{name: "LINE", enabled: cfg.Channels.LINE.Enabled},
+		{name: "DingTalk", enabled: cfg.Channels.DingTalk.Enabled},
+		{name: "Feishu", enabled: cfg.Channels.Feishu.Enabled},
+		{name: "QQ", enabled: cfg.Channels.QQ.Enabled},
+		{name: "OneBot", enabled: cfg.Channels.OneBot.Enabled},
+		{name: "MaixCam", enabled: cfg.Channels.MaixCam.Enabled},
+	}
+
+	var enabled []string
+	for _, state := range states {
+		if state.enabled {
+			enabled = append(enabled, state.name)
+		}
+	}
+	return enabled
+}
+
+func enabledChannelIDs(cfg *config.Config) []string {
+	type channelState struct {
+		id      string
+		enabled bool
+	}
+	states := []channelState{
+		{id: "telegram", enabled: cfg.Channels.Telegram.Enabled},
+		{id: "discord", enabled: cfg.Channels.Discord.Enabled},
+		{id: "slack", enabled: cfg.Channels.Slack.Enabled},
+		{id: "whatsapp", enabled: cfg.Channels.WhatsApp.Enabled},
+		{id: "line", enabled: cfg.Channels.LINE.Enabled},
+		{id: "dingtalk", enabled: cfg.Channels.DingTalk.Enabled},
+		{id: "feishu", enabled: cfg.Channels.Feishu.Enabled},
+		{id: "qq", enabled: cfg.Channels.QQ.Enabled},
+		{id: "onebot", enabled: cfg.Channels.OneBot.Enabled},
+		{id: "maixcam", enabled: cfg.Channels.MaixCam.Enabled},
+	}
+
+	var enabled []string
+	for _, state := range states {
+		if state.enabled {
+			enabled = append(enabled, state.id)
+		}
+	}
+	return enabled
+}
+
+func disableAllChannels(cfg *config.Config) {
+	cfg.Channels.Telegram.Enabled = false
+	cfg.Channels.Discord.Enabled = false
+	cfg.Channels.Slack.Enabled = false
+	cfg.Channels.WhatsApp.Enabled = false
+	cfg.Channels.LINE.Enabled = false
+	cfg.Channels.DingTalk.Enabled = false
+	cfg.Channels.Feishu.Enabled = false
+	cfg.Channels.QQ.Enabled = false
+	cfg.Channels.OneBot.Enabled = false
+	cfg.Channels.MaixCam.Enabled = false
+}
+
+func enabledPermissionIDs(cfg *config.Config) []string {
+	type permissionState struct {
+		id      string
+		enabled bool
+	}
+	states := []permissionState{
+		{id: "camera", enabled: cfg.Permissions.Camera},
+		{id: "microphone", enabled: cfg.Permissions.Microphone},
+		{id: "screen", enabled: cfg.Permissions.Screen},
+		{id: "notifications", enabled: cfg.Permissions.Notifications},
+		{id: "clipboard", enabled: cfg.Permissions.Clipboard},
+		{id: "location", enabled: cfg.Permissions.Location},
+		{id: "sms", enabled: cfg.Permissions.SMS},
+		{id: "phone_calls", enabled: cfg.Permissions.PhoneCalls},
+		{id: "sensors", enabled: cfg.Permissions.Sensors},
+		{id: "shell_hardware", enabled: cfg.Permissions.ShellHardware},
+	}
+
+	var enabled []string
+	for _, state := range states {
+		if state.enabled {
+			enabled = append(enabled, state.id)
+		}
+	}
+	return enabled
+}
+
+func promptChannelInput(title string, description string, value *string) {
+	huh.NewForm(
+		huh.NewGroup(
+			huh.NewInput().
+				Title(title).
+				Description(description).
+				Value(value),
+		),
+	).Run()
+}
+
+func promptChannelInt(title string, description string, value *int) {
+	textValue := fmt.Sprintf("%d", *value)
+	huh.NewForm(
+		huh.NewGroup(
+			huh.NewInput().
+				Title(title).
+				Description(description).
+				Value(&textValue),
+		),
+	).Run()
+
+	if parsed := strings.TrimSpace(textValue); parsed != "" {
+		if intValue, err := strconv.Atoi(parsed); err == nil {
+			*value = intValue
+		}
 	}
 }
 

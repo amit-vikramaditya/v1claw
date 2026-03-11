@@ -1,6 +1,8 @@
 package skills
 
 import (
+	"archive/tar"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -10,10 +12,14 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/amit-vikramaditya/v1claw/pkg/config"
 )
 
 type SkillInstaller struct {
-	workspace string
+	workspace     string
+	client        *http.Client
+	githubAPIBase string
 }
 
 type AvailableSkill struct {
@@ -32,26 +38,31 @@ type BuiltinSkill struct {
 
 func NewSkillInstaller(workspace string) *SkillInstaller {
 	return &SkillInstaller{
-		workspace: workspace,
+		workspace:     workspace,
+		client:        &http.Client{Timeout: 30 * time.Second},
+		githubAPIBase: "https://api.github.com",
 	}
 }
 
 func (si *SkillInstaller) InstallFromGitHub(ctx context.Context, repo string) error {
-	skillDir := filepath.Join(si.workspace, "skills", filepath.Base(repo))
-
-	if _, err := os.Stat(skillDir); err == nil {
-		return fmt.Errorf("skill '%s' already exists", filepath.Base(repo))
+	spec, err := parseGitHubRepo(repo)
+	if err != nil {
+		return err
 	}
 
-	url := fmt.Sprintf("https://raw.githubusercontent.com/%s/main/SKILL.md", repo)
+	skillDir := filepath.Join(si.workspace, "skills", spec.SkillName())
+	if _, err := os.Stat(skillDir); err == nil {
+		return fmt.Errorf("skill '%s' already exists", spec.SkillName())
+	}
 
-	client := &http.Client{Timeout: 15 * time.Second}
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	archiveURL := fmt.Sprintf("%s/repos/%s/%s/tarball", strings.TrimRight(si.githubAPIBase, "/"), spec.Owner, spec.Repo)
+	req, err := http.NewRequestWithContext(ctx, "GET", archiveURL, nil)
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
+	req.Header.Set("Accept", "application/vnd.github+json")
 
-	resp, err := client.Do(req)
+	resp, err := si.client.Do(req)
 	if err != nil {
 		return fmt.Errorf("failed to fetch skill: %w", err)
 	}
@@ -61,21 +72,187 @@ func (si *SkillInstaller) InstallFromGitHub(ctx context.Context, repo string) er
 		return fmt.Errorf("failed to fetch skill: HTTP %d", resp.StatusCode)
 	}
 
-	body, err := io.ReadAll(resp.Body)
+	tmpDir, err := os.MkdirTemp("", "v1claw-skill-*")
 	if err != nil {
-		return fmt.Errorf("failed to read response: %w", err)
+		return fmt.Errorf("failed to create temp dir: %w", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	if err := extractTarball(resp.Body, tmpDir); err != nil {
+		return fmt.Errorf("failed to extract skill archive: %w", err)
+	}
+
+	sourceDir, err := locateExtractedSkillDir(tmpDir, spec.Path)
+	if err != nil {
+		return err
 	}
 
 	if err := os.MkdirAll(skillDir, 0700); err != nil {
 		return fmt.Errorf("failed to create skill directory: %w", err)
 	}
 
-	skillPath := filepath.Join(skillDir, "SKILL.md")
-	if err := os.WriteFile(skillPath, body, 0600); err != nil {
-		return fmt.Errorf("failed to write skill file: %w", err)
+	if err := copySkillDir(sourceDir, skillDir); err != nil {
+		return fmt.Errorf("failed to install skill contents: %w", err)
 	}
 
 	return nil
+}
+
+type gitHubRepoSpec struct {
+	Owner string
+	Repo  string
+	Path  string
+}
+
+func (s gitHubRepoSpec) SkillName() string {
+	if s.Path != "" {
+		return filepath.Base(s.Path)
+	}
+	return s.Repo
+}
+
+func parseGitHubRepo(input string) (gitHubRepoSpec, error) {
+	normalized := strings.TrimSpace(input)
+	normalized = strings.TrimPrefix(normalized, "https://github.com/")
+	normalized = strings.TrimPrefix(normalized, "http://github.com/")
+	normalized = strings.Trim(normalized, "/")
+	normalized = strings.TrimSuffix(normalized, ".git")
+
+	parts := strings.Split(normalized, "/")
+	if len(parts) < 2 {
+		return gitHubRepoSpec{}, fmt.Errorf("invalid GitHub repo %q; expected owner/repo[/path]", input)
+	}
+
+	owner := strings.TrimSpace(parts[0])
+	repo := strings.TrimSpace(parts[1])
+	subpath := filepath.Clean(strings.Join(parts[2:], "/"))
+	if subpath == "." {
+		subpath = ""
+	}
+	if owner == "" || repo == "" {
+		return gitHubRepoSpec{}, fmt.Errorf("invalid GitHub repo %q; expected owner/repo[/path]", input)
+	}
+	if strings.Contains(subpath, "..") {
+		return gitHubRepoSpec{}, fmt.Errorf("invalid skill path %q", input)
+	}
+
+	return gitHubRepoSpec{
+		Owner: owner,
+		Repo:  repo,
+		Path:  strings.TrimPrefix(subpath, "/"),
+	}, nil
+}
+
+func extractTarball(r io.Reader, dest string) error {
+	gzr, err := gzip.NewReader(r)
+	if err != nil {
+		return err
+	}
+	defer gzr.Close()
+
+	tr := tar.NewReader(gzr)
+	for {
+		header, err := tr.Next()
+		if err == io.EOF {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+
+		targetPath := filepath.Join(dest, header.Name)
+		cleanTarget := filepath.Clean(targetPath)
+		if !strings.HasPrefix(cleanTarget, filepath.Clean(dest)+string(filepath.Separator)) && cleanTarget != filepath.Clean(dest) {
+			return fmt.Errorf("archive entry escapes extraction root: %s", header.Name)
+		}
+
+		switch header.Typeflag {
+		case tar.TypeDir:
+			if err := os.MkdirAll(cleanTarget, 0755); err != nil {
+				return err
+			}
+		case tar.TypeReg:
+			if err := os.MkdirAll(filepath.Dir(cleanTarget), 0755); err != nil {
+				return err
+			}
+			f, err := os.OpenFile(cleanTarget, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)
+			if err != nil {
+				return err
+			}
+			if _, err := io.Copy(f, tr); err != nil {
+				f.Close()
+				return err
+			}
+			if err := f.Close(); err != nil {
+				return err
+			}
+		}
+	}
+}
+
+func locateExtractedSkillDir(extractRoot string, subpath string) (string, error) {
+	entries, err := os.ReadDir(extractRoot)
+	if err != nil {
+		return "", fmt.Errorf("failed to read extracted archive: %w", err)
+	}
+	if len(entries) == 0 {
+		return "", fmt.Errorf("skill archive is empty")
+	}
+
+	repoRoot := extractRoot
+	if len(entries) == 1 && entries[0].IsDir() {
+		repoRoot = filepath.Join(extractRoot, entries[0].Name())
+	}
+
+	sourceDir := repoRoot
+	if subpath != "" {
+		sourceDir = filepath.Join(repoRoot, filepath.FromSlash(subpath))
+	}
+
+	skillFile := filepath.Join(sourceDir, "SKILL.md")
+	if _, err := os.Stat(skillFile); err != nil {
+		return "", fmt.Errorf("skill not found at %q inside GitHub archive", subpath)
+	}
+
+	return sourceDir, nil
+}
+
+func copySkillDir(src, dst string) error {
+	return filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+
+		rel, err := filepath.Rel(src, path)
+		if err != nil {
+			return err
+		}
+		target := filepath.Join(dst, rel)
+
+		if info.IsDir() {
+			return os.MkdirAll(target, 0700)
+		}
+
+		if err := os.MkdirAll(filepath.Dir(target), 0700); err != nil {
+			return err
+		}
+
+		in, err := os.Open(path)
+		if err != nil {
+			return err
+		}
+		defer in.Close()
+
+		out, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)
+		if err != nil {
+			return err
+		}
+		if _, err := io.Copy(out, in); err != nil {
+			out.Close()
+			return err
+		}
+		return out.Close()
+	})
 }
 
 func (si *SkillInstaller) Uninstall(skillName string) error {
@@ -132,7 +309,7 @@ func (si *SkillInstaller) ListAvailableSkills(ctx context.Context) ([]AvailableS
 func (si *SkillInstaller) ListBuiltinSkills() []BuiltinSkill {
 	builtinSkillsDir := filepath.Join(si.workspace, "skills")
 	if info, err := os.Stat(builtinSkillsDir); err != nil || !info.IsDir() {
-		builtinSkillsDir = filepath.Join(filepath.Dir(si.workspace), "v1claw", "skills")
+		builtinSkillsDir = config.GlobalSkillsDir()
 	}
 
 	entries, err := os.ReadDir(builtinSkillsDir)

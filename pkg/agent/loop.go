@@ -180,6 +180,9 @@ func buildCLIProviders(cfg *config.Config, workspace string) map[string]provider
 			}
 		default:
 			// All other CLIs use their AutonomousCLIWorker profile (handles --yolo, -y, etc.)
+			if sandboxed {
+				profile = providers.SandboxSafeProfile(profile)
+			}
 			result[name] = &providers.AutonomousCLIWorker{Profile: profile}
 		}
 
@@ -211,7 +214,7 @@ func createToolRegistry(workspace string, restrict bool, cfg *config.Config, msg
 	}
 
 	// Shell execution
-	execTool := tools.NewExecTool(workspace, restrict, msgBus)
+	execTool := tools.NewExecToolForWorkspace(workspace, restrict, cfg.Workspace.Sandboxed, msgBus)
 	registry.Register(execTool)
 
 	if searchTool := tools.NewWebSearchTool(tools.WebSearchToolOptions{

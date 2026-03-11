@@ -32,9 +32,6 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Run go generate
-        run: go generate ./...
-
       - name: Run go vet
         run: go vet ./...
 
@@ -50,9 +47,42 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Run go generate
-        run: go generate ./...
-
       - name: Run go test
         run: go test ./...
 
+  installer-smoke:
+    runs-on: ubuntu-latest
+    needs: fmt-check
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Smoke test installer
+        run: |
+          INSTALL_DIR="$RUNNER_TEMP/v1claw-bin" bash ./install.sh --source
+          "$RUNNER_TEMP/v1claw-bin/v1claw" version
+
+  windows-installer-smoke:
+    runs-on: windows-latest
+    needs: fmt-check
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Smoke test PowerShell installer
+        shell: pwsh
+        run: |
+          $installDir = Join-Path $env:RUNNER_TEMP 'v1claw-bin'
+          Set-ExecutionPolicy Bypass -Scope Process -Force
+          .\install.ps1 -InstallDir $installDir -Source
+          & (Join-Path $installDir 'v1claw.exe') version

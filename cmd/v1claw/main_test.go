@@ -1,12 +1,17 @@
 package main
 
 import (
+	"encoding/json"
+	"net"
 	"os"
 	"path/filepath"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time" // Added for time.Duration
 
 	"github.com/amit-vikramaditya/v1claw/pkg/config"
+	"github.com/gorilla/websocket"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -18,6 +23,119 @@ func TestIsPublicHost(t *testing.T) {
 	assert.True(t, isPublicHost("0.0.0.0"))
 	assert.True(t, isPublicHost("::"))
 	assert.True(t, isPublicHost("example.com"))
+}
+
+func TestResolveClientEndpoints(t *testing.T) {
+	tests := []struct {
+		name        string
+		input       string
+		httpBase    string
+		wsURL       string
+		devicesURL  string
+		routeTarget string
+	}{
+		{
+			name:        "hostPort",
+			input:       "192.168.1.10:18791",
+			httpBase:    "http://192.168.1.10:18791",
+			wsURL:       "ws://192.168.1.10:18791/api/v1/ws",
+			devicesURL:  "http://192.168.1.10:18791/api/v1/devices",
+			routeTarget: "192.168.1.10:18791",
+		},
+		{
+			name:        "hostDefaultsPort",
+			input:       "gateway.local",
+			httpBase:    "http://gateway.local:18791",
+			wsURL:       "ws://gateway.local:18791/api/v1/ws",
+			devicesURL:  "http://gateway.local:18791/api/v1/devices",
+			routeTarget: "gateway.local:18791",
+		},
+		{
+			name:        "httpsURL",
+			input:       "https://gateway.example.com",
+			httpBase:    "https://gateway.example.com",
+			wsURL:       "wss://gateway.example.com/api/v1/ws",
+			devicesURL:  "https://gateway.example.com/api/v1/devices",
+			routeTarget: "gateway.example.com:443",
+		},
+		{
+			name:        "prefixedURL",
+			input:       "https://gateway.example.com/v1",
+			httpBase:    "https://gateway.example.com/v1",
+			wsURL:       "wss://gateway.example.com/v1/api/v1/ws",
+			devicesURL:  "https://gateway.example.com/v1/api/v1/devices",
+			routeTarget: "gateway.example.com:443",
+		},
+		{
+			name:        "wssIPv6URL",
+			input:       "wss://[2001:db8::5]:9443/edge",
+			httpBase:    "https://[2001:db8::5]:9443/edge",
+			wsURL:       "wss://[2001:db8::5]:9443/edge/api/v1/ws",
+			devicesURL:  "https://[2001:db8::5]:9443/edge/api/v1/devices",
+			routeTarget: "[2001:db8::5]:9443",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			endpoints, err := resolveClientEndpoints(tt.input)
+			require.NoError(t, err)
+			assert.Equal(t, tt.httpBase, endpoints.HTTPBase)
+			assert.Equal(t, tt.wsURL, endpoints.WSURL)
+			assert.Equal(t, tt.devicesURL, endpoints.DevicesURL)
+			assert.Equal(t, tt.routeTarget, endpoints.RouteTarget)
+		})
+	}
+}
+
+func TestResolveClientEndpoints_RejectsInvalidInputs(t *testing.T) {
+	for _, input := range []string{
+		"",
+		"ftp://gateway.example.com",
+		"https://gateway.example.com?token=secret",
+		"host:abc:def",
+	} {
+		_, err := resolveClientEndpoints(input)
+		require.Error(t, err, "input %q should be rejected", input)
+	}
+}
+
+func TestSelectAdvertisedIP_PrefersReachablePrivateIPv4(t *testing.T) {
+	candidates := []net.IP{
+		net.ParseIP("2001:db8::10"),
+		net.ParseIP("203.0.113.5"),
+		net.ParseIP("100.101.102.103"),
+		net.ParseIP("192.168.1.44"),
+	}
+
+	assert.Equal(t, "100.101.102.103", selectAdvertisedIP(candidates))
+}
+
+func TestSelectAdvertisedIP_PrefersPrivateIPv6OverGlobalIPv6(t *testing.T) {
+	candidates := []net.IP{
+		net.ParseIP("2001:db8::10"),
+		net.ParseIP("fd12:3456:789a::25"),
+	}
+
+	assert.Equal(t, "fd12:3456:789a::25", selectAdvertisedIP(candidates))
+}
+
+func TestGetAdvertisedHost_UsesOverrides(t *testing.T) {
+	t.Setenv("V1CLAW_ADVERTISE_HOST", "env-device.local")
+	assert.Equal(t, "cli-device.local", getAdvertisedHost("", "cli-device.local"))
+	assert.Equal(t, "env-device.local", getAdvertisedHost("", ""))
+}
+
+func TestHistoryFilePath_UsesV1ClawHome(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("V1CLAW_HOME", home)
+
+	path := historyFilePath("agent.history")
+	assert.Equal(t, filepath.Join(home, "history", "agent.history"), path)
+
+	info, err := os.Stat(filepath.Join(home, "history"))
+	require.NoError(t, err)
+	assert.True(t, info.IsDir())
 }
 
 func TestValidateGatewaySecurity_RequiresAPIKeyWhenAPIEnabled(t *testing.T) {
@@ -153,4 +271,111 @@ echo "Mock termux-microphone-record $*" >&2
 
 	// Restore original PATH
 	os.Setenv("PATH", oldPath)
+}
+
+func TestCreateWorkspaceTemplates_DoesNotOverwriteExistingFiles(t *testing.T) {
+	workspace := t.TempDir()
+	customAgent := filepath.Join(workspace, "AGENT.md")
+
+	require.NoError(t, os.WriteFile(customAgent, []byte("custom agent instructions"), 0644))
+
+	createWorkspaceTemplates(workspace)
+
+	agentData, err := os.ReadFile(customAgent)
+	require.NoError(t, err)
+	assert.Equal(t, "custom agent instructions", string(agentData))
+
+	seededUser := filepath.Join(workspace, "USER.md")
+	_, err = os.Stat(seededUser)
+	require.NoError(t, err)
+}
+
+type fakeClientWSConn struct {
+	activeWriters int32
+	maxActive     int32
+	messages      [][]byte
+	messageTypes  []int
+	mu            sync.Mutex
+}
+
+func (f *fakeClientWSConn) SetWriteDeadline(time.Time) error {
+	return nil
+}
+
+func (f *fakeClientWSConn) WriteMessage(messageType int, data []byte) error {
+	active := atomic.AddInt32(&f.activeWriters, 1)
+	for {
+		currentMax := atomic.LoadInt32(&f.maxActive)
+		if active <= currentMax || atomic.CompareAndSwapInt32(&f.maxActive, currentMax, active) {
+			break
+		}
+	}
+	time.Sleep(5 * time.Millisecond)
+	f.mu.Lock()
+	f.messageTypes = append(f.messageTypes, messageType)
+	f.messages = append(f.messages, append([]byte(nil), data...))
+	f.mu.Unlock()
+	atomic.AddInt32(&f.activeWriters, -1)
+	return nil
+}
+
+func TestClientWSWriter_SerializesConcurrentWrites(t *testing.T) {
+	fakeConn := &fakeClientWSConn{}
+	writer := newClientWSWriter(fakeConn)
+
+	var wg sync.WaitGroup
+	errCh := make(chan error, 8)
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			errCh <- writer.WriteJSON(map[string]interface{}{"index": i})
+		}(i)
+	}
+	wg.Wait()
+	close(errCh)
+
+	for err := range errCh {
+		require.NoError(t, err)
+	}
+
+	assert.Equal(t, int32(1), atomic.LoadInt32(&fakeConn.maxActive))
+	assert.Len(t, fakeConn.messages, 8)
+}
+
+func TestSendChat_WritesExpectedEnvelope(t *testing.T) {
+	fakeConn := &fakeClientWSConn{}
+	writer := newClientWSWriter(fakeConn)
+
+	require.NoError(t, sendChat(writer, "hello", "session-1"))
+	require.Len(t, fakeConn.messages, 1)
+	assert.Equal(t, websocket.TextMessage, fakeConn.messageTypes[0])
+
+	var payload map[string]interface{}
+	require.NoError(t, json.Unmarshal(fakeConn.messages[0], &payload))
+	assert.Equal(t, "chat", payload["type"])
+
+	data, ok := payload["data"].(map[string]interface{})
+	require.True(t, ok)
+	assert.Equal(t, "hello", data["message"])
+	assert.Equal(t, "session-1", data["session_key"])
+}
+
+func TestHandleCapabilityRequest_WritesResponseEnvelope(t *testing.T) {
+	fakeConn := &fakeClientWSConn{}
+	writer := newClientWSWriter(fakeConn)
+
+	handleCapabilityRequest(writer, "req-1", "speaker", "play", nil)
+
+	require.Len(t, fakeConn.messages, 1)
+
+	var payload map[string]interface{}
+	require.NoError(t, json.Unmarshal(fakeConn.messages[0], &payload))
+	assert.Equal(t, "capability_response", payload["type"])
+
+	data, ok := payload["data"].(map[string]interface{})
+	require.True(t, ok)
+	assert.Equal(t, "req-1", data["request_id"])
+	assert.Equal(t, false, data["success"])
+	assert.Contains(t, data["error"], "unsupported capability")
 }

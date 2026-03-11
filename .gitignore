@@ -10,7 +10,6 @@ build/
 *.out
 /v1claw
 /v1claw-test
-cmd/v1claw/workspace
 
 # V1Claw specific
 

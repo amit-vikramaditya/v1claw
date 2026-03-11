@@ -19,6 +19,9 @@ import (
 // Compiled once at package init to avoid per-call overhead.
 var pathExtractPattern = regexp.MustCompile(`[A-Za-z]:\\[^\\\"'\s]+|/[^\s\"']+`)
 
+var sedExecPattern = regexp.MustCompile(`(^|[;[:space:]])e([;[:space:]]|$)`)
+var sedFileWritePattern = regexp.MustCompile(`(^|[;[:space:]])[rw][[:space:]]+\S+`)
+
 type ExecTool struct {
 	workingDir          string
 	timeout             time.Duration
@@ -70,8 +73,26 @@ func NewExecTool(workingDir string, restrict bool, msgBus *bus.MessageBus) *Exec
 	}
 }
 
+// NewExecToolForWorkspace configures the shell tool policy to match the
+// workspace security posture. Sandboxed workspaces keep the minimal default
+// allowlist; non-sandboxed development workspaces use the broader dev allowlist.
+func NewExecToolForWorkspace(workingDir string, restrict bool, sandboxed bool, msgBus *bus.MessageBus) *ExecTool {
+	tool := NewExecTool(workingDir, restrict, msgBus)
+	if sandboxed {
+		tool.SetAllowlist(DefaultAllowlist)
+	} else {
+		tool.SetAllowlist(DevAllowlist)
+	}
+	return tool
+}
+
 func (t *ExecTool) SetSecurityMiddleware(sm SecurityMiddleware) {
 	t.securityMiddleware = sm
+}
+
+func (t *ExecTool) SetAllowlist(allowed []string) {
+	clone := append([]string{}, allowed...)
+	t.securityMiddleware = &AllowlistMiddleware{Allowed: clone}
 }
 
 func (t *ExecTool) Name() string {
@@ -173,6 +194,10 @@ func (t *ExecTool) Execute(ctx context.Context, tc ToolContext, args map[string]
 	program, argsSlice := parseCommandForDirectExecution(vettedCommand)
 	if program == "" {
 		return ErrorResult("Failed to parse command for direct execution or empty command")
+	}
+
+	if guardError := guardParsedCommand(program, argsSlice); guardError != "" {
+		return ErrorResult(guardError)
 	}
 
 	// 3. Program Path Validation (Security against arbitrary binary execution)
@@ -349,6 +374,146 @@ func (t *ExecTool) SetAllowPatterns(patterns []string) error {
 		t.allowPatterns = append(t.allowPatterns, re)
 	}
 	return nil
+}
+
+func guardParsedCommand(program string, args []string) string {
+	baseCmd := filepath.Base(strings.ToLower(program))
+
+	switch baseCmd {
+	case "xargs":
+		return "Command blocked by safety guard (xargs can execute arbitrary commands)"
+
+	case "find":
+		for _, arg := range args {
+			switch strings.ToLower(arg) {
+			case "-exec", "-execdir", "-ok", "-okdir", "-delete":
+				return "Command blocked by safety guard (find execution or deletion flags detected)"
+			}
+		}
+
+	case "curl":
+		if msg := guardCurlArgs(args); msg != "" {
+			return msg
+		}
+
+	case "wget":
+		if msg := guardWgetArgs(args); msg != "" {
+			return msg
+		}
+
+	case "git":
+		for _, arg := range args {
+			lowerArg := strings.ToLower(arg)
+			switch {
+			case lowerArg == "-c", strings.HasPrefix(lowerArg, "-c"),
+				lowerArg == "--config-env", strings.HasPrefix(lowerArg, "--config-env="),
+				lowerArg == "--exec-path", strings.HasPrefix(lowerArg, "--exec-path="),
+				lowerArg == "--upload-pack", strings.HasPrefix(lowerArg, "--upload-pack="),
+				lowerArg == "--receive-pack", strings.HasPrefix(lowerArg, "--receive-pack="):
+				return "Command blocked by safety guard (git runtime command/config injection detected)"
+			}
+		}
+
+	case "awk":
+		for _, arg := range args {
+			lowerArg := strings.ToLower(arg)
+			if strings.Contains(lowerArg, "system(") || strings.Contains(lowerArg, "| getline") || strings.Contains(lowerArg, "|getline") || strings.Contains(lowerArg, "|&") {
+				return "Command blocked by safety guard (awk command execution detected)"
+			}
+		}
+
+	case "sed":
+		for _, arg := range args {
+			if sedExecPattern.MatchString(arg) || sedFileWritePattern.MatchString(arg) {
+				return "Command blocked by safety guard (sed execution or file write detected)"
+			}
+		}
+
+	case "tar":
+		for _, arg := range args {
+			lowerArg := strings.ToLower(arg)
+			switch {
+			case lowerArg == "--to-command", strings.HasPrefix(lowerArg, "--to-command="),
+				lowerArg == "--checkpoint-action", strings.HasPrefix(lowerArg, "--checkpoint-action="),
+				lowerArg == "--use-compress-program", strings.HasPrefix(lowerArg, "--use-compress-program="),
+				arg == "-I",
+				arg == "-P", lowerArg == "--absolute-names":
+				return "Command blocked by safety guard (tar command execution or absolute path extraction detected)"
+			}
+		}
+	}
+
+	return ""
+}
+
+func guardCurlArgs(args []string) string {
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		lowerArg := strings.ToLower(arg)
+		switch {
+		case arg == "-T", lowerArg == "--upload-file",
+			arg == "-F", lowerArg == "--form", lowerArg == "--form-string",
+			arg == "-d", lowerArg == "--data", lowerArg == "--data-raw", lowerArg == "--data-binary", lowerArg == "--data-urlencode",
+			lowerArg == "--json",
+			arg == "-K", lowerArg == "--config",
+			arg == "-x", lowerArg == "--proxy":
+			return "Command blocked by safety guard (curl upload/config/proxy flags detected)"
+		case lowerArg == "-xpost", lowerArg == "-xput", lowerArg == "-xdelete", lowerArg == "-xpatch":
+			return "Command blocked by safety guard (curl non-GET request detected)"
+		case arg == "-X", lowerArg == "--request":
+			if i+1 < len(args) {
+				method := strings.ToUpper(args[i+1])
+				if method != "GET" && method != "HEAD" {
+					return "Command blocked by safety guard (curl non-GET request detected)"
+				}
+			}
+		}
+
+		if isBlockedFetchSchemeArg(lowerArg) {
+			return "Command blocked by safety guard (curl only allows http/https URLs)"
+		}
+	}
+	return ""
+}
+
+func guardWgetArgs(args []string) string {
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		lowerArg := strings.ToLower(arg)
+		switch {
+		case lowerArg == "--post-data", strings.HasPrefix(lowerArg, "--post-data="),
+			lowerArg == "--post-file", strings.HasPrefix(lowerArg, "--post-file="),
+			lowerArg == "--body-data", strings.HasPrefix(lowerArg, "--body-data="),
+			lowerArg == "--body-file", strings.HasPrefix(lowerArg, "--body-file="),
+			arg == "-i", lowerArg == "--input-file",
+			arg == "-e", lowerArg == "--execute":
+			return "Command blocked by safety guard (wget upload/config flags detected)"
+		case lowerArg == "--method":
+			if i+1 < len(args) {
+				method := strings.ToUpper(args[i+1])
+				if method != "GET" && method != "HEAD" {
+					return "Command blocked by safety guard (wget non-GET request detected)"
+				}
+			}
+		case strings.HasPrefix(lowerArg, "--method="):
+			method := strings.ToUpper(strings.TrimPrefix(lowerArg, "--method="))
+			if method != "GET" && method != "HEAD" {
+				return "Command blocked by safety guard (wget non-GET request detected)"
+			}
+		}
+
+		if isBlockedFetchSchemeArg(lowerArg) {
+			return "Command blocked by safety guard (wget only allows http/https URLs)"
+		}
+	}
+	return ""
+}
+
+func isBlockedFetchSchemeArg(arg string) bool {
+	if strings.Contains(arg, "://") {
+		return !strings.HasPrefix(arg, "http://") && !strings.HasPrefix(arg, "https://")
+	}
+	return false
 }
 
 // hardwareGuard maps command prefixes to the permission feature they require.

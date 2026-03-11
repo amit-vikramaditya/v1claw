@@ -8,13 +8,19 @@ import (
 )
 
 type GitHubCopilotProvider struct {
-	uri         string
-	connectMode string // `stdio` or `grpc``
+	uri          string
+	connectMode  string // `stdio` or `grpc``
+	defaultModel string
 
-	session *copilot.Session
+	session   *copilot.Session
+	cliWorker *AutonomousCLIWorker
 }
 
 func NewGitHubCopilotProvider(uri string, connectMode string, model string) (*GitHubCopilotProvider, error) {
+	return NewGitHubCopilotProviderWithSandbox(uri, connectMode, model, false)
+}
+
+func NewGitHubCopilotProviderWithSandbox(uri string, connectMode string, model string, sandboxed bool) (*GitHubCopilotProvider, error) {
 	if connectMode == "" {
 		connectMode = "grpc"
 	}
@@ -25,7 +31,21 @@ func NewGitHubCopilotProvider(uri string, connectMode string, model string) (*Gi
 
 	switch connectMode {
 	case "stdio":
-		return nil, fmt.Errorf("github copilot connect_mode=stdio is not implemented")
+		command := uri
+		if command == "" || command == "localhost:4321" {
+			command = "copilot"
+		}
+		profile := BuiltinProfiles["copilot"]
+		if sandboxed {
+			profile = SandboxSafeProfile(profile)
+		}
+		profile.Command = command
+		return &GitHubCopilotProvider{
+			uri:          command,
+			connectMode:  connectMode,
+			defaultModel: model,
+			cliWorker:    &AutonomousCLIWorker{Profile: profile},
+		}, nil
 	case "grpc":
 		client := copilot.NewClient(&copilot.ClientOptions{
 			CLIUrl: uri,
@@ -44,9 +64,10 @@ func NewGitHubCopilotProvider(uri string, connectMode string, model string) (*Gi
 		}
 
 		return &GitHubCopilotProvider{
-			uri:         uri,
-			connectMode: connectMode,
-			session:     session,
+			uri:          uri,
+			connectMode:  connectMode,
+			defaultModel: model,
+			session:      session,
 		}, nil
 	default:
 		return nil, fmt.Errorf("unsupported github copilot connect mode: %s", connectMode)
@@ -55,6 +76,10 @@ func NewGitHubCopilotProvider(uri string, connectMode string, model string) (*Gi
 
 // Chat sends a chat request to GitHub Copilot
 func (p *GitHubCopilotProvider) Chat(ctx context.Context, messages []Message, tools []ToolDefinition, model string, options map[string]interface{}) (*LLMResponse, error) {
+	if p.cliWorker != nil {
+		return p.cliWorker.Chat(ctx, messages, tools, model, options)
+	}
+
 	if p.session == nil {
 		return nil, fmt.Errorf("github copilot session is not initialized")
 	}
@@ -85,6 +110,8 @@ func (p *GitHubCopilotProvider) Chat(ctx context.Context, messages []Message, to
 }
 
 func (p *GitHubCopilotProvider) GetDefaultModel() string {
-
+	if p.defaultModel != "" {
+		return p.defaultModel
+	}
 	return "gpt-4.1"
 }

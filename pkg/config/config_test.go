@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -72,6 +73,43 @@ func TestDefaultConfig_Gateway(t *testing.T) {
 	}
 	if cfg.Gateway.Port == 0 {
 		t.Error("Gateway port should have default value")
+	}
+}
+
+func TestHomeDir_UsesEnvOverride(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatalf("UserHomeDir failed: %v", err)
+	}
+
+	t.Setenv(HomeEnvVar, "~/custom-v1claw-home")
+	want := filepath.Join(home, "custom-v1claw-home")
+	if got := HomeDir(); got != want {
+		t.Fatalf("HomeDir() = %q, want %q", got, want)
+	}
+}
+
+func TestConfigPath_UsesHomeDir(t *testing.T) {
+	t.Setenv(HomeEnvVar, "/tmp/v1claw-home")
+	want := filepath.Join("/tmp/v1claw-home", "config.json")
+	if got := ConfigPath(); got != want {
+		t.Fatalf("ConfigPath() = %q, want %q", got, want)
+	}
+}
+
+func TestResolveHomeDir_WindowsPrefersUserConfigDir(t *testing.T) {
+	got := resolveHomeDir("windows", `C:\Users\Amit\.v1claw`, false, `C:\Users\Amit\AppData\Roaming`)
+	want := filepath.Join(`C:\Users\Amit\AppData\Roaming`, "V1Claw")
+	if got != want {
+		t.Fatalf("resolveHomeDir() = %q, want %q", got, want)
+	}
+}
+
+func TestResolveHomeDir_WindowsKeepsLegacyHomeIfPresent(t *testing.T) {
+	legacy := `C:\Users\Amit\.v1claw`
+	got := resolveHomeDir("windows", legacy, true, `C:\Users\Amit\AppData\Roaming`)
+	if got != legacy {
+		t.Fatalf("resolveHomeDir() = %q, want %q", got, legacy)
 	}
 }
 
@@ -171,6 +209,142 @@ func TestSaveConfig_FilePermissions(t *testing.T) {
 	perm := info.Mode().Perm()
 	if perm != 0600 {
 		t.Errorf("config file has permission %04o, want 0600", perm)
+	}
+}
+
+func TestSaveConfig_NormalizesWorkspaceFields(t *testing.T) {
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "config.json")
+
+	cfg := DefaultConfig()
+	cfg.Workspace.Path = filepath.Join(tmpDir, "custom-workspace")
+	cfg.Agents.Defaults.Workspace = DefaultWorkspaceDir()
+
+	if err := SaveConfig(path, cfg); err != nil {
+		t.Fatalf("SaveConfig failed: %v", err)
+	}
+
+	if cfg.Agents.Defaults.Workspace != cfg.Workspace.Path {
+		t.Fatalf("workspace fields not normalized in memory: %q vs %q", cfg.Workspace.Path, cfg.Agents.Defaults.Workspace)
+	}
+
+	var saved struct {
+		Workspace struct {
+			Path string `json:"path"`
+		} `json:"workspace"`
+		Agents struct {
+			Defaults struct {
+				Workspace string `json:"workspace"`
+			} `json:"defaults"`
+		} `json:"agents"`
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile failed: %v", err)
+	}
+	if err := json.Unmarshal(data, &saved); err != nil {
+		t.Fatalf("Unmarshal failed: %v", err)
+	}
+	if saved.Workspace.Path != cfg.Workspace.Path {
+		t.Fatalf("saved workspace.path = %q, want %q", saved.Workspace.Path, cfg.Workspace.Path)
+	}
+	if saved.Agents.Defaults.Workspace != cfg.Workspace.Path {
+		t.Fatalf("saved agents.defaults.workspace = %q, want %q", saved.Agents.Defaults.Workspace, cfg.Workspace.Path)
+	}
+}
+
+func TestLoadConfig_NormalizesWorkspaceFields(t *testing.T) {
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "config.json")
+	customWorkspace := filepath.Join(tmpDir, "custom-workspace")
+
+	data := []byte(`{
+  "workspace": {
+    "path": ` + `"` + customWorkspace + `"` + `
+  },
+  "agents": {
+    "defaults": {
+      "workspace": ""
+    }
+  }
+}`)
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+
+	if cfg.Workspace.Path != customWorkspace {
+		t.Fatalf("workspace.path = %q, want %q", cfg.Workspace.Path, customWorkspace)
+	}
+	if cfg.Agents.Defaults.Workspace != customWorkspace {
+		t.Fatalf("agents.defaults.workspace = %q, want %q", cfg.Agents.Defaults.Workspace, customWorkspace)
+	}
+	if cfg.WorkspacePath() != customWorkspace {
+		t.Fatalf("WorkspacePath() = %q, want %q", cfg.WorkspacePath(), customWorkspace)
+	}
+}
+
+func TestLoadConfig_PreservesLegacyAgentWorkspaceWhenWorkspacePathIsDefault(t *testing.T) {
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "config.json")
+	legacyWorkspace := filepath.Join(tmpDir, "legacy-workspace")
+	defaultWorkspace := DefaultWorkspaceDir()
+
+	data := []byte(`{
+  "workspace": {
+    "path": ` + `"` + defaultWorkspace + `"` + `
+  },
+  "agents": {
+    "defaults": {
+      "workspace": ` + `"` + legacyWorkspace + `"` + `
+    }
+  }
+}`)
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+
+	if cfg.Workspace.Path != legacyWorkspace {
+		t.Fatalf("workspace.path = %q, want %q", cfg.Workspace.Path, legacyWorkspace)
+	}
+	if cfg.Agents.Defaults.Workspace != legacyWorkspace {
+		t.Fatalf("agents.defaults.workspace = %q, want %q", cfg.Agents.Defaults.Workspace, legacyWorkspace)
+	}
+}
+
+func TestLoadConfig_PermissionsIncludeNotificationsAndScreen(t *testing.T) {
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "config.json")
+
+	data := []byte(`{
+  "permissions": {
+    "notifications": true,
+    "screen": true
+  }
+}`)
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+
+	if !cfg.Permissions.Notifications {
+		t.Fatal("permissions.notifications should be true")
+	}
+	if !cfg.Permissions.Screen {
+		t.Fatal("permissions.screen should be true")
 	}
 }
 

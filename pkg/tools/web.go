@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -332,6 +333,7 @@ func (t *WebSearchTool) Execute(ctx context.Context, tc ToolContext, args map[st
 
 type WebFetchTool struct {
 	maxChars int
+	client   *http.Client
 }
 
 func NewWebFetchTool(maxChars int) *WebFetchTool {
@@ -340,7 +342,83 @@ func NewWebFetchTool(maxChars int) *WebFetchTool {
 	}
 	return &WebFetchTool{
 		maxChars: maxChars,
+		client:   newWebFetchHTTPClient(),
 	}
+}
+
+func newWebFetchHTTPClient() *http.Client {
+	dialer := &net.Dialer{
+		Timeout:   15 * time.Second,
+		KeepAlive: 30 * time.Second,
+	}
+
+	transport := &http.Transport{
+		Proxy:               http.ProxyFromEnvironment,
+		MaxIdleConns:        10,
+		IdleConnTimeout:     30 * time.Second,
+		DisableCompression:  false,
+		TLSHandshakeTimeout: 15 * time.Second,
+		DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
+			host, _, err := net.SplitHostPort(address)
+			if err != nil {
+				host = address
+			}
+			ip := net.ParseIP(host)
+			if ip != nil && isBlockedIP(ip) {
+				return nil, fmt.Errorf("URL blocked: resolved to internal/private address %s", ip.String())
+			}
+			return dialer.DialContext(ctx, network, address)
+		},
+	}
+
+	return &http.Client{
+		Timeout:   60 * time.Second,
+		Transport: transport,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 5 {
+				return fmt.Errorf("stopped after 5 redirects")
+			}
+			if err := validateFetchURL(req.URL); err != nil {
+				return err
+			}
+			return nil
+		},
+	}
+}
+
+func validateFetchURL(parsedURL *url.URL) error {
+	if parsedURL == nil {
+		return fmt.Errorf("missing URL")
+	}
+
+	if parsedURL.Scheme != "http" && parsedURL.Scheme != "https" {
+		return fmt.Errorf("only http/https URLs are allowed")
+	}
+
+	hostname := parsedURL.Hostname()
+	if hostname == "" {
+		return fmt.Errorf("missing domain in URL")
+	}
+
+	if isBlockedHost(hostname) {
+		return fmt.Errorf("URL blocked: access to internal/private networks is not allowed")
+	}
+
+	return nil
+}
+
+func buildFetchResult(urlStr string, status int, extractor string, truncated bool, text string) string {
+	result := map[string]interface{}{
+		"url":       urlStr,
+		"status":    status,
+		"extractor": extractor,
+		"truncated": truncated,
+		"length":    len(text),
+		"text":      text,
+	}
+
+	resultJSON, _ := json.MarshalIndent(result, "", "  ")
+	return string(resultJSON)
 }
 
 func (t *WebFetchTool) Name() string {
@@ -380,17 +458,8 @@ func (t *WebFetchTool) Execute(ctx context.Context, tc ToolContext, args map[str
 		return ErrorResult(fmt.Sprintf("invalid URL: %v", err))
 	}
 
-	if parsedURL.Scheme != "http" && parsedURL.Scheme != "https" {
-		return ErrorResult("only http/https URLs are allowed")
-	}
-
-	if parsedURL.Host == "" {
-		return ErrorResult("missing domain in URL")
-	}
-
-	// SSRF protection: block internal/private network access
-	if isBlockedHost(parsedURL.Host) {
-		return ErrorResult("URL blocked: access to internal/private networks is not allowed")
+	if err := validateFetchURL(parsedURL); err != nil {
+		return ErrorResult(err.Error())
 	}
 
 	maxChars := t.maxChars
@@ -407,20 +476,9 @@ func (t *WebFetchTool) Execute(ctx context.Context, tc ToolContext, args map[str
 
 	req.Header.Set("User-Agent", userAgent)
 
-	client := &http.Client{
-		Timeout: 60 * time.Second,
-		Transport: &http.Transport{
-			MaxIdleConns:        10,
-			IdleConnTimeout:     30 * time.Second,
-			DisableCompression:  false,
-			TLSHandshakeTimeout: 15 * time.Second,
-		},
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			if len(via) >= 5 {
-				return fmt.Errorf("stopped after 5 redirects")
-			}
-			return nil
-		},
+	client := t.client
+	if client == nil {
+		client = newWebFetchHTTPClient()
 	}
 
 	resp, err := client.Do(req)
@@ -462,20 +520,11 @@ func (t *WebFetchTool) Execute(ctx context.Context, tc ToolContext, args map[str
 		text = text[:maxChars]
 	}
 
-	result := map[string]interface{}{
-		"url":       urlStr,
-		"status":    resp.StatusCode,
-		"extractor": extractor,
-		"truncated": truncated,
-		"length":    len(text),
-		"text":      text,
-	}
-
-	resultJSON, _ := json.MarshalIndent(result, "", "  ")
+	resultJSON := buildFetchResult(urlStr, resp.StatusCode, extractor, truncated, text)
 
 	return &ToolResult{
-		ForLLM:  fmt.Sprintf("Fetched %d bytes from %s (extractor: %s, truncated: %v)", len(text), urlStr, extractor, truncated),
-		ForUser: string(resultJSON),
+		ForLLM:  resultJSON,
+		ForUser: resultJSON,
 	}
 }
 
@@ -506,20 +555,20 @@ func (t *WebFetchTool) extractText(htmlContent string) string {
 
 // isBlockedHost returns true if the host resolves to a private/internal address.
 func isBlockedHost(host string) bool {
-	// Strip port if present
-	hostname := host
-	if idx := strings.LastIndex(host, ":"); idx != -1 {
-		hostname = host[:idx]
+	hostname := strings.ToLower(strings.TrimSpace(host))
+	if hostname == "" {
+		return true
 	}
-	hostname = strings.ToLower(strings.TrimSpace(hostname))
+
+	if ip := net.ParseIP(hostname); ip != nil {
+		return isBlockedIP(ip)
+	}
 
 	// Block well-known internal hostnames
 	blockedHosts := []string{
 		"localhost",
 		"metadata.google.internal",
 		"metadata",
-		"169.254.169.254",
-		"[::1]",
 	}
 	for _, b := range blockedHosts {
 		if hostname == b {
@@ -527,32 +576,16 @@ func isBlockedHost(host string) bool {
 		}
 	}
 
-	// Block loopback and link-local
-	if strings.HasPrefix(hostname, "127.") || hostname == "::1" || hostname == "[::1]" {
-		return true
-	}
-
-	// Block RFC1918 private ranges
-	if strings.HasPrefix(hostname, "10.") ||
-		strings.HasPrefix(hostname, "192.168.") {
-		return true
-	}
-	// 172.16.0.0 - 172.31.255.255
-	if strings.HasPrefix(hostname, "172.") {
-		parts := strings.SplitN(hostname, ".", 3)
-		if len(parts) >= 2 {
-			var second int
-			fmt.Sscanf(parts[1], "%d", &second)
-			if second >= 16 && second <= 31 {
-				return true
-			}
-		}
-	}
-
-	// Block link-local
-	if strings.HasPrefix(hostname, "169.254.") {
-		return true
-	}
-
 	return false
+}
+
+func isBlockedIP(ip net.IP) bool {
+	if ip == nil {
+		return true
+	}
+	return ip.IsLoopback() ||
+		ip.IsPrivate() ||
+		ip.IsLinkLocalUnicast() ||
+		ip.IsLinkLocalMulticast() ||
+		ip.IsUnspecified()
 }

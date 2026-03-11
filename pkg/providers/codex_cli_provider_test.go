@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/amit-vikramaditya/v1claw/pkg/config"
 )
 
 // --- JSONL Event Parsing Tests ---
@@ -127,6 +129,26 @@ func TestParseJSONLEvents_MultipleMessages(t *testing.T) {
 	}
 	if resp.Content != "First part.\nSecond part." {
 		t.Errorf("Content = %q, want %q", resp.Content, "First part.\nSecond part.")
+	}
+}
+
+func TestCreateProvider_CodexCli_SandboxedUsesSafeProvider(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Agents.Defaults.Provider = "codex-cli"
+	cfg.Agents.Defaults.Workspace = "/test/ws"
+	cfg.Workspace.Sandboxed = true
+
+	provider, err := CreateProvider(cfg)
+	if err != nil {
+		t.Fatalf("CreateProvider(codex-cli sandboxed) error = %v", err)
+	}
+
+	cliProvider, ok := provider.(*CodexCliProvider)
+	if !ok {
+		t.Fatalf("CreateProvider(codex-cli sandboxed) returned %T, want *CodexCliProvider", provider)
+	}
+	if !cliProvider.disableDangerousFlag {
+		t.Fatal("expected sandboxed codex provider to disable dangerous approval bypass flag")
 	}
 }
 

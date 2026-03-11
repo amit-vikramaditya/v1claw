@@ -173,10 +173,9 @@ func (s *Server) getStatus() StatusData {
 // checkAuth validates the API key if configured. Returns true if authorized.
 func (s *Server) checkAuth(w http.ResponseWriter, r *http.Request) bool {
 	if s.config.APIKey != "" {
+		// Only accept the Authorization header. Query-string credentials leak into
+		// browser history, proxy logs, and access logs.
 		auth := r.Header.Get("Authorization")
-		if auth == "" {
-			auth = r.URL.Query().Get("api_key")
-		}
 		token := strings.TrimPrefix(auth, "Bearer ")
 		if subtle.ConstantTimeCompare([]byte(token), []byte(s.config.APIKey)) != 1 {
 			http.Error(w, "Unauthorized", http.StatusUnauthorized)

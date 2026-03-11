@@ -61,15 +61,16 @@ type WSMessage struct {
 
 // DeviceRegisterRequest is the request body for POST /api/v1/devices.
 type DeviceRegisterRequest struct {
-	ID           string                     `json:"id"`
-	Name         string                     `json:"name"`
-	Host         string                     `json:"host"`
-	Port         int                        `json:"port,omitempty"`
-	Platform     string                     `json:"platform"`
-	Capabilities []devsync.DeviceCapability `json:"capabilities,omitempty"`
-	Location     string                     `json:"location,omitempty"`
-	Version      string                     `json:"version,omitempty"`
-	WSClientID   string                     `json:"ws_client_id,omitempty"`
+	ID              string                     `json:"id"`
+	Name            string                     `json:"name"`
+	Host            string                     `json:"host"`
+	Port            int                        `json:"port,omitempty"`
+	Platform        string                     `json:"platform"`
+	Capabilities    []devsync.DeviceCapability `json:"capabilities,omitempty"`
+	Location        string                     `json:"location,omitempty"`
+	Version         string                     `json:"version,omitempty"`
+	WSClientID      string                     `json:"ws_client_id,omitempty"`
+	WSRegisterToken string                     `json:"ws_register_token,omitempty"`
 }
 
 // DevicesResponse is the response body for GET /api/v1/devices.

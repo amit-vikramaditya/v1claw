@@ -6,6 +6,9 @@ V1Claw is a self-hosted AI assistant that runs on your Mac, Linux PC, Windows ma
 
 One binary. No cloud dependency. Your data stays on your machine.
 
+Default home directory: `~/.v1claw` on macOS/Linux, `%APPDATA%\\V1Claw` on Windows.
+Set `V1CLAW_HOME` to override it.
+
 ---
 
 ## Features
@@ -97,7 +100,7 @@ Full hardware access on Android via Termux:API:
 - 🔊 Volume control
 
 ### 🔒 Security
-- **Deny-by-default permissions** — camera, microphone, SMS, phone, location, clipboard, sensors each require explicit opt-in
+- **Deny-by-default permissions** — camera, microphone, screen, notifications, SMS, phone, location, clipboard, sensors, and hardware shell access each require explicit opt-in
 - **Permissions freeze after startup** — the AI cannot grant itself new permissions at runtime
 - **Shell command filtering** — 26 deny patterns block dangerous commands (reverse shells, rc file modification, encoding tricks)
 - **SSRF protection** — web fetch blocks localhost, private networks, cloud metadata endpoints
@@ -115,7 +118,7 @@ Full hardware access on Android via Termux:API:
 ### 🧩 Skills System
 Extend V1Claw with installable skills:
 - Built-in skills included
-- Install community skills from URLs
+- Install community skills from GitHub repo paths
 - Skills are sandboxed markdown agent configurations
 
 ---
@@ -130,9 +133,9 @@ Pick your device. Follow the steps. You'll have a working AI assistant in under 
 
 ---
 
-### ⚡ Quick Install — macOS & Linux (no Go required)
+### ⚡ Quick Install — macOS & Linux
 
-Run one command. The script detects your OS, downloads the right binary, and adds it to your PATH.
+Run one command. The script prefers the latest GitHub Release binary. If no release is published yet and Go is already installed, it falls back to building from source.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/amit-vikramaditya/v1claw/main/install.sh | bash
@@ -152,8 +155,14 @@ v1claw onboard --auto --provider gemini --api-key "YOUR_KEY"
 
 Other providers: `openai` · `anthropic` · `groq` · `deepseek` · `openrouter` · `nvidia`
 Enterprise (no key needed): `vertex` (uses `gcloud auth`) · `bedrock` (uses `~/.aws/credentials`)
+If your provider does not have a built-in default model, add `--model YOUR_MODEL`.
 
-> **Windows users:** Download the `.zip` from the [Releases page](https://github.com/amit-vikramaditya/v1claw/releases/latest), extract `v1claw.exe`, and double-click to run `v1claw onboard`.
+> **Windows users:** PowerShell quick install:
+> ```powershell
+> $installer = Join-Path $env:TEMP "v1claw-install.ps1"
+> Invoke-WebRequest "https://raw.githubusercontent.com/amit-vikramaditya/v1claw/main/install.ps1" -OutFile $installer
+> powershell -ExecutionPolicy Bypass -File $installer
+> ```
 
 ---
 
@@ -205,7 +214,7 @@ git clone https://github.com/amit-vikramaditya/v1claw.git
 ```
 
 ```bash
-cd V1Claw
+cd v1claw
 ```
 
 #### Step 5: Build V1Claw
@@ -226,7 +235,7 @@ This compiles V1Claw into a single file. It takes 2-5 minutes on a phone. When i
 
 *(Alternatively, run just `onboard` to use the interactive wizard, which will also let you name your Agent and configure its Memory Soul).*
 
-That's it — your config is ready at `~/.v1claw/config.json`.
+That's it — your config is ready in your V1Claw home directory.
 
 #### Step 7: Test it!
 
@@ -249,7 +258,7 @@ This opens an interactive chat. Type anything and press Enter. Type `exit` or pr
 Want V1Claw to use your mic, camera, or read notifications? Edit the config again:
 
 ```bash
-nano ~/.v1claw/config.json
+nano "${V1CLAW_HOME:-$HOME/.v1claw}/config.json"
 ```
 
 Add a `"permissions"` section (you can turn each feature on or off individually):
@@ -275,7 +284,7 @@ Add a `"permissions"` section (you can turn each feature on or off individually)
 #### Step 10: Run V1Claw 24/7 in the background (optional)
 
 ```bash
-nohup ./build/v1claw-android-arm64 gateway > v1claw.log 2>&1 &
+nohup ./build/v1claw-android-arm64 gateway > v1claw.log 2>&1 & echo $! > v1claw.pid
 ```
 
 This runs V1Claw as a background service that keeps working even if you close Termux.
@@ -307,13 +316,15 @@ kill $(cat v1claw.pid 2>/dev/null || pgrep v1claw)
 <details>
 <summary><b>Click to expand — full step-by-step macOS setup</b></summary>
 
-#### Option A: Pre-built binary (recommended — no Go required)
+#### Option A: Release binary or installer
 
 Open **Terminal** (`Cmd+Space` → "Terminal") and run:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/amit-vikramaditya/v1claw/main/install.sh | bash
 ```
+
+The installer will use the latest release when one is published. If you already have Go installed and no release exists yet, it can build from source automatically.
 
 Then run the setup wizard:
 
@@ -357,7 +368,7 @@ make --version
 
 ```bash
 git clone https://github.com/amit-vikramaditya/v1claw.git
-cd V1Claw
+cd v1claw
 ```
 
 #### Step 3: Build
@@ -410,11 +421,13 @@ v1claw gateway
 <details>
 <summary><b>Click to expand — full step-by-step Linux setup</b></summary>
 
-#### Option A: Pre-built binary (recommended — no Go required)
+#### Option A: Release binary or installer
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/amit-vikramaditya/v1claw/main/install.sh | bash
 ```
+
+The installer will use the latest release when one is published. If you already have Go installed and no release exists yet, it can build from source automatically.
 
 Then run the setup wizard:
 
@@ -454,7 +467,7 @@ go version
 
 ```bash
 git clone https://github.com/amit-vikramaditya/v1claw.git
-cd V1Claw
+cd v1claw
 ```
 
 #### Step 3: Build
@@ -519,7 +532,27 @@ sudo systemctl status v1claw
 <details>
 <summary><b>Click to expand — full step-by-step Windows setup</b></summary>
 
-#### Step 1: Install Go and Git
+#### Option A: PowerShell installer
+
+Open **PowerShell** and run:
+
+```powershell
+$installer = Join-Path $env:TEMP "v1claw-install.ps1"
+Invoke-WebRequest "https://raw.githubusercontent.com/amit-vikramaditya/v1claw/main/install.ps1" -OutFile $installer
+powershell -ExecutionPolicy Bypass -File $installer
+```
+
+The installer prefers the latest release when one is published. If no release exists yet and Go is already installed, it falls back to building from source automatically.
+
+Then run:
+
+```powershell
+v1claw onboard
+```
+
+#### Option B: Build from source manually
+
+##### Step 1: Install Go and Git
 
 1. Download and install **Go** from [go.dev/dl](https://go.dev/dl/) — pick the Windows `.msi` installer
 2. Download and install **Git** from [git-scm.com](https://git-scm.com/download/win)
@@ -532,14 +565,14 @@ go version
 git --version
 ```
 
-#### Step 2: Download V1Claw
+##### Step 2: Download V1Claw
 
 ```bash
 git clone https://github.com/amit-vikramaditya/v1claw.git
-cd V1Claw
+cd v1claw
 ```
 
-#### Step 3: Build
+##### Step 3: Build
 
 ```bash
 make build
@@ -551,7 +584,7 @@ Or if Make doesn't work on Windows:
 go build -o build/v1claw.exe ./cmd/v1claw
 ```
 
-#### Step 4: Run first-time setup
+##### Step 4: Run first-time setup
 
 ```bash
 build\v1claw.exe onboard
@@ -559,13 +592,13 @@ build\v1claw.exe onboard
 
 The setup wizard will ask you to pick a provider and enter your API key. Your config is ready immediately.
 
-#### Step 5: Test it
+##### Step 5: Test it
 
 ```bash
 build\v1claw.exe agent -m "Hello! What can you do?"
 ```
 
-#### Step 6: Interactive chat
+##### Step 6: Interactive chat
 
 ```bash
 build\v1claw.exe agent
@@ -585,7 +618,7 @@ If you have Docker installed, this is the fastest way:
 ```bash
 # Clone the project
 git clone https://github.com/amit-vikramaditya/v1claw.git
-cd V1Claw
+cd v1claw
 
 # Copy the example config and edit it
 cp config/config.example.json config/config.json
@@ -609,7 +642,7 @@ Have a fast PC and want to build V1Claw for a different device (e.g., build on y
 ```bash
 # On your PC:
 git clone https://github.com/amit-vikramaditya/v1claw.git
-cd V1Claw
+cd v1claw
 
 # Build for Android (ARM64)
 GOOS=linux GOARCH=arm64 make build
@@ -644,8 +677,14 @@ Want V1Claw on multiple devices sharing one brain? Use [Tailscale](https://tails
    # Interactive mode — full chat with the gateway's brain
    v1claw client --server your-server.tail1234.ts.net:18791 --api-key your-secret-key
 
+   # HTTPS / reverse-proxy deployment
+   v1claw client --server https://gateway.example.com --api-key your-secret-key
+
    # One-shot message
    v1claw client -s your-server.tail1234.ts.net:18791 -k your-secret-key -m "Hello from my phone"
+
+   # If auto-discovery picks the wrong LAN/Tailscale address, override it
+   v1claw client -s https://gateway.example.com -k your-secret-key --advertise-host phone.local
 
    # Or use the REST API directly
    curl http://your-server.tail1234.ts.net:18791/api/v1/chat \
@@ -703,11 +742,13 @@ v1claw onboard              # First-time setup wizard
 v1claw onboard --refresh    # Upgrade existing config to new schema (non-destructive)
 v1claw onboard --auto \     # Non-interactive setup (CI/scripts)
   --provider gemini \
-  --api-key YOUR_KEY
+  --api-key YOUR_KEY \
+  --skip-test              # Optional for CI/offline setup
 v1claw agent                # Interactive chat
 v1claw agent -m "query"     # One-shot query
 v1claw gateway              # Start 24/7 daemon
-v1claw client -s host:port  # Connect to a remote gateway
+v1claw client -s host[:port] # Connect to a remote gateway
+v1claw client -s https://gateway.example.com # HTTPS / reverse-proxy gateway
 v1claw configure            # Change settings interactively
 v1claw auth login           # Authenticate
 v1claw auth status          # Check auth status
@@ -715,7 +756,7 @@ v1claw status               # Show system status
 v1claw doctor               # Health check (connectivity, config, workspace)
 v1claw cron                 # Manage scheduled tasks
 v1claw skills list          # List installed skills
-v1claw skills install <url> # Install a skill
+v1claw skills install <github-owner/repo[/path]> # Install a GitHub skill
 v1claw version              # Show version
 ```
 
@@ -781,7 +822,7 @@ V1Claw works today as a powerful single-device assistant. Here's what's next to 
 - [x] Skills system (installable agent extensions)
 - [x] Docker and cross-platform builds
 - [x] Multi-device sync — device registration, discovery, and heartbeat
-- [x] Client mode — `v1claw client --server host:port` connects to remote gateway
+- [x] Client mode — `v1claw client --server host[:port]|url` connects to remote gateway
 - [x] Device capability routing — use phone's camera/mic from desktop via WebSocket
 
 ### 🚧 In Progress
@@ -806,7 +847,7 @@ V1Claw works today as a powerful single-device assistant. Here's what's next to 
 | `permission denied` | Run `chmod +x build/v1claw-*` to make the binary executable |
 | Build fails with "out of memory" | Close other apps. On Android, phones have limited RAM — try closing background apps |
 | `termux-microphone-record: not found` | Install Termux:API app from F-Droid AND run `pkg install termux-api` in Termux |
-| API key error / "unauthorized" | Double-check your API key in `~/.v1claw/config.json`. Make sure there are no extra spaces |
+| API key error / "unauthorized" | Double-check your API key in your V1Claw config file. Make sure there are no extra spaces |
 | `connection refused` on port 18790 | The gateway isn't running. Start it with `v1claw gateway` first |
 | AI doesn't use my camera/mic | Enable the permission in config: `"microphone": true` or `"camera": true` and restart |
 | `go version` shows old version | V1Claw needs Go 1.25+. Update Go from [go.dev/dl](https://go.dev/dl/) |
