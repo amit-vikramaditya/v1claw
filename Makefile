@@ -1,4 +1,4 @@
-.PHONY: all build install uninstall clean help test
+.PHONY: all build install uninstall clean help test release-check
 
 # Build variables
 BINARY_NAME=v1claw
@@ -155,6 +155,10 @@ update-deps:
 
 ## check: Run vet, fmt, and verify dependencies
 check: deps fmt vet test
+
+## release-check: Run local release preflight checks
+release-check:
+	@./scripts/release_check.sh
 
 ## run: Build and run v1claw
 run: build

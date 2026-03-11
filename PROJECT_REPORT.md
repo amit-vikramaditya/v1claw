@@ -28,6 +28,8 @@ Status: hardening pass paused; work committed for resume later
 - Made Docker publishing configuration optional-safe in both GoReleaser and the Docker workflow, so GitHub releases and GHCR publishing are not blocked by missing Docker Hub secrets or repository variables.
 - Improved local-provider diagnostics in `doctor` and onboarding so down `ollama`, `vllm`, or `github_copilot` endpoints report actionable local fixes instead of generic API-key/internet advice.
 - Updated installer end-of-run guidance to show both cloud-key and local-provider setup examples.
+- Added `make release-check` and `scripts/release_check.sh` so publish readiness can be revalidated locally with one command.
+- Added `RELEASING.md` to document the exact publish path, workflow expectations, and post-release verification.
 
 ## Validation completed
 
@@ -46,3 +48,4 @@ Status: hardening pass paused; work committed for resume later
 
 - Run live Windows/PowerShell install verification on a Windows machine.
 - Publish a tagged GitHub release and verify the installer against the real release artifacts once they exist.
+- Fix GitHub auth on the publishing machine so `main` and the release tag can actually be pushed.

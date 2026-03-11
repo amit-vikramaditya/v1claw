@@ -769,6 +769,18 @@ v1claw version              # Show version
 
 ---
 
+## Releasing
+
+For maintainers, the local preflight is:
+
+```bash
+make release-check
+```
+
+Release steps are documented in [RELEASING.md](RELEASING.md).
+
+---
+
 ## Architecture
 
 ```
