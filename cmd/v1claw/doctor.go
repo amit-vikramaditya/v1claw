@@ -8,12 +8,19 @@ import (
 	"strings"
 	"time"
 
+	"github.com/amit-vikramaditya/v1claw/pkg/auth"
 	"github.com/amit-vikramaditya/v1claw/pkg/config"
 	"github.com/amit-vikramaditya/v1claw/pkg/providers"
 )
 
 // doctorCmd runs a series of quick health checks and prints a colour-coded report.
 func doctorCmd() {
+	if !runDoctor() {
+		os.Exit(1)
+	}
+}
+
+func runDoctor() bool {
 	printLogo()
 	fmt.Println(titleStyle.Render("  V1Claw Health Check\n"))
 
@@ -31,7 +38,9 @@ func doctorCmd() {
 	} else {
 		fmt.Printf("%s  Config file        not found\n", fail)
 		hint("Run  v1claw onboard  to create it.")
-		allGood = false
+		fmt.Println()
+		printDoctorResult(false)
+		return false
 	}
 
 	// ── 2. Load config ───────────────────────────────────────────────────────
@@ -41,7 +50,7 @@ func doctorCmd() {
 		hint("Config may be malformed. Try  v1claw configure  to repair it.")
 		fmt.Println()
 		printDoctorResult(allGood)
-		return
+		return false
 	}
 
 	// ── 3. Workspace directory ───────────────────────────────────────────────
@@ -78,20 +87,20 @@ func doctorCmd() {
 		fmt.Printf("%s  AI provider        %s  /  %s\n", pass, providerID, model)
 	}
 
-	// ── 5. API key present ───────────────────────────────────────────────────
-	apiKey := apiKeyFromConfig(cfg, providerID)
-	if apiKey == "" && providerID != "" && !isLocalProvider(providerID) {
-		fmt.Printf("%s  API key            not set for %s\n", fail, providerID)
-		hint("Run  v1claw configure → Brain  to add the key.")
+	// ── 5. Credentials ───────────────────────────────────────────────────────
+	credentialLabel, credentialsReady, credentialHint := providerCredentialStatus(cfg, providerID)
+	if providerID != "" && !credentialsReady {
+		fmt.Printf("%s  Credentials        not ready for %s\n", fail, providerID)
+		if credentialHint != "" {
+			hint(credentialHint)
+		}
 		allGood = false
-	} else if apiKey != "" {
-		fmt.Printf("%s  API key            %s\n", pass, maskKey(apiKey))
-	} else if isLocalProvider(providerID) {
-		fmt.Printf("%s  API key            local provider — no key needed\n", pass)
+	} else if credentialLabel != "" {
+		fmt.Printf("%s  Credentials        %s\n", pass, credentialLabel)
 	}
 
 	// ── 6. Live connectivity ping ─────────────────────────────────────────────
-	if providerID != "" && model != "" && (apiKey != "" || isLocalProvider(providerID)) {
+	if providerID != "" && model != "" && credentialsReady {
 		type result struct{ err error }
 		done := make(chan result, 1)
 		go func() {
@@ -144,22 +153,17 @@ func doctorCmd() {
 	}
 
 	// ── 8. Messaging channels ────────────────────────────────────────────────
-	var channels []string
-	if cfg.Channels.Telegram.Enabled {
-		channels = append(channels, "Telegram")
-	}
-	if cfg.Channels.Discord.Enabled {
-		channels = append(channels, "Discord")
-	}
+	channels := enabledChannelNames(cfg)
 	if len(channels) > 0 {
 		fmt.Printf("%s  Channels           %s\n", pass, strings.Join(channels, ", "))
 	} else {
 		fmt.Printf("%s  Channels           none configured  (optional)\n", warn)
-		hint("Add Telegram / Discord with  v1claw configure → Channels.")
+		hint("Add channels with  v1claw configure → Channels.")
 	}
 
 	fmt.Println()
 	printDoctorResult(allGood)
+	return allGood
 }
 
 func printDoctorResult(allGood bool) {
@@ -195,6 +199,64 @@ func apiKeyFromConfig(cfg *config.Config, providerID string) string {
 	default:
 		return ""
 	}
+}
+
+func providerCredentialStatus(cfg *config.Config, providerID string) (string, bool, string) {
+	switch strings.ToLower(providerID) {
+	case "":
+		return "", false, ""
+	case "vertex", "vertex_ai", "vertexai":
+		if strings.TrimSpace(cfg.Providers.Vertex.ProjectID) == "" {
+			return "", false, "Set Vertex project_id with  v1claw configure → Brain."
+		}
+		return "gcloud / ADC credentials", true, ""
+	case "bedrock", "aws_bedrock", "aws":
+		return "AWS credentials / profile", true, ""
+	case "github_copilot", "copilot":
+		return "Copilot bridge / local auth", true, ""
+	case "claude-cli", "claudecode", "claude-code":
+		return "Claude CLI auth", true, ""
+	case "codex-cli", "codex-code":
+		return "Codex CLI auth", true, ""
+	case "openai", "gpt":
+		return providerConfigCredentialStatus(cfg.Providers.OpenAI, "openai")
+	case "anthropic", "claude":
+		return providerConfigCredentialStatus(cfg.Providers.Anthropic, "anthropic")
+	default:
+		apiKey := apiKeyFromConfig(cfg, providerID)
+		if apiKey != "" {
+			return maskKey(apiKey), true, ""
+		}
+		if isLocalProvider(providerID) {
+			return "local provider — no key needed", true, ""
+		}
+		return "", false, "Run  v1claw configure → Brain  to add the required credentials."
+	}
+}
+
+func providerConfigCredentialStatus(providerCfg config.ProviderConfig, authProvider string) (string, bool, string) {
+	switch strings.ToLower(strings.TrimSpace(providerCfg.AuthMethod)) {
+	case "oauth", "token":
+		cred, err := auth.GetCredential(authProvider)
+		if err != nil {
+			return "", false, fmt.Sprintf("Run  v1claw auth login --provider %s  after configuring auth storage.", authProvider)
+		}
+		if cred == nil {
+			return "", false, fmt.Sprintf("Run  v1claw auth login --provider %s.", authProvider)
+		}
+		return fmt.Sprintf("stored auth (%s)", providerCfg.AuthMethod), true, ""
+	case "codex-cli":
+		if _, _, _, err := providers.ReadCodexCliCredentials(); err != nil {
+			return "", false, "Run  codex login  to refresh Codex CLI credentials."
+		}
+		return "Codex CLI credentials", true, ""
+	}
+
+	if apiKey := strings.TrimSpace(providerCfg.APIKey); apiKey != "" {
+		return maskKey(apiKey), true, ""
+	}
+
+	return "", false, "Run  v1claw configure → Brain  to add the required credentials."
 }
 
 // maskKey returns a display-safe string like "AIza…a1b2".

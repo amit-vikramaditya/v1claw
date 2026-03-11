@@ -78,6 +78,37 @@ func TestHandleStatus_NoProvider(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 }
 
+func TestHandleIndex_AuthRequiresAuthorizationHeader(t *testing.T) {
+	srv := NewServer(Config{APIKey: "secret123"})
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	w := httptest.NewRecorder()
+	srv.handleIndex(w, req)
+
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
+}
+
+func TestHandleIndex_AuthAcceptsAuthorizationHeader(t *testing.T) {
+	srv := NewServer(Config{APIKey: "secret123"})
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("Authorization", "Bearer secret123")
+	w := httptest.NewRecorder()
+	srv.handleIndex(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+}
+
+func TestHandleIndex_RejectsQueryParamAPIKey(t *testing.T) {
+	srv := NewServer(Config{APIKey: "secret123"})
+
+	req := httptest.NewRequest(http.MethodGet, "/?api_key=secret123", nil)
+	w := httptest.NewRecorder()
+	srv.handleIndex(w, req)
+
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
+}
+
 func TestGetStatus_Uptime(t *testing.T) {
 	srv := NewServer(Config{})
 	srv.startTime = time.Now().Add(-5 * time.Minute)

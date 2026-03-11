@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -115,6 +116,100 @@ func TestRecordLastChatID(t *testing.T) {
 	al2 := NewAgentLoop(cfg, msgBus, provider)
 	if al2.state.GetLastChatID() != testChatID {
 		t.Errorf("Expected persistent chat ID '%s', got '%s'", testChatID, al2.state.GetLastChatID())
+	}
+}
+
+func TestBuildCLIProviders_SandboxedStripsGenericWorkerAutoApproveFlags(t *testing.T) {
+	tmpDir := t.TempDir()
+	scriptPath := filepath.Join(tmpDir, "gemini")
+	script := "#!/bin/sh\nexit 0\n"
+	if err := os.WriteFile(scriptPath, []byte(script), 0755); err != nil {
+		t.Fatalf("write fake gemini CLI: %v", err)
+	}
+	t.Setenv("PATH", tmpDir)
+
+	cfg := config.DefaultConfig()
+	cfg.Agents.Defaults.Workspace = tmpDir
+	cfg.Workspace.Sandboxed = true
+
+	providersMap := buildCLIProviders(cfg, tmpDir)
+	provider, ok := providersMap["gemini"]
+	if !ok {
+		t.Fatal("expected gemini CLI worker to be registered")
+	}
+
+	worker, ok := provider.(*providers.AutonomousCLIWorker)
+	if !ok {
+		t.Fatalf("expected AutonomousCLIWorker, got %T", provider)
+	}
+	if len(worker.Profile.AutoApproveFlags) != 0 {
+		t.Fatalf("expected sandboxed worker to strip auto-approve flags, got %v", worker.Profile.AutoApproveFlags)
+	}
+}
+
+func TestCreateToolRegistry_UnsandboxedExecToolUsesDevAllowlist(t *testing.T) {
+	tmpDir := t.TempDir()
+	scriptPath := filepath.Join(tmpDir, "go")
+	if err := os.WriteFile(scriptPath, []byte("#!/bin/sh\necho fake-go\n"), 0755); err != nil {
+		t.Fatalf("write fake go binary: %v", err)
+	}
+	t.Setenv("PATH", tmpDir)
+
+	cfg := config.DefaultConfig()
+	cfg.Workspace.Sandboxed = false
+
+	registry := createToolRegistry(tmpDir, false, cfg, bus.NewMessageBus(), nil)
+	rawTool, ok := registry.Get("exec")
+	if !ok {
+		t.Fatal("expected exec tool to be registered")
+	}
+
+	execTool, ok := rawTool.(*tools.ExecTool)
+	if !ok {
+		t.Fatalf("expected *tools.ExecTool, got %T", rawTool)
+	}
+
+	result := execTool.Execute(context.Background(), tools.ToolContext{}, map[string]interface{}{
+		"command": "go",
+	})
+	if result.IsError {
+		t.Fatalf("expected unsandboxed exec tool to allow dev command, got error: %s", result.ForLLM)
+	}
+	if !strings.Contains(result.ForLLM, "fake-go") {
+		t.Fatalf("expected fake go output, got: %s", result.ForLLM)
+	}
+}
+
+func TestCreateToolRegistry_SandboxedExecToolBlocksDevCommands(t *testing.T) {
+	tmpDir := t.TempDir()
+	scriptPath := filepath.Join(tmpDir, "go")
+	if err := os.WriteFile(scriptPath, []byte("#!/bin/sh\necho fake-go\n"), 0755); err != nil {
+		t.Fatalf("write fake go binary: %v", err)
+	}
+	t.Setenv("PATH", tmpDir)
+
+	cfg := config.DefaultConfig()
+	cfg.Workspace.Sandboxed = true
+
+	registry := createToolRegistry(tmpDir, false, cfg, bus.NewMessageBus(), nil)
+	rawTool, ok := registry.Get("exec")
+	if !ok {
+		t.Fatal("expected exec tool to be registered")
+	}
+
+	execTool, ok := rawTool.(*tools.ExecTool)
+	if !ok {
+		t.Fatalf("expected *tools.ExecTool, got %T", rawTool)
+	}
+
+	result := execTool.Execute(context.Background(), tools.ToolContext{}, map[string]interface{}{
+		"command": "go",
+	})
+	if !result.IsError {
+		t.Fatal("expected sandboxed exec tool to block dev command")
+	}
+	if !strings.Contains(strings.ToLower(result.ForLLM), "allowlist") && !strings.Contains(strings.ToLower(result.ForLLM), "security violation") {
+		t.Fatalf("expected allowlist/security error, got: %s", result.ForLLM)
 	}
 }
 

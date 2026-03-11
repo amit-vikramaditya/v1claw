@@ -6,10 +6,14 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
+	"strings"
 	"sync"
 
 	"github.com/caarlos0/env/v11"
 )
+
+const HomeEnvVar = "V1CLAW_HOME"
 
 // FlexibleStringSlice is a []string that also accepts JSON numbers,
 // so allow_from can contain both "123" and 123.
@@ -88,6 +92,8 @@ type PermissionsConfig struct {
 	Clipboard     bool `json:"clipboard" env:"V1CLAW_PERMISSIONS_CLIPBOARD"`           // Allow clipboard read/write
 	Sensors       bool `json:"sensors" env:"V1CLAW_PERMISSIONS_SENSORS"`               // Allow sensor access
 	ShellHardware bool `json:"shell_hardware" env:"V1CLAW_PERMISSIONS_SHELL_HARDWARE"` // Allow shell exec of hardware commands (termux-*)
+	Notifications bool `json:"notifications" env:"V1CLAW_PERMISSIONS_NOTIFICATIONS"`   // Allow toast/notification APIs
+	Screen        bool `json:"screen" env:"V1CLAW_PERMISSIONS_SCREEN"`                 // Allow screenshot capture
 }
 
 // VoiceConfig configures the voice I/O pipeline.
@@ -314,11 +320,65 @@ type ToolsConfig struct {
 }
 
 func DefaultWorkspaceDir() string {
+	return filepath.Join(HomeDir(), "workspace")
+}
+
+func HomeDir() string {
+	if envHome := strings.TrimSpace(os.Getenv(HomeEnvVar)); envHome != "" {
+		return expandHome(envHome)
+	}
+
+	legacy := legacyHomeDir()
+	legacyExists := false
+	if legacy != "" {
+		if _, err := os.Stat(legacy); err == nil {
+			legacyExists = true
+		}
+	}
+
+	configDir := ""
+	if userConfigDir, err := os.UserConfigDir(); err == nil {
+		configDir = userConfigDir
+	}
+
+	return resolveHomeDir(runtime.GOOS, legacy, legacyExists, configDir)
+}
+
+func ConfigPath() string {
+	return filepath.Join(HomeDir(), "config.json")
+}
+
+func GlobalSkillsDir() string {
+	return filepath.Join(HomeDir(), "skills")
+}
+
+func legacyHomeDir() string {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return "." // fallback to current dir if no home available
+		return ""
 	}
-	return filepath.Join(home, ".v1claw", "workspace")
+	return filepath.Join(home, ".v1claw")
+}
+
+func resolveHomeDir(goos string, legacyHome string, legacyExists bool, userConfigDir string) string {
+	if goos == "windows" {
+		if legacyExists && legacyHome != "" {
+			return legacyHome
+		}
+		if userConfigDir != "" {
+			return filepath.Join(userConfigDir, "V1Claw")
+		}
+	}
+
+	if legacyHome != "" {
+		return legacyHome
+	}
+
+	if userConfigDir != "" {
+		return filepath.Join(userConfigDir, "v1claw")
+	}
+
+	return ".v1claw"
 }
 
 func DefaultConfig() *Config {
@@ -482,6 +542,7 @@ func LoadConfig(path string) (*Config, error) {
 	// Apply explicit per-provider env vars.  The ProviderConfig struct uses
 	// template-style tags that caarlos0/env cannot resolve, so we do it here.
 	applyProviderEnvOverrides(cfg)
+	cfg.normalizeWorkspacePaths()
 
 	return cfg, nil
 }
@@ -580,6 +641,7 @@ func applyProviderEnvOverrides(cfg *Config) {
 func SaveConfig(path string, cfg *Config) error {
 	cfg.mu.Lock()
 	defer cfg.mu.Unlock()
+	cfg.normalizeWorkspacePathsLocked()
 
 	data, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
@@ -598,6 +660,48 @@ func (c *Config) WorkspacePath() string {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return expandHome(c.Agents.Defaults.Workspace)
+}
+
+func (c *Config) normalizeWorkspacePaths() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.normalizeWorkspacePathsLocked()
+}
+
+func (c *Config) normalizeWorkspacePathsLocked() {
+	defaultWorkspace := DefaultWorkspaceDir()
+	workspacePath := strings.TrimSpace(c.Workspace.Path)
+	agentWorkspace := strings.TrimSpace(c.Agents.Defaults.Workspace)
+
+	switch {
+	case workspacePath == "" && agentWorkspace == "":
+		workspacePath = defaultWorkspace
+		agentWorkspace = defaultWorkspace
+	case workspacePath == "":
+		workspacePath = agentWorkspace
+	case agentWorkspace == "":
+		agentWorkspace = workspacePath
+	case sameExpandedPath(workspacePath, agentWorkspace):
+		agentWorkspace = workspacePath
+	default:
+		workspaceDefault := sameExpandedPath(workspacePath, defaultWorkspace)
+		agentDefault := sameExpandedPath(agentWorkspace, defaultWorkspace)
+		switch {
+		case workspaceDefault && !agentDefault:
+			workspacePath = agentWorkspace
+		case agentDefault && !workspaceDefault:
+			agentWorkspace = workspacePath
+		default:
+			agentWorkspace = workspacePath
+		}
+	}
+
+	c.Workspace.Path = workspacePath
+	c.Agents.Defaults.Workspace = agentWorkspace
+}
+
+func sameExpandedPath(left, right string) bool {
+	return filepath.Clean(expandHome(left)) == filepath.Clean(expandHome(right))
 }
 
 func (c *Config) GetAPIKey() string {

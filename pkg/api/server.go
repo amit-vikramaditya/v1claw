@@ -20,6 +20,12 @@ import (
 	devsync "github.com/amit-vikramaditya/v1claw/pkg/sync"
 )
 
+const (
+	maxInboundBodyBytes = 1 << 20
+	maxChatMessageChars = 128 * 1024
+	maxSessionKeyChars  = 256
+)
+
 // Server provides HTTP and WebSocket API endpoints for V1Claw.
 type Server struct {
 	mu          sync.RWMutex
@@ -234,19 +240,19 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req ChatRequest
-	r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1MB limit
+	r.Body = http.MaxBytesReader(w, r.Body, maxInboundBodyBytes)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, ErrorResponse{Error: "invalid request body"})
 		return
 	}
 
-	if req.Message == "" {
-		writeJSON(w, http.StatusBadRequest, ErrorResponse{Error: "message is required"})
-		return
-	}
-
 	if req.SessionKey == "" {
 		req.SessionKey = "api:default"
+	}
+
+	if err := validateChatInput(req.Message, req.SessionKey); err != nil {
+		writeJSON(w, http.StatusBadRequest, ErrorResponse{Error: err.Error()})
+		return
 	}
 
 	s.mu.RLock()
@@ -273,6 +279,19 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		SessionKey: req.SessionKey,
 		Timestamp:  time.Now(),
 	})
+}
+
+func validateChatInput(message, sessionKey string) error {
+	if message == "" {
+		return fmt.Errorf("message is required")
+	}
+	if len(message) > maxChatMessageChars {
+		return fmt.Errorf("message exceeds maximum length of %d characters", maxChatMessageChars)
+	}
+	if len(sessionKey) > maxSessionKeyChars {
+		return fmt.Errorf("session_key exceeds maximum length of %d characters", maxSessionKeyChars)
+	}
+	return nil
 }
 
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
@@ -418,6 +437,39 @@ func (s *Server) handleDevices(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusBadRequest, ErrorResponse{Error: err.Error()})
 			return
 		}
+		if req.WSRegisterToken != "" && req.WSClientID == "" {
+			writeJSON(w, http.StatusBadRequest, ErrorResponse{Error: "ws_client_id is required when ws_register_token is set"})
+			return
+		}
+		if req.WSClientID != "" && req.WSRegisterToken == "" {
+			writeJSON(w, http.StatusBadRequest, ErrorResponse{Error: "ws_register_token is required when ws_client_id is set"})
+			return
+		}
+
+		// Validate websocket binding before mutating the registry so a failed
+		// association cannot partially register a spoofed or orphaned device.
+		var boundClient *wsClient
+		if req.WSClientID != "" {
+			s.mu.Lock()
+			client, ok := s.wsClients[req.WSClientID]
+			if !ok {
+				s.mu.Unlock()
+				writeJSON(w, http.StatusBadRequest, ErrorResponse{Error: "ws_client_id is not connected"})
+				return
+			}
+			if subtle.ConstantTimeCompare([]byte(req.WSRegisterToken), []byte(client.registerToken)) != 1 {
+				s.mu.Unlock()
+				writeJSON(w, http.StatusUnauthorized, ErrorResponse{Error: "invalid websocket registration token"})
+				return
+			}
+			if client.deviceID != "" && client.deviceID != req.ID {
+				s.mu.Unlock()
+				writeJSON(w, http.StatusConflict, ErrorResponse{Error: "ws client is already bound to another device"})
+				return
+			}
+			boundClient = client
+			s.mu.Unlock()
+		}
 
 		device := devsync.DeviceInfo{
 			ID:           req.ID,
@@ -431,10 +483,9 @@ func (s *Server) handleDevices(w http.ResponseWriter, r *http.Request) {
 		}
 		s.registry.Register(device)
 
-		// Associate WS client ID with device ID for capability routing.
-		if req.WSClientID != "" {
+		if boundClient != nil {
 			s.mu.Lock()
-			if client, ok := s.wsClients[req.WSClientID]; ok {
+			if client, ok := s.wsClients[req.WSClientID]; ok && client == boundClient {
 				client.deviceID = req.ID
 			}
 			s.mu.Unlock()
@@ -489,9 +540,10 @@ func (s *Server) Registry() *devsync.Registry {
 
 // --- Helpers ---
 
-// validateDeviceHost rejects host values that resolve to private or reserved IP
-// ranges to prevent SSRF attacks where a malicious client registers a device
-// with host=169.254.169.254 (cloud metadata service) or an internal address.
+// validateDeviceHost performs lightweight sanity checks for device metadata.
+// Device registration is local-network-first, so private/LAN addresses and
+// mDNS hostnames must be accepted. Any future outbound connection logic must
+// apply its own SSRF protections at the point of use rather than here.
 func validateDeviceHost(host string) error {
 	if host == "" {
 		return nil // empty host is fine — device will not be contacted
@@ -505,34 +557,20 @@ func validateDeviceHost(host string) error {
 
 	ip := net.ParseIP(h)
 	if ip == nil {
-		// Hostname — reject if it looks like an internal hostname
 		lower := strings.ToLower(h)
-		if lower == "localhost" || strings.HasSuffix(lower, ".local") ||
-			strings.HasSuffix(lower, ".internal") || strings.HasSuffix(lower, ".corp") {
-			return fmt.Errorf("device host %q resolves to a reserved/internal name", host)
+		if lower == "localhost" {
+			return fmt.Errorf("device host %q cannot be localhost", host)
 		}
-		return nil // external hostname, accept
+		return nil
 	}
 
-	reserved := []net.IPNet{
-		// Loopback
-		{IP: net.ParseIP("127.0.0.0"), Mask: net.CIDRMask(8, 32)},
-		// Private RFC1918
-		{IP: net.ParseIP("10.0.0.0"), Mask: net.CIDRMask(8, 32)},
-		{IP: net.ParseIP("172.16.0.0"), Mask: net.CIDRMask(12, 32)},
-		{IP: net.ParseIP("192.168.0.0"), Mask: net.CIDRMask(16, 32)},
-		// Link-local (also used by AWS/GCP metadata service 169.254.169.254)
-		{IP: net.ParseIP("169.254.0.0"), Mask: net.CIDRMask(16, 32)},
-		// IPv6 loopback and link-local
-		{IP: net.ParseIP("::1"), Mask: net.CIDRMask(128, 128)},
-		{IP: net.ParseIP("fe80::"), Mask: net.CIDRMask(10, 128)},
-		// Unique-local (fc00::/7)
-		{IP: net.ParseIP("fc00::"), Mask: net.CIDRMask(7, 128)},
-	}
-	for _, cidr := range reserved {
-		if cidr.Contains(ip) {
-			return fmt.Errorf("device host %q is a reserved/private IP address", host)
-		}
+	switch {
+	case ip.IsLoopback():
+		return fmt.Errorf("device host %q cannot be a loopback address", host)
+	case ip.IsUnspecified():
+		return fmt.Errorf("device host %q cannot be an unspecified address", host)
+	case ip.IsMulticast():
+		return fmt.Errorf("device host %q cannot be a multicast address", host)
 	}
 
 	return nil

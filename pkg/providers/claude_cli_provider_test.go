@@ -433,6 +433,26 @@ func TestCreateProvider_ClaudeCli(t *testing.T) {
 	}
 }
 
+func TestCreateProvider_ClaudeCli_SandboxedUsesSafeProvider(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Agents.Defaults.Provider = "claude-cli"
+	cfg.Agents.Defaults.Workspace = "/test/ws"
+	cfg.Workspace.Sandboxed = true
+
+	provider, err := CreateProvider(cfg)
+	if err != nil {
+		t.Fatalf("CreateProvider(claude-cli sandboxed) error = %v", err)
+	}
+
+	cliProvider, ok := provider.(*ClaudeCliProvider)
+	if !ok {
+		t.Fatalf("CreateProvider(claude-cli sandboxed) returned %T, want *ClaudeCliProvider", provider)
+	}
+	if !cliProvider.disableDangerousFlag {
+		t.Fatal("expected sandboxed claude provider to disable dangerous permission bypass flag")
+	}
+}
+
 func TestCreateProvider_ClaudeCode(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.Agents.Defaults.Provider = "claude-code"

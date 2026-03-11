@@ -17,6 +17,7 @@ type CLIInteractionProfile struct {
 	Name             string
 	Command          string
 	PromptFlag       string   // e.g., "-p" or "--prompt"
+	StaticFlags      []string // Safe control flags that should remain enabled in sandboxed mode
 	AutoApproveFlags []string // e.g., ["--yolo"] or ["--allow-all-tools"]
 	OutputFormatFlag string   // e.g., "--output-format json"
 	RequiresTaskArg  bool     // Whether the task is a positional arg or flag-based
@@ -40,6 +41,7 @@ func LoadProfilesFromConfig(workers []config.CLIWorkerConfig) map[string]CLIInte
 			Name:             w.Name,
 			Command:          w.Command,
 			PromptFlag:       w.PromptFlag,
+			StaticFlags:      nil,
 			AutoApproveFlags: w.AutoApproveFlags,
 			OutputFormatFlag: w.OutputFormatFlag,
 			RequiresTaskArg:  true, // Default to true for most modern CLIs
@@ -88,7 +90,8 @@ var BuiltinProfiles = map[string]CLIInteractionProfile{
 		Name:             "aider",
 		Command:          "aider",
 		PromptFlag:       "--message",
-		AutoApproveFlags: []string{"--yes-always", "--no-auto-commits"},
+		StaticFlags:      []string{"--no-auto-commits"},
+		AutoApproveFlags: []string{"--yes-always"},
 	},
 	"open-interpreter": {
 		Name:             "open-interpreter",
@@ -126,6 +129,14 @@ func (w *AutonomousCLIWorker) Chat(ctx context.Context, messages []Message, tool
 	}, nil
 }
 
+// SandboxSafeProfile removes privileged automation flags that bypass approval
+// or expand filesystem/tool access. Safe control flags remain intact.
+func SandboxSafeProfile(profile CLIInteractionProfile) CLIInteractionProfile {
+	safe := profile
+	safe.AutoApproveFlags = nil
+	return safe
+}
+
 // GetDefaultModel returns the CLI worker's name as its model identifier.
 func (w *AutonomousCLIWorker) GetDefaultModel() string {
 	return w.Profile.Name
@@ -134,33 +145,40 @@ func (w *AutonomousCLIWorker) GetDefaultModel() string {
 func (w *AutonomousCLIWorker) Execute(ctx context.Context, task string) (string, error) {
 	args := []string{}
 
-	// 1. Add subcommand or prompt flag
-	if w.Profile.PromptFlag != "" {
-		args = append(args, w.Profile.PromptFlag)
-	}
-
-	// 2. Add the task itself.
 	// Guard against argument injection: if the task string begins with a dash (-) it
-	// could be mistaken by the target CLI as a flag.  We sanitise by prepending a
-	// "--" end-of-options marker when the prompt flag is empty (positional mode),
-	// and by limiting the task length to prevent excessively long argument strings.
+	// could be mistaken by the target CLI as a flag. We sanitise by prepending a
+	// "--" end-of-options marker when the task is positional, and by limiting the
+	// task length to prevent excessively long argument strings.
 	safeTask := task
 	if len(safeTask) > 32768 {
 		safeTask = safeTask[:32768]
 	}
-	if w.Profile.PromptFlag == "" && strings.HasPrefix(safeTask, "-") {
-		// Insert end-of-options marker before positional task argument.
-		args = append(args, "--")
+
+	promptFlag := w.Profile.PromptFlag
+	hasPromptFlag := promptFlag != ""
+	promptFlagIsOption := strings.HasPrefix(promptFlag, "-")
+
+	// 1. Add a subcommand first if the profile uses one (e.g. "codex exec ...").
+	if hasPromptFlag && !promptFlagIsOption {
+		args = append(args, promptFlag)
 	}
-	args = append(args, safeTask)
 
-	// 3. Add auto-approval flags to bypass "Human-in-Loop" prompts
+	// 2. Add control flags before the task for consistent CLI parsing.
+	args = append(args, w.Profile.StaticFlags...)
 	args = append(args, w.Profile.AutoApproveFlags...)
-
-	// 4. Set output format for easier parsing if supported
 	if w.Profile.OutputFormatFlag != "" {
 		parts := strings.Fields(w.Profile.OutputFormatFlag)
 		args = append(args, parts...)
+	}
+
+	// 3. Add the prompt/task portion last.
+	if hasPromptFlag && promptFlagIsOption {
+		args = append(args, promptFlag, safeTask)
+	} else {
+		if strings.HasPrefix(safeTask, "-") {
+			args = append(args, "--")
+		}
+		args = append(args, safeTask)
 	}
 
 	logger.InfoCF("orchestrator", "Delegating task to autonomous worker", map[string]interface{}{

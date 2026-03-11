@@ -53,6 +53,7 @@ func onboardCmd() {
 	//   v1claw onboard --auto --provider gemini --api-key sk-...
 	//   v1claw onboard --auto --provider gemini --api-key sk-... --model gemini-3.1-pro-preview
 	//   v1claw onboard --auto --provider gemini --api-key sk-... --workspace /my/path
+	//   v1claw onboard --auto --provider gemini --api-key sk-... --skip-test
 	autoMode := false
 	for _, arg := range args {
 		if arg == "--auto" {
@@ -96,6 +97,10 @@ func onboardCmd() {
 		return
 	}
 
+	if !onboardModel(cfg, providerID) {
+		return
+	}
+
 	// Step 4 – Identity (name the AI and yourself)
 	fmt.Println(stepStyle.Render("\n  Step 4 of 6 — Give your assistant a name"))
 	aiName, userName := onboardIdentity(cfg)
@@ -132,10 +137,9 @@ func printOnboardWelcome() {
 // ─── Step 1: Workspace ───────────────────────────────────────────────────────
 
 func onboardWorkspace(cfg *config.Config) bool {
-	home, _ := os.UserHomeDir()
-	defaultPath := filepath.Join(home, ".v1claw", "workspace")
+	defaultPath := config.DefaultWorkspaceDir()
 
-	recommended := fmt.Sprintf("~/.v1claw/workspace  %s", stepStyle.Render("← recommended"))
+	recommended := fmt.Sprintf("%s  %s", defaultPath, stepStyle.Render("← recommended"))
 
 	var choice string
 	form := huh.NewForm(
@@ -245,6 +249,37 @@ func onboardAPIKey(cfg *config.Config, providerID, keyURL string) bool {
 		return onboardAzureAuth(cfg)
 	}
 	return onboardAPIKeyWithKey(cfg, providerID, keyURL)
+}
+
+func onboardModel(cfg *config.Config, providerID string) bool {
+	if strings.TrimSpace(cfg.Agents.Defaults.Model) != "" {
+		return true
+	}
+
+	var model string
+	form := huh.NewForm(
+		huh.NewGroup(
+			huh.NewInput().
+				Title(fmt.Sprintf("Enter the model name for %s:", providerID)).
+				Description("Use the exact model or deployment name from your provider dashboard.").
+				Value(&model),
+		),
+	)
+
+	if err := form.Run(); err != nil {
+		fmt.Println("Setup cancelled.")
+		return false
+	}
+
+	model = strings.TrimSpace(model)
+	if model == "" {
+		fmt.Printf("  %s A model name is required for provider %q.\n", errorStyle.Render("✗"), providerID)
+		return false
+	}
+
+	cfg.Agents.Defaults.Model = model
+	fmt.Printf("\n  %s Model: %s\n", successStyle.Render("✓"), cfg.Agents.Defaults.Model)
+	return true
 }
 
 // onboardVertexAuth configures Google Vertex AI (gcloud auth, no API key).
@@ -715,20 +750,28 @@ func wrapText(s string, maxWidth int, indent string) string {
 //	--provider <id>    Required. e.g. gemini, openai, anthropic, groq, deepseek, openrouter
 //	--api-key  <key>   Required for API-key providers (not needed for vertex/bedrock).
 //	--model    <model> Optional. Defaults to the first model for the provider.
-//	--workspace <path> Optional. Defaults to ~/.v1claw/workspace.
+//	--workspace <path> Optional. Defaults to the standard V1Claw workspace path.
+//	--skip-test        Optional. Skip live provider validation and save config immediately.
 func onboardAuto(args []string) {
 	providerID := flagValue(args, "--provider")
 	apiKey := flagValue(args, "--api-key")
 	model := flagValue(args, "--model")
 	workspace := flagValue(args, "--workspace")
+	skipTest := hasFlag(args, "--skip-test")
 
 	// Validate required flags.
 	if providerID == "" {
 		fmt.Printf("  %s --provider is required for --auto mode.\n\n", errorStyle.Render("✗"))
 		fmt.Printf("  Example:\n")
 		fmt.Printf("    v1claw onboard --auto --provider gemini --api-key YOUR_KEY\n\n")
-		fmt.Printf("  Providers: gemini, openai, anthropic, groq, deepseek, openrouter, openrouter, nvidia\n")
+		fmt.Printf("  Providers: %s\n", supportedProviderList())
 		fmt.Printf("  Enterprise (no key needed): vertex, bedrock\n\n")
+		os.Exit(1)
+	}
+
+	if _, ok := lookupProviderInfo(providerID); !ok {
+		fmt.Printf("  %s Unknown provider %q.\n\n", errorStyle.Render("✗"), providerID)
+		fmt.Printf("  Providers: %s\n\n", supportedProviderList())
 		os.Exit(1)
 	}
 
@@ -737,6 +780,15 @@ func onboardAuto(args []string) {
 		fmt.Printf("  %s --api-key is required for provider %q.\n\n", errorStyle.Render("✗"), providerID)
 		fmt.Printf("  Example:\n")
 		fmt.Printf("    v1claw onboard --auto --provider %s --api-key YOUR_KEY\n\n", providerID)
+		os.Exit(1)
+	}
+
+	defaultModel := defaultProviderModel(providerID)
+	if strings.TrimSpace(model) == "" && defaultModel == "" {
+		fmt.Printf("  %s --model is required for provider %q.\n\n", errorStyle.Render("✗"), providerID)
+		fmt.Printf("  This provider does not have a built-in default model.\n")
+		fmt.Printf("  Example:\n")
+		fmt.Printf("    v1claw onboard --auto --provider %s --api-key YOUR_KEY --model YOUR_MODEL\n\n", providerID)
 		os.Exit(1)
 	}
 
@@ -755,16 +807,15 @@ func onboardAuto(args []string) {
 	if workspace != "" {
 		cfg.Workspace.Path = expandHome(workspace)
 	} else if cfg.Workspace.Path == "" {
-		home, _ := os.UserHomeDir()
-		cfg.Workspace.Path = filepath.Join(home, ".v1claw", "workspace")
+		cfg.Workspace.Path = config.DefaultWorkspaceDir()
 	}
 
 	// Set provider + model.
 	cfg.Agents.Defaults.Provider = providerID
 	if model != "" {
 		cfg.Agents.Defaults.Model = model
-	} else if models, ok := providerModels[providerID]; ok && len(models) > 0 {
-		cfg.Agents.Defaults.Model = models[0]
+	} else {
+		cfg.Agents.Defaults.Model = defaultModel
 	}
 
 	// Set API key.
@@ -777,7 +828,7 @@ func onboardAuto(args []string) {
 	fmt.Printf("  %s Workspace: %s\n", successStyle.Render("✓"), cfg.Workspace.Path)
 
 	// Validate the key (live test).
-	if needsKey {
+	if needsKey && !skipTest {
 		var testErr error
 		withSpinner("Testing connection to "+providerID+"…", func() {
 			testErr = validateProviderKey(cfg)
@@ -788,6 +839,8 @@ func onboardAuto(args []string) {
 			os.Exit(1)
 		}
 		fmt.Printf("  %s API key validated — connection works.\n", successStyle.Render("✓"))
+	} else if needsKey && skipTest {
+		fmt.Printf("  %s Skipping live provider validation (--skip-test).\n", warnStyle.Render("→"))
 	}
 
 	// Save config + seed workspace.
@@ -814,6 +867,42 @@ func flagValue(args []string, flag string) string {
 		if strings.HasPrefix(arg, prefix) {
 			return arg[len(prefix):]
 		}
+	}
+	return ""
+}
+
+func hasFlag(args []string, flag string) bool {
+	for _, arg := range args {
+		if arg == flag || arg == flag+"=true" {
+			return true
+		}
+		if arg == flag+"=false" {
+			return false
+		}
+	}
+	return false
+}
+
+func supportedProviderList() string {
+	ids := make([]string, 0, len(traditional))
+	for _, p := range traditional {
+		ids = append(ids, p.id)
+	}
+	return strings.Join(ids, ", ")
+}
+
+func lookupProviderInfo(providerID string) (providerInfo, bool) {
+	for _, p := range traditional {
+		if p.id == providerID {
+			return p, true
+		}
+	}
+	return providerInfo{}, false
+}
+
+func defaultProviderModel(providerID string) string {
+	if models, ok := providerModels[providerID]; ok && len(models) > 0 {
+		return models[0]
 	}
 	return ""
 }

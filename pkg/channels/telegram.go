@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
@@ -314,8 +313,7 @@ func (c *TelegramChannel) handleMessage(ctx context.Context, message *telego.Mes
 			c.config.Channels.Telegram.AllowFrom = append(c.config.Channels.Telegram.AllowFrom, senderID)
 			c.AddAllowedUser(senderID)
 
-			home, _ := os.UserHomeDir()
-			configPath := filepath.Join(home, ".v1claw", "config.json")
+			configPath := config.ConfigPath()
 			if err := config.SaveConfig(configPath, c.config); err != nil {
 				logger.ErrorCF("telegram", "Failed to save config after OTP auth", map[string]interface{}{"error": err.Error()})
 			}

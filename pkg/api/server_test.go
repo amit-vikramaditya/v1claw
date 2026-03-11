@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 
 	"github.com/amit-vikramaditya/v1claw/pkg/events"
 	"github.com/amit-vikramaditya/v1claw/pkg/state"
+	devsync "github.com/amit-vikramaditya/v1claw/pkg/sync"
 )
 
 func newTestServer(t *testing.T) (*Server, *state.Manager) {
@@ -25,6 +27,17 @@ func newTestServer(t *testing.T) (*Server, *state.Manager) {
 	// NewServer now takes a Config with RateLimit
 	srv := NewServer(Config{Addr: ":0", APIKey: "testkey"}, nil, router, stateMgr, nil)
 	return srv, stateMgr
+}
+
+func newTestDeviceServer() *Server {
+	registry := devsync.NewRegistry(devsync.DeviceInfo{
+		ID:       "self",
+		Name:     "self",
+		Host:     "127.0.0.1",
+		Platform: "darwin",
+		Version:  "test",
+	})
+	return NewServer(Config{Addr: ":0", APIKey: "testkey"}, nil, nil, nil, registry)
 }
 
 func TestHealthEndpoint(t *testing.T) {
@@ -110,6 +123,21 @@ func TestChatEndpoint_EmptyMessage(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
+func TestChatEndpoint_MessageTooLong(t *testing.T) {
+	srv, _ := newTestServer(t)
+
+	body, _ := json.Marshal(ChatRequest{Message: strings.Repeat("x", maxChatMessageChars+1)})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/chat", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+	srv.handleChat(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+
+	var resp ErrorResponse
+	json.NewDecoder(w.Body).Decode(&resp)
+	assert.Contains(t, resp.Error, "maximum length")
+}
+
 func TestChatEndpoint_NoHandler(t *testing.T) {
 	srv, _ := newTestServer(t)
 
@@ -182,6 +210,255 @@ func TestWSChat_UsesNonNilContext(t *testing.T) {
 		require.NoError(t, err)
 	case <-time.After(2 * time.Second):
 		t.Fatal("timeout waiting for websocket handler invocation")
+	}
+}
+
+func TestWSChat_RejectsOversizedMessage(t *testing.T) {
+	srv, _ := newTestServer(t)
+
+	handlerCalled := make(chan struct{}, 1)
+	srv.SetChatHandler(func(ctx context.Context, msg, sess string) (string, error) {
+		handlerCalled <- struct{}{}
+		return "ok", nil
+	})
+
+	client := &wsClient{
+		id:   "test_ws",
+		send: make(chan []byte, 2),
+	}
+
+	srv.handleWSChat(client, WSMessage{
+		Type: "chat",
+		Data: map[string]interface{}{
+			"message": strings.Repeat("x", maxChatMessageChars+1),
+		},
+	})
+
+	select {
+	case <-handlerCalled:
+		t.Fatal("chat handler should not be called for oversized websocket messages")
+	default:
+	}
+
+	select {
+	case raw := <-client.send:
+		var msg WSMessage
+		require.NoError(t, json.Unmarshal(raw, &msg))
+		assert.Equal(t, "error", msg.Type)
+	case <-time.After(time.Second):
+		t.Fatal("expected websocket error response")
+	}
+}
+
+func TestRequestCapability_FailsWhenClientConnectionUnavailable(t *testing.T) {
+	srv, _ := newTestServer(t)
+
+	clientCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	client := &wsClient{
+		id:       "ws_test",
+		deviceID: "device-1",
+		send:     make(chan []byte, 1),
+		capReqs:  make(map[string]chan CapabilityResponse),
+		ctx:      clientCtx,
+		cancel:   func() {},
+	}
+
+	srv.mu.Lock()
+	srv.wsClients[client.id] = client
+	srv.mu.Unlock()
+
+	_, err := srv.RequestCapability(context.Background(), "device-1", CapabilityRequest{
+		RequestID:  "req-1",
+		Capability: "speaker",
+		Action:     "play",
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "connection unavailable")
+
+	client.mu.Lock()
+	_, ok := client.capReqs["req-1"]
+	client.mu.Unlock()
+	assert.False(t, ok)
+}
+
+func TestRemoveWSClient_FailsPendingCapabilityRequests(t *testing.T) {
+	srv, _ := newTestServer(t)
+
+	clientCtx, cancel := context.WithCancel(context.Background())
+	client := &wsClient{
+		id:       "ws_test",
+		deviceID: "device-1",
+		send:     make(chan []byte, 1),
+		capReqs:  make(map[string]chan CapabilityResponse),
+		ctx:      clientCtx,
+		cancel:   cancel,
+	}
+
+	respCh := make(chan CapabilityResponse, 1)
+	client.capReqs["req-1"] = respCh
+
+	srv.mu.Lock()
+	srv.wsClients[client.id] = client
+	srv.mu.Unlock()
+
+	srv.removeWSClient(client.id)
+
+	select {
+	case resp := <-respCh:
+		assert.Equal(t, "req-1", resp.RequestID)
+		assert.False(t, resp.Success)
+		assert.Contains(t, resp.Error, "disconnected")
+	case <-time.After(time.Second):
+		t.Fatal("expected pending capability request to fail on disconnect")
+	}
+
+	select {
+	case <-clientCtx.Done():
+	default:
+		t.Fatal("expected websocket client context to be cancelled")
+	}
+
+	srv.mu.RLock()
+	_, ok := srv.wsClients[client.id]
+	srv.mu.RUnlock()
+	assert.False(t, ok)
+}
+
+func TestHandleDevices_RejectsMissingWSRegisterToken(t *testing.T) {
+	srv := newTestDeviceServer()
+	srv.wsClients["ws-1"] = &wsClient{
+		id:            "ws-1",
+		registerToken: "token-123",
+		send:          make(chan []byte, 1),
+		capReqs:       make(map[string]chan CapabilityResponse),
+	}
+
+	body, _ := json.Marshal(DeviceRegisterRequest{
+		ID:         "device-1",
+		Name:       "Device 1",
+		Host:       "device.example.com",
+		Platform:   "linux",
+		WSClientID: "ws-1",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/devices", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+
+	srv.handleDevices(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	var resp ErrorResponse
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	assert.Contains(t, resp.Error, "ws_register_token")
+}
+
+func TestHandleDevices_RejectsInvalidWSRegisterToken(t *testing.T) {
+	srv := newTestDeviceServer()
+	srv.wsClients["ws-1"] = &wsClient{
+		id:            "ws-1",
+		registerToken: "token-123",
+		send:          make(chan []byte, 1),
+		capReqs:       make(map[string]chan CapabilityResponse),
+	}
+
+	body, _ := json.Marshal(DeviceRegisterRequest{
+		ID:              "device-1",
+		Name:            "Device 1",
+		Host:            "device.example.com",
+		Platform:        "linux",
+		WSClientID:      "ws-1",
+		WSRegisterToken: "wrong-token",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/devices", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+
+	srv.handleDevices(w, req)
+
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
+	var resp ErrorResponse
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	assert.Contains(t, resp.Error, "invalid websocket registration token")
+}
+
+func TestHandleDevices_AssociatesClientWithValidWSRegisterToken(t *testing.T) {
+	srv := newTestDeviceServer()
+	client := &wsClient{
+		id:            "ws-1",
+		registerToken: "token-123",
+		send:          make(chan []byte, 1),
+		capReqs:       make(map[string]chan CapabilityResponse),
+	}
+	srv.wsClients["ws-1"] = client
+
+	body, _ := json.Marshal(DeviceRegisterRequest{
+		ID:              "device-1",
+		Name:            "Device 1",
+		Host:            "device.example.com",
+		Platform:        "linux",
+		WSClientID:      "ws-1",
+		WSRegisterToken: "token-123",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/devices", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+
+	srv.handleDevices(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "device-1", client.deviceID)
+	require.NotNil(t, srv.registry.Get("device-1"))
+}
+
+func TestHandleDevices_AllowsPrivateDeviceHost(t *testing.T) {
+	srv := newTestDeviceServer()
+	client := &wsClient{
+		id:            "ws-1",
+		registerToken: "token-123",
+		send:          make(chan []byte, 1),
+		capReqs:       make(map[string]chan CapabilityResponse),
+	}
+	srv.wsClients["ws-1"] = client
+
+	body, _ := json.Marshal(DeviceRegisterRequest{
+		ID:              "device-lan",
+		Name:            "LAN Device",
+		Host:            "192.168.1.50",
+		Platform:        "linux",
+		WSClientID:      "ws-1",
+		WSRegisterToken: "token-123",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/devices", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+
+	srv.handleDevices(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	require.NotNil(t, srv.registry.Get("device-lan"))
+}
+
+func TestValidateDeviceHost_AllowsLANAndMDNSHosts(t *testing.T) {
+	for _, host := range []string{
+		"192.168.1.10",
+		"10.0.0.15",
+		"172.16.5.20",
+		"100.101.102.103",
+		"phone.local",
+		"tablet.internal",
+	} {
+		require.NoError(t, validateDeviceHost(host), "host %s should be accepted", host)
+	}
+}
+
+func TestValidateDeviceHost_RejectsLoopbackUnspecifiedAndMulticast(t *testing.T) {
+	for _, host := range []string{
+		"localhost",
+		"127.0.0.1",
+		"::1",
+		"0.0.0.0",
+		"::",
+		"224.0.0.1",
+	} {
+		require.Error(t, validateDeviceHost(host), "host %s should be rejected", host)
 	}
 }
 

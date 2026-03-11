@@ -2,6 +2,8 @@ package api
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -32,16 +34,22 @@ var upgrader = websocket.Upgrader{
 	},
 }
 
+const (
+	wsWriteWait    = 10 * time.Second
+	wsPongWait     = 90 * time.Second
+	wsPingInterval = 45 * time.Second
+)
+
 type wsClient struct {
-	id        string
-	deviceID  string // Associated device ID for capability routing
-	conn      *websocket.Conn
-	send      chan []byte
-	mu        sync.Mutex
-	closeOnce sync.Once
-	capReqs   map[string]chan CapabilityResponse // Pending capability requests
-	ctx       context.Context
-	cancel    context.CancelFunc
+	id            string
+	deviceID      string // Associated device ID for capability routing
+	registerToken string
+	conn          *websocket.Conn
+	send          chan []byte
+	mu            sync.Mutex
+	capReqs       map[string]chan CapabilityResponse // Pending capability requests
+	ctx           context.Context
+	cancel        context.CancelFunc
 }
 
 func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
@@ -50,16 +58,24 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		logger.ErrorC("api", fmt.Sprintf("WebSocket upgrade failed: %v", err))
 		return
 	}
+	conn.SetReadLimit(maxInboundBodyBytes)
 
 	clientID := fmt.Sprintf("ws_%d", time.Now().UnixNano())
+	registerToken, err := newWSRegistrationToken()
+	if err != nil {
+		logger.ErrorC("api", fmt.Sprintf("WebSocket registration token generation failed: %v", err))
+		_ = conn.Close()
+		return
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	client := &wsClient{
-		id:      clientID,
-		conn:    conn,
-		send:    make(chan []byte, 256), // Expanded buffer to prevent streaming drops
-		capReqs: make(map[string]chan CapabilityResponse),
-		ctx:     ctx,
-		cancel:  cancel,
+		id:            clientID,
+		registerToken: registerToken,
+		conn:          conn,
+		send:          make(chan []byte, 256), // Expanded buffer to prevent streaming drops
+		capReqs:       make(map[string]chan CapabilityResponse),
+		ctx:           ctx,
+		cancel:        cancel,
 	}
 
 	s.mu.Lock()
@@ -70,12 +86,18 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 
 	// Send welcome message.
 	welcome := WSMessage{
-		Type:      "connected",
-		Data:      map[string]string{"client_id": clientID},
+		Type: "connected",
+		Data: map[string]string{
+			"client_id":          clientID,
+			"registration_token": registerToken,
+		},
 		Timestamp: time.Now(),
 	}
 	if data, err := json.Marshal(welcome); err == nil {
-		client.send <- data
+		if !s.enqueueClientMessage(client, data) {
+			s.removeWSClient(clientID)
+			return
+		}
 	}
 
 	go s.wsWritePump(client)
@@ -83,33 +105,41 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) wsWritePump(client *wsClient) {
+	pingTicker := time.NewTicker(wsPingInterval)
 	defer func() {
-		client.cancel()
-		client.conn.Close()
+		pingTicker.Stop()
 		s.removeWSClient(client.id)
 	}()
 
-	for msg := range client.send {
-		client.mu.Lock()
-		err := client.conn.WriteMessage(websocket.TextMessage, msg)
-		client.mu.Unlock()
-		if err != nil {
-			logger.DebugC("api", fmt.Sprintf("WebSocket write error: %v", err))
+	for {
+		select {
+		case <-client.ctx.Done():
 			return
+		case msg, ok := <-client.send:
+			if !ok {
+				return
+			}
+			if err := s.writeWSMessage(client, websocket.TextMessage, msg); err != nil {
+				logger.DebugC("api", fmt.Sprintf("WebSocket write error: %v", err))
+				return
+			}
+		case <-pingTicker.C:
+			if err := s.writeWSMessage(client, websocket.PingMessage, nil); err != nil {
+				logger.DebugC("api", fmt.Sprintf("WebSocket ping error: %v", err))
+				return
+			}
 		}
 	}
 }
 
 func (s *Server) wsReadPump(client *wsClient) {
 	defer func() {
-		client.cancel()
 		s.removeWSClient(client.id)
-		client.conn.Close()
 	}()
 
-	client.conn.SetReadDeadline(time.Now().Add(300 * time.Second))
+	client.conn.SetReadDeadline(time.Now().Add(wsPongWait))
 	client.conn.SetPongHandler(func(string) error {
-		client.conn.SetReadDeadline(time.Now().Add(300 * time.Second))
+		client.conn.SetReadDeadline(time.Now().Add(wsPongWait))
 		return nil
 	})
 
@@ -159,6 +189,14 @@ func (s *Server) handleWSChat(client *wsClient, msg WSMessage) {
 	if sessionKey == "" {
 		sessionKey = "ws:" + client.id
 	}
+	if err := validateChatInput(text, sessionKey); err != nil {
+		s.sendToClient(client, WSMessage{
+			Type:      "error",
+			Data:      err.Error(),
+			Timestamp: time.Now(),
+		})
+		return
+	}
 
 	go func() {
 		parentCtx := client.ctx
@@ -199,11 +237,7 @@ func (s *Server) sendToClient(client *wsClient, msg WSMessage) {
 	if err != nil {
 		return
 	}
-	select {
-	case client.send <- data:
-	case <-time.After(50 * time.Millisecond): // Non-blocking grace period to handle burst packet drops dynamically
-		logger.WarnC("api", "Dropped websocket frame due to buffer congestion")
-	}
+	s.enqueueClientMessage(client, data)
 }
 
 func (s *Server) broadcastEvent(event events.Event) {
@@ -221,23 +255,20 @@ func (s *Server) broadcastEvent(event events.Event) {
 	defer s.mu.RUnlock()
 
 	for _, client := range s.wsClients {
-		select {
-		case client.send <- data:
-		default:
-		}
+		s.enqueueClientMessage(client, data)
 	}
 }
 
 func (s *Server) closeAllWS() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.mu.RLock()
+	ids := make([]string, 0, len(s.wsClients))
+	for id := range s.wsClients {
+		ids = append(ids, id)
+	}
+	s.mu.RUnlock()
 
-	for id, client := range s.wsClients {
-		client.conn.Close()
-		client.closeOnce.Do(func() {
-			close(client.send)
-		})
-		delete(s.wsClients, id)
+	for _, id := range ids {
+		s.removeWSClient(id)
 	}
 }
 
@@ -306,11 +337,16 @@ func (s *Server) RequestCapability(ctx context.Context, deviceID string, req Cap
 	target.mu.Unlock()
 
 	// Send request to client.
-	s.sendToClient(target, WSMessage{
+	if !s.trySendToClient(target, WSMessage{
 		Type:      "capability_request",
 		Data:      req,
 		Timestamp: time.Now(),
-	})
+	}) {
+		target.mu.Lock()
+		delete(target.capReqs, req.RequestID)
+		target.mu.Unlock()
+		return nil, fmt.Errorf("device %s connection unavailable", deviceID)
+	}
 
 	// Wait for response or timeout.
 	select {
@@ -354,6 +390,15 @@ func (s *Server) removeWSClient(id string) {
 	s.mu.Unlock()
 
 	if ok {
+		if client.cancel != nil {
+			client.cancel()
+		}
+		s.failPendingCapabilityRequests(client, "device disconnected")
+		if client.conn != nil {
+			client.mu.Lock()
+			_ = client.conn.Close()
+			client.mu.Unlock()
+		}
 		// Mark device offline if associated.
 		if client.deviceID != "" && s.registry != nil {
 			s.registry.MarkOffline(client.deviceID)
@@ -361,9 +406,96 @@ func (s *Server) removeWSClient(id string) {
 				"device_id": client.deviceID, "ws_client": id,
 			})
 		}
-		client.closeOnce.Do(func() {
-			close(client.send)
-		})
 		logger.DebugC("api", fmt.Sprintf("WebSocket client disconnected: %s", id))
 	}
+}
+
+func (s *Server) writeWSMessage(client *wsClient, messageType int, payload []byte) error {
+	if client.conn == nil {
+		return fmt.Errorf("websocket connection not initialized")
+	}
+
+	client.mu.Lock()
+	defer client.mu.Unlock()
+
+	if err := client.conn.SetWriteDeadline(time.Now().Add(wsWriteWait)); err != nil {
+		return err
+	}
+	return client.conn.WriteMessage(messageType, payload)
+}
+
+func (s *Server) trySendToClient(client *wsClient, msg WSMessage) bool {
+	data, err := json.Marshal(msg)
+	if err != nil {
+		return false
+	}
+	return s.enqueueClientMessage(client, data)
+}
+
+func (s *Server) enqueueClientMessage(client *wsClient, data []byte) bool {
+	if client == nil {
+		return false
+	}
+
+	done := clientDone(client)
+	select {
+	case <-done:
+		return false
+	default:
+	}
+
+	select {
+	case client.send <- data:
+		return true
+	case <-done:
+		return false
+	case <-time.After(50 * time.Millisecond):
+		logger.WarnC("api", "Dropped websocket frame due to buffer congestion")
+		return false
+	}
+}
+
+func (s *Server) failPendingCapabilityRequests(client *wsClient, reason string) {
+	if client == nil {
+		return
+	}
+
+	type pendingRequest struct {
+		id string
+		ch chan CapabilityResponse
+	}
+
+	client.mu.Lock()
+	pending := make([]pendingRequest, 0, len(client.capReqs))
+	for reqID, ch := range client.capReqs {
+		pending = append(pending, pendingRequest{id: reqID, ch: ch})
+		delete(client.capReqs, reqID)
+	}
+	client.mu.Unlock()
+
+	for _, pendingReq := range pending {
+		select {
+		case pendingReq.ch <- CapabilityResponse{
+			RequestID: pendingReq.id,
+			Success:   false,
+			Error:     reason,
+		}:
+		default:
+		}
+	}
+}
+
+func clientDone(client *wsClient) <-chan struct{} {
+	if client == nil || client.ctx == nil {
+		return nil
+	}
+	return client.ctx.Done()
+}
+
+func newWSRegistrationToken() (string, error) {
+	var buf [16]byte
+	if _, err := rand.Read(buf[:]); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(buf[:]), nil
 }

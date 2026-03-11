@@ -159,7 +159,7 @@ func TestConvertConfig(t *testing.T) {
 			},
 		}
 
-		cfg, warnings, err := ConvertConfig(data)
+		cfg, warnings, err := ConvertConfig(data, "", "")
 		if err != nil {
 			t.Fatalf("ConvertConfig: %v", err)
 		}
@@ -186,7 +186,7 @@ func TestConvertConfig(t *testing.T) {
 			},
 		}
 
-		_, warnings, err := ConvertConfig(data)
+		_, warnings, err := ConvertConfig(data, "", "")
 		if err != nil {
 			t.Fatalf("ConvertConfig: %v", err)
 		}
@@ -213,7 +213,7 @@ func TestConvertConfig(t *testing.T) {
 			},
 		}
 
-		cfg, _, err := ConvertConfig(data)
+		cfg, _, err := ConvertConfig(data, "", "")
 		if err != nil {
 			t.Fatalf("ConvertConfig: %v", err)
 		}
@@ -240,7 +240,7 @@ func TestConvertConfig(t *testing.T) {
 			},
 		}
 
-		_, warnings, err := ConvertConfig(data)
+		_, warnings, err := ConvertConfig(data, "", "")
 		if err != nil {
 			t.Fatalf("ConvertConfig: %v", err)
 		}
@@ -253,6 +253,9 @@ func TestConvertConfig(t *testing.T) {
 	})
 
 	t.Run("agent defaults", func(t *testing.T) {
+		openClawHome := t.TempDir()
+		v1ClawHome := t.TempDir()
+
 		data := map[string]interface{}{
 			"agents": map[string]interface{}{
 				"defaults": map[string]interface{}{
@@ -260,12 +263,12 @@ func TestConvertConfig(t *testing.T) {
 					"max_tokens":          float64(4096),
 					"temperature":         0.5,
 					"max_tool_iterations": float64(10),
-					"workspace":           "~/.openclaw/workspace",
+					"workspace":           filepath.Join(openClawHome, "workspace"),
 				},
 			},
 		}
 
-		cfg, _, err := ConvertConfig(data)
+		cfg, _, err := ConvertConfig(data, openClawHome, v1ClawHome)
 		if err != nil {
 			t.Fatalf("ConvertConfig: %v", err)
 		}
@@ -278,15 +281,16 @@ func TestConvertConfig(t *testing.T) {
 		if cfg.Agents.Defaults.Temperature != 0.5 {
 			t.Errorf("Temperature = %f, want %f", cfg.Agents.Defaults.Temperature, 0.5)
 		}
-		if cfg.Agents.Defaults.Workspace != "~/.v1claw/workspace" {
-			t.Errorf("Workspace = %q, want %q", cfg.Agents.Defaults.Workspace, "~/.v1claw/workspace")
+		wantWorkspace := filepath.Join(v1ClawHome, "workspace")
+		if cfg.Agents.Defaults.Workspace != wantWorkspace {
+			t.Errorf("Workspace = %q, want %q", cfg.Agents.Defaults.Workspace, wantWorkspace)
 		}
 	})
 
 	t.Run("empty config", func(t *testing.T) {
 		data := map[string]interface{}{}
 
-		cfg, warnings, err := ConvertConfig(data)
+		cfg, warnings, err := ConvertConfig(data, "", "")
 		if err != nil {
 			t.Fatalf("ConvertConfig: %v", err)
 		}
@@ -548,18 +552,23 @@ func TestFindOpenClawConfig(t *testing.T) {
 }
 
 func TestRewriteWorkspacePath(t *testing.T) {
+	openClawHome := t.TempDir()
+	v1ClawHome := t.TempDir()
+
 	tests := []struct {
 		name  string
 		input string
 		want  string
 	}{
-		{"default path", "~/.openclaw/workspace", "~/.v1claw/workspace"},
+		{"default legacy path", "~/.openclaw/workspace", filepath.Join(v1ClawHome, "workspace")},
+		{"default absolute path", filepath.Join(openClawHome, "workspace"), filepath.Join(v1ClawHome, "workspace")},
 		{"custom path", "/custom/path", "/custom/path"},
+		{"custom path inside openclaw home", filepath.Join(openClawHome, "projects", "demo"), filepath.Join(openClawHome, "projects", "demo")},
 		{"empty", "", ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := rewriteWorkspacePath(tt.input)
+			got := rewriteWorkspacePath(tt.input, openClawHome, v1ClawHome)
 			if got != tt.want {
 				t.Errorf("rewriteWorkspacePath(%q) = %q, want %q", tt.input, got, tt.want)
 			}
@@ -623,6 +632,11 @@ func TestRunFullMigration(t *testing.T) {
 	os.WriteFile(filepath.Join(memDir, "MEMORY.md"), []byte("# Memory notes"), 0644)
 
 	configData := map[string]interface{}{
+		"agents": map[string]interface{}{
+			"defaults": map[string]interface{}{
+				"workspace": filepath.Join(openclawHome, "workspace"),
+			},
+		},
 		"providers": map[string]interface{}{
 			"anthropic": map[string]interface{}{
 				"apiKey": "sk-ant-migrate-test",
@@ -693,6 +707,9 @@ func TestRunFullMigration(t *testing.T) {
 	}
 	if picoConfig.Channels.Telegram.Token != "tg-migrate-test" {
 		t.Errorf("Telegram.Token = %q, want %q", picoConfig.Channels.Telegram.Token, "tg-migrate-test")
+	}
+	if picoConfig.Agents.Defaults.Workspace != filepath.Join(v1ClawHome, "workspace") {
+		t.Errorf("Workspace = %q, want %q", picoConfig.Agents.Defaults.Workspace, filepath.Join(v1ClawHome, "workspace"))
 	}
 
 	if result.FilesCopied < 3 {

@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/amit-vikramaditya/v1claw/pkg/config"
 	"github.com/amit-vikramaditya/v1claw/pkg/epistemology"
 	"github.com/amit-vikramaditya/v1claw/pkg/logger"
 	"github.com/amit-vikramaditya/v1claw/pkg/providers"
@@ -35,11 +36,7 @@ type ContextBuilder struct {
 }
 
 func getGlobalConfigDir() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return ""
-	}
-	return filepath.Join(home, ".v1claw")
+	return config.HomeDir()
 }
 
 func dirExists(path string) bool {
@@ -50,7 +47,7 @@ func dirExists(path string) bool {
 func resolveBuiltinSkillsDir(workspace string) string {
 	candidates := []string{
 		filepath.Join(workspace, "skills"),
-		filepath.Join(getGlobalConfigDir(), "v1claw", "skills"),
+		config.GlobalSkillsDir(),
 	}
 
 	if wd, err := os.Getwd(); err == nil {
@@ -71,7 +68,7 @@ func resolveBuiltinSkillsDir(workspace string) string {
 
 func NewContextBuilder(workspace string) *ContextBuilder {
 	builtinSkillsDir := resolveBuiltinSkillsDir(workspace)
-	globalSkillsDir := filepath.Join(getGlobalConfigDir(), "skills")
+	globalSkillsDir := config.GlobalSkillsDir()
 
 	return &ContextBuilder{
 		workspace:    workspace,

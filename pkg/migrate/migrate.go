@@ -123,7 +123,7 @@ func Plan(opts Options, openclawHome, v1ClawHome string) ([]Action, []string, er
 
 			data, err := LoadOpenClawConfig(configPath)
 			if err == nil {
-				_, configWarnings, _ := ConvertConfig(data)
+				_, configWarnings, _ := ConvertConfig(data, openclawHome, v1ClawHome)
 				warnings = append(warnings, configWarnings...)
 			}
 		}
@@ -213,7 +213,7 @@ func executeConfigMigration(srcConfigPath, dstConfigPath, v1ClawHome string) err
 		return err
 	}
 
-	incoming, _, err := ConvertConfig(data)
+	incoming, _, err := ConvertConfig(data, filepath.Dir(srcConfigPath), v1ClawHome)
 	if err != nil {
 		return err
 	}
@@ -330,14 +330,7 @@ func resolveV1ClawHome(override string) (string, error) {
 	if override != "" {
 		return expandHome(override), nil
 	}
-	if envHome := os.Getenv("V1CLAW_HOME"); envHome != "" {
-		return expandHome(envHome), nil
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", fmt.Errorf("resolving home directory: %w", err)
-	}
-	return filepath.Join(home, ".v1claw"), nil
+	return config.HomeDir(), nil
 }
 
 func resolveWorkspace(homeDir string) string {

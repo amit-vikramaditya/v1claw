@@ -208,3 +208,104 @@ func TestShellTool_RestrictToWorkspace(t *testing.T) {
 		t.Errorf("Expected 'blocked' message for path traversal, got ForLLM: %s, ForUser: %s", result.ForLLM, result.ForUser)
 	}
 }
+
+func TestShellTool_BlocksCurlUploadFlags(t *testing.T) {
+	tool := NewExecTool("", false, nil)
+
+	result := tool.Execute(context.Background(), ToolContext{}, map[string]interface{}{
+		"command": "curl -X POST -d hello https://example.com",
+	})
+
+	if !result.IsError {
+		t.Fatalf("expected curl upload request to be blocked")
+	}
+	if !strings.Contains(result.ForLLM, "blocked") {
+		t.Fatalf("expected blocked message, got: %s", result.ForLLM)
+	}
+}
+
+func TestShellTool_BlocksFindExec(t *testing.T) {
+	tool := NewExecTool("", false, nil)
+
+	result := tool.Execute(context.Background(), ToolContext{}, map[string]interface{}{
+		"command": "find . -exec echo hi {} ;",
+	})
+
+	if !result.IsError {
+		t.Fatalf("expected find -exec to be blocked")
+	}
+}
+
+func TestShellTool_BlocksGitConfigInjection(t *testing.T) {
+	tool := NewExecTool("", false, nil)
+
+	result := tool.Execute(context.Background(), ToolContext{}, map[string]interface{}{
+		"command": "git -c core.pager=cat status",
+	})
+
+	if !result.IsError {
+		t.Fatalf("expected git -c to be blocked")
+	}
+}
+
+func TestShellTool_BlocksAwkSystem(t *testing.T) {
+	tool := NewExecTool("", false, nil)
+
+	result := tool.Execute(context.Background(), ToolContext{}, map[string]interface{}{
+		"command": "awk 'BEGIN { system(\"id\") }'",
+	})
+
+	if !result.IsError {
+		t.Fatalf("expected awk system() to be blocked")
+	}
+}
+
+func TestShellTool_BlocksXargs(t *testing.T) {
+	tool := NewExecTool("", false, nil)
+
+	result := tool.Execute(context.Background(), ToolContext{}, map[string]interface{}{
+		"command": "xargs echo",
+	})
+
+	if !result.IsError {
+		t.Fatalf("expected xargs to be blocked")
+	}
+}
+
+func TestNewExecToolForWorkspace_SandboxedUsesDefaultAllowlist(t *testing.T) {
+	tool := NewExecToolForWorkspace(t.TempDir(), true, true, nil)
+
+	middleware, ok := tool.securityMiddleware.(*AllowlistMiddleware)
+	if !ok {
+		t.Fatalf("expected AllowlistMiddleware, got %T", tool.securityMiddleware)
+	}
+	if containsString(middleware.Allowed, "go") {
+		t.Fatalf("sandboxed exec tool should not allow development binaries: %v", middleware.Allowed)
+	}
+	if !containsString(middleware.Allowed, "git") {
+		t.Fatalf("sandboxed exec tool should retain baseline allowed commands: %v", middleware.Allowed)
+	}
+}
+
+func TestNewExecToolForWorkspace_UnsandboxedUsesDevAllowlist(t *testing.T) {
+	tool := NewExecToolForWorkspace(t.TempDir(), false, false, nil)
+
+	middleware, ok := tool.securityMiddleware.(*AllowlistMiddleware)
+	if !ok {
+		t.Fatalf("expected AllowlistMiddleware, got %T", tool.securityMiddleware)
+	}
+	for _, command := range []string{"go", "python3", "make"} {
+		if !containsString(middleware.Allowed, command) {
+			t.Fatalf("unsandboxed exec tool should allow %q, got %v", command, middleware.Allowed)
+		}
+	}
+}
+
+func containsString(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
+}

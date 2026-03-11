@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/amit-vikramaditya/v1claw/pkg/config"
 	"github.com/amit-vikramaditya/v1claw/pkg/logger"
 	"golang.org/x/crypto/pbkdf2"
 )
@@ -58,8 +59,7 @@ type AuthStore struct {
 
 // authFilePath returns the path to the auth store file.
 func authFilePath() string {
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".v1claw", "auth.json")
+	return filepath.Join(config.HomeDir(), "auth.json")
 }
 
 // loadStoreLocked loads the authentication store from disk, decrypting credentials. Requires storeMu lock.

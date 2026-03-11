@@ -156,11 +156,11 @@ func formatAPIError(statusCode int, body []byte) error {
 		case 429:
 			return fmt.Errorf("rate limit exceeded: %s\n\n  Your free tier quota is used up. Wait a few minutes, or upgrade your plan.\n  Check usage at your provider's dashboard.", msg)
 		case 401:
-			return fmt.Errorf("invalid API key: Your API key was rejected.\n  Check your key in ~/.v1claw/config.json or re-run: v1claw onboard")
+			return fmt.Errorf("invalid API key: Your API key was rejected.\n  Check your key in %s or re-run: v1claw onboard", config.ConfigPath())
 		case 403:
 			return fmt.Errorf("access denied: %s\n  Your API key may not have access to this model.", msg)
 		case 404:
-			return fmt.Errorf("model not found: %s\n  Check the model name in ~/.v1claw/config.json", msg)
+			return fmt.Errorf("model not found: %s\n  Check the model name in %s", msg, config.ConfigPath())
 		default:
 			return fmt.Errorf("API error (%d): %s", statusCode, msg)
 		}
@@ -447,11 +447,17 @@ func CreateProvider(cfg *config.Config) (LLMProvider, error) {
 			if workspace == "" {
 				workspace = "."
 			}
+			if cfg.Workspace.Sandboxed {
+				return NewClaudeCliProviderSafe(workspace), nil
+			}
 			return NewClaudeCliProvider(workspace), nil
 		case "codex-cli", "codex-code":
 			workspace := cfg.WorkspacePath()
 			if workspace == "" {
 				workspace = "."
+			}
+			if cfg.Workspace.Sandboxed {
+				return NewCodexCliProviderSafe(workspace), nil
 			}
 			return NewCodexCliProvider(workspace), nil
 
@@ -494,7 +500,7 @@ func CreateProvider(cfg *config.Config) (LLMProvider, error) {
 			} else {
 				apiBase = "localhost:4321"
 			}
-			return NewGitHubCopilotProvider(apiBase, cfg.Providers.GitHubCopilot.ConnectMode, model)
+			return NewGitHubCopilotProviderWithSandbox(apiBase, cfg.Providers.GitHubCopilot.ConnectMode, model, cfg.Workspace.Sandboxed)
 
 		}
 

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"unicode"
@@ -63,7 +64,7 @@ func LoadOpenClawConfig(configPath string) (map[string]interface{}, error) {
 	return result, nil
 }
 
-func ConvertConfig(data map[string]interface{}) (*config.Config, []string, error) {
+func ConvertConfig(data map[string]interface{}, openClawHome, v1ClawHome string) (*config.Config, []string, error) {
 	cfg := config.DefaultConfig()
 	var warnings []string
 
@@ -82,7 +83,7 @@ func ConvertConfig(data map[string]interface{}) (*config.Config, []string, error
 				cfg.Agents.Defaults.MaxToolIterations = int(v)
 			}
 			if v, ok := getString(defaults, "workspace"); ok {
-				cfg.Agents.Defaults.Workspace = rewriteWorkspacePath(v)
+				cfg.Agents.Defaults.Workspace = rewriteWorkspacePath(v, openClawHome, v1ClawHome)
 			}
 		}
 	}
@@ -322,9 +323,50 @@ func convertKeysToSnake(data interface{}) interface{} {
 	}
 }
 
-func rewriteWorkspacePath(path string) string {
-	path = strings.Replace(path, ".openclaw", ".v1claw", 1)
-	return path
+func rewriteWorkspacePath(workspacePath, openClawHome, v1ClawHome string) string {
+	if workspacePath == "" {
+		return ""
+	}
+
+	if !isDefaultOpenClawWorkspacePath(workspacePath, openClawHome) {
+		return workspacePath
+	}
+
+	targetHome := expandHome(v1ClawHome)
+	if targetHome == "" {
+		targetHome = config.HomeDir()
+	}
+	return filepath.Join(targetHome, "workspace")
+}
+
+func isDefaultOpenClawWorkspacePath(workspacePath, openClawHome string) bool {
+	candidates := []string{
+		"~/.openclaw/workspace",
+		"~\\.openclaw\\workspace",
+	}
+	if openClawHome != "" {
+		candidates = append(candidates, filepath.Join(openClawHome, "workspace"))
+	}
+
+	normalizedWorkspace := normalizeComparablePath(workspacePath)
+	expandedWorkspace := normalizeComparablePath(expandHome(workspacePath))
+	for _, candidate := range candidates {
+		if normalizedWorkspace == normalizeComparablePath(candidate) {
+			return true
+		}
+		if expandedWorkspace == normalizeComparablePath(expandHome(candidate)) {
+			return true
+		}
+	}
+	return false
+}
+
+func normalizeComparablePath(pathValue string) string {
+	pathValue = strings.TrimSpace(pathValue)
+	if pathValue == "" {
+		return ""
+	}
+	return path.Clean(strings.ReplaceAll(pathValue, "\\", "/"))
 }
 
 func getMap(data map[string]interface{}, key string) (map[string]interface{}, bool) {
