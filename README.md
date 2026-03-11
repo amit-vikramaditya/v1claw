@@ -136,32 +136,45 @@ Pick your device. Follow the steps. You'll have a working AI assistant in under 
 
 ---
 
-### ⚡ Quick Install — macOS & Linux
+### ⚡ 2-Step Quick Start
 
-Run one command. The script prefers the latest GitHub Release binary. If no release is published yet and Go is already installed, it falls back to building from source.
+For most users, setup should look like this:
+
+**Step 1 — Install**
+
+macOS / Linux:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/amit-vikramaditya/v1claw/main/install.sh | bash
 ```
 
-Then run the 2-minute setup wizard:
+Windows PowerShell:
+
+```powershell
+$installer = Join-Path $env:TEMP "v1claw-install.ps1"
+Invoke-WebRequest "https://raw.githubusercontent.com/amit-vikramaditya/v1claw/main/install.ps1" -OutFile $installer
+powershell -ExecutionPolicy Bypass -File $installer
+```
+
+**Step 2 — Run onboarding**
 
 ```bash
 v1claw onboard
 ```
 
-`v1claw onboard` now starts with:
+The wizard now starts with:
 - a security acknowledgement
 - `Quick Start` for the fastest path to a working assistant
 - `Manual` for workspace security, gateway, permissions, and channel setup
 
-Then verify the install:
+Then verify:
 
 ```bash
 v1claw doctor
 ```
 
-Or skip the wizard entirely with one line:
+<details>
+<summary><b>Advanced non-interactive setup</b></summary>
 
 ```bash
 v1claw onboard --auto --provider gemini --api-key "YOUR_KEY"
@@ -169,25 +182,17 @@ v1claw onboard --auto --provider gemini --api-key "YOUR_KEY"
 
 Other API-key providers: `openai` · `anthropic` · `groq` · `deepseek` · `openrouter` · `nvidia` · `zhipu` · `moonshot`
 Keyless or local providers: `vertex` (uses `gcloud auth`) · `bedrock` (uses `~/.aws/credentials`) · `ollama` · `vllm` · `github_copilot`
+
 If your provider does not have a built-in default model, add `--model YOUR_MODEL`.
-For local/self-hosted endpoints, you can also pass `--api-base URL`, for example:
+
+Examples:
 
 ```bash
 v1claw onboard --auto --provider ollama --model llama3.2
 v1claw onboard --auto --provider vllm --api-base http://localhost:8000/v1 --model my-model
 ```
 
-> **Windows users:** PowerShell quick install:
-> ```powershell
-> $installer = Join-Path $env:TEMP "v1claw-install.ps1"
-> Invoke-WebRequest "https://raw.githubusercontent.com/amit-vikramaditya/v1claw/main/install.ps1" -OutFile $installer
-> powershell -ExecutionPolicy Bypass -File $installer
-> ```
->
-> Then verify:
-> ```powershell
-> v1claw doctor
-> ```
+</details>
 
 ---
 
