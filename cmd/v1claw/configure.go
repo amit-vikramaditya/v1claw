@@ -396,14 +396,19 @@ func configureModels(cfg *config.Config) {
 	fmt.Println(headerStyle.Render("┌  The Brain (AI Providers & Models)"))
 
 	discoveredCLIs := config.DiscoverLocalCLIs()
+	if len(discoveredCLIs) > 0 {
+		lines := make([]string, 0, len(discoveredCLIs))
+		for _, tool := range discoveredCLIs {
+			lines = append(lines, fmt.Sprintf("%s — %s", tool.DisplayName, tool.Path))
+		}
+		printSetupSummaryBox("Detected local AI workers", append(
+			lines,
+			"These workers are auto-available for delegate/subagent tasks while V1Claw is running.",
+		))
+	}
+
 	var providerOptions []huh.Option[string]
 	optionMap := make(map[string]string)
-
-	for _, tool := range discoveredCLIs {
-		label := fmt.Sprintf("%s (Local) — %s", tool.DisplayName, grayStyle.Render(tool.Description))
-		providerOptions = append(providerOptions, huh.NewOption(label, tool.ID))
-		optionMap[tool.ID] = label
-	}
 
 	for _, p := range traditional {
 		label := fmt.Sprintf("%s — %s", p.name, grayStyle.Render(p.desc))
@@ -436,19 +441,6 @@ func configureModels(cfg *config.Config) {
 	}
 
 	for _, providerID := range selectedIDs {
-		isCLI := false
-		for _, tool := range discoveredCLIs {
-			if tool.ID == providerID {
-				isCLI = true
-				if cfg.Agents.Defaults.Provider == "" {
-					cfg.Agents.Defaults.Provider = providerID
-				}
-				break
-			}
-		}
-		if isCLI {
-			continue
-		}
 		selectedModelProviders = append(selectedModelProviders, providerID)
 		if cfg.Agents.Defaults.Provider == "" {
 			cfg.Agents.Defaults.Provider = providerID

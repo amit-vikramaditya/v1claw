@@ -104,6 +104,14 @@ func setupSummaryLines(cfg *config.Config) []string {
 		channels = strings.Join(names, ", ")
 	}
 
+	council := "disabled"
+	if cfg.Council.Enabled {
+		council = "enabled"
+		if fallback := strings.TrimSpace(cfg.Council.FallbackModel); fallback != "" {
+			council += " → fallback " + fallback
+		}
+	}
+
 	permissions := "none"
 	if ids := enabledPermissionIDs(cfg); len(ids) > 0 {
 		permissions = strings.Join(ids, ", ")
@@ -113,6 +121,7 @@ func setupSummaryLines(cfg *config.Config) []string {
 		"workspace: " + workspace,
 		"security: " + security,
 		"brain: " + brain,
+		"council: " + council,
 		"gateway: " + gateway,
 		"channels: " + channels,
 		"permissions: " + permissions,

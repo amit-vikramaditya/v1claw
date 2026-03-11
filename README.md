@@ -165,12 +165,19 @@ v1claw onboard
 The wizard now starts with:
 - a security acknowledgement
 - `Quick Start` for the fastest path to a working assistant
-- `Manual` for workspace security, gateway, permissions, and channel setup
+- `Manual` for workspace security, council fallback, gateway, permissions, and channel setup
+- auto-detection of local AI CLIs for delegated/subagent work
 
 Then verify:
 
 ```bash
 v1claw doctor
+```
+
+If you enabled Telegram, Discord, or other channels during onboarding, keep them online with:
+
+```bash
+v1claw gateway
 ```
 
 <details>
