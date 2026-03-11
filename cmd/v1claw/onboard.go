@@ -91,14 +91,21 @@ func onboardCmd() {
 		return
 	}
 
-	// Step 3 – API key + live validation
-	fmt.Println(stepStyle.Render("\n  Step 3 of 6 — Enter your API key"))
+	// Step 3 – Provider access
+	fmt.Println(stepStyle.Render("\n  Step 3 of 6 — Configure provider access"))
 	if !onboardAPIKey(cfg, providerID, providerURL) {
 		return
 	}
 
 	if !onboardModel(cfg, providerID) {
 		return
+	}
+
+	if providerSupportsLiveValidation(providerID) {
+		fmt.Println(stepStyle.Render("\n  Checking provider connection…"))
+		if !onboardValidateProvider(cfg, providerID) {
+			return
+		}
 	}
 
 	// Step 4 – Identity (name the AI and yourself)
@@ -225,18 +232,25 @@ func onboardProvider(cfg *config.Config) (string, string) {
 		}
 	}
 
-	// Set default model.
+	cfg.Agents.Defaults.Provider = providerID
+
+	// Set default model when we have one; otherwise the next step will ask.
 	if models, ok := providerModels[providerID]; ok && len(models) > 0 {
-		cfg.Agents.Defaults.Provider = providerID
 		cfg.Agents.Defaults.Model = models[0]
+	} else {
+		cfg.Agents.Defaults.Model = ""
 	}
 
+	modelSummary := cfg.Agents.Defaults.Model
+	if strings.TrimSpace(modelSummary) == "" {
+		modelSummary = "choose next"
+	}
 	fmt.Printf("\n  %s Provider: %s  (model: %s)\n",
-		successStyle.Render("✓"), providerID, cfg.Agents.Defaults.Model)
+		successStyle.Render("✓"), providerID, modelSummary)
 	return providerID, keyURL
 }
 
-// ─── Step 3: API key + live validation ───────────────────────────────────────
+// ─── Step 3: Provider access ─────────────────────────────────────────────────
 
 func onboardAPIKey(cfg *config.Config, providerID, keyURL string) bool {
 	// Keyless and special providers have their own flows.
@@ -247,6 +261,12 @@ func onboardAPIKey(cfg *config.Config, providerID, keyURL string) bool {
 		return onboardBedrockAuth()
 	case "azure_openai":
 		return onboardAzureAuth(cfg)
+	case "ollama":
+		return onboardOllamaConfig(cfg)
+	case "vllm":
+		return onboardVLLMConfig(cfg)
+	case "github_copilot":
+		return onboardGitHubCopilotConfig(cfg)
 	}
 	return onboardAPIKeyWithKey(cfg, providerID, keyURL)
 }
@@ -280,6 +300,15 @@ func onboardModel(cfg *config.Config, providerID string) bool {
 	cfg.Agents.Defaults.Model = model
 	fmt.Printf("\n  %s Model: %s\n", successStyle.Render("✓"), cfg.Agents.Defaults.Model)
 	return true
+}
+
+func providerSupportsLiveValidation(providerID string) bool {
+	switch strings.ToLower(strings.TrimSpace(providerID)) {
+	case "vertex", "vertex_ai", "vertexai", "bedrock", "aws_bedrock", "aws":
+		return false
+	default:
+		return true
+	}
 }
 
 // onboardVertexAuth configures Google Vertex AI (gcloud auth, no API key).
@@ -380,7 +409,116 @@ func onboardAzureAuth(cfg *config.Config) bool {
 	return true
 }
 
-// onboardAPIKeyWithKey handles the standard API-key flow with live validation.
+func onboardOllamaConfig(cfg *config.Config) bool {
+	fmt.Printf("\n  %s Ollama runs locally and does not require an API key.\n\n",
+		warnStyle.Render("→"))
+
+	apiBase := strings.TrimSpace(cfg.Providers.Ollama.APIBase)
+	if apiBase == "" {
+		apiBase = defaultProviderAPIBase("ollama")
+	}
+
+	form := huh.NewForm(huh.NewGroup(
+		huh.NewInput().
+			Title("Ollama API Base:").
+			Placeholder(defaultProviderAPIBase("ollama")).
+			Value(&apiBase),
+	))
+	if err := form.Run(); err != nil {
+		fmt.Println("Setup cancelled.")
+		return false
+	}
+
+	apiBase = strings.TrimSpace(apiBase)
+	if apiBase == "" {
+		apiBase = defaultProviderAPIBase("ollama")
+	}
+	cfg.Providers.Ollama.APIBase = apiBase
+	fmt.Printf("  %s Ollama endpoint: %s\n", successStyle.Render("✓"), cfg.Providers.Ollama.APIBase)
+	return true
+}
+
+func onboardVLLMConfig(cfg *config.Config) bool {
+	fmt.Printf("\n  %s vLLM uses an OpenAI-compatible endpoint. API key is optional.\n\n",
+		warnStyle.Render("→"))
+
+	apiBase := strings.TrimSpace(cfg.Providers.VLLM.APIBase)
+	if apiBase == "" {
+		apiBase = defaultProviderAPIBase("vllm")
+	}
+	apiKey := cfg.Providers.VLLM.APIKey
+
+	form := huh.NewForm(huh.NewGroup(
+		huh.NewInput().
+			Title("vLLM API Base:").
+			Placeholder(defaultProviderAPIBase("vllm")).
+			Value(&apiBase),
+		huh.NewInput().
+			Title("Optional API Key:").
+			Password(true).
+			Value(&apiKey),
+	))
+	if err := form.Run(); err != nil {
+		fmt.Println("Setup cancelled.")
+		return false
+	}
+
+	apiBase = strings.TrimSpace(apiBase)
+	if apiBase == "" {
+		apiBase = defaultProviderAPIBase("vllm")
+	}
+	cfg.Providers.VLLM.APIBase = apiBase
+	cfg.Providers.VLLM.APIKey = strings.TrimSpace(apiKey)
+	fmt.Printf("  %s vLLM endpoint: %s\n", successStyle.Render("✓"), cfg.Providers.VLLM.APIBase)
+	return true
+}
+
+func onboardGitHubCopilotConfig(cfg *config.Config) bool {
+	fmt.Printf("\n  %s GitHub Copilot uses your local Copilot auth and does not require an API key.\n\n",
+		warnStyle.Render("→"))
+
+	connectMode := strings.TrimSpace(cfg.Providers.GitHubCopilot.ConnectMode)
+	if connectMode == "" {
+		connectMode = "stdio"
+	}
+	target := strings.TrimSpace(cfg.Providers.GitHubCopilot.APIBase)
+	if target == "" {
+		target = defaultGitHubCopilotTarget(connectMode)
+	}
+
+	form := huh.NewForm(huh.NewGroup(
+		huh.NewSelect[string]().
+			Title("Connection Mode:").
+			Options(
+				huh.NewOption("stdio (run local `copilot` command)", "stdio"),
+				huh.NewOption("gRPC bridge", "grpc"),
+			).
+			Value(&connectMode),
+		huh.NewInput().
+			Title("CLI command or bridge address:").
+			Description("For stdio use a command name/path. For gRPC use host:port or URL.").
+			Value(&target),
+	))
+	if err := form.Run(); err != nil {
+		fmt.Println("Setup cancelled.")
+		return false
+	}
+
+	connectMode = strings.TrimSpace(connectMode)
+	if connectMode == "" {
+		connectMode = "stdio"
+	}
+	target = strings.TrimSpace(target)
+	if target == "" {
+		target = defaultGitHubCopilotTarget(connectMode)
+	}
+	cfg.Providers.GitHubCopilot.ConnectMode = connectMode
+	cfg.Providers.GitHubCopilot.APIBase = target
+	fmt.Printf("  %s GitHub Copilot: %s via %s\n", successStyle.Render("✓"), connectMode, target)
+	return true
+}
+
+// onboardAPIKeyWithKey handles the standard API-key flow.
 func onboardAPIKeyWithKey(cfg *config.Config, providerID, keyURL string) bool {
 	fmt.Printf("\n  %s  Get your free API key at: %s\n\n",
 		warnStyle.Render("→"), titleStyle.Render(keyURL))
@@ -410,6 +548,11 @@ func onboardAPIKeyWithKey(cfg *config.Config, providerID, keyURL string) bool {
 
 		apiKey = strings.TrimSpace(apiKey)
 		setProviderKey(cfg, providerID, apiKey)
+
+		if strings.TrimSpace(cfg.Agents.Defaults.Model) == "" {
+			fmt.Printf("  %s API key saved. We'll test it after you choose a model.\n", successStyle.Render("✓"))
+			return true
+		}
 
 		// Live validation.
 		var validationErr error
@@ -451,6 +594,36 @@ func onboardAPIKeyWithKey(cfg *config.Config, providerID, keyURL string) bool {
 		}
 	}
 	return true
+}
+
+func onboardValidateProvider(cfg *config.Config, providerID string) bool {
+	var validationErr error
+	withSpinner("Testing connection to "+providerID+"…", func() {
+		validationErr = validateProviderKey(cfg)
+	})
+
+	if validationErr == nil {
+		fmt.Printf("  %s Connected! The provider is working.\n", successStyle.Render("✓"))
+		return true
+	}
+
+	fmt.Printf("  %s Could not validate %s: %s\n",
+		errorStyle.Render("✗"), providerID, simplifyProviderError(validationErr))
+
+	var choice string
+	form := huh.NewForm(
+		huh.NewGroup(
+			huh.NewSelect[string]().
+				Title("What would you like to do?").
+				Options(
+					huh.NewOption("Continue anyway  "+stepStyle.Render("(you can fix this later with: v1claw configure)"), "continue"),
+					huh.NewOption("Quit and fix it now", "quit"),
+				).
+				Value(&choice),
+		),
+	)
+	_ = form.Run()
+	return choice != "quit"
 }
 
 // validateProviderKey sends a minimal test message to the configured provider.
@@ -747,14 +920,18 @@ func wrapText(s string, maxWidth int, indent string) string {
 
 // onboardAuto runs a fully non-interactive setup using flags:
 //
-//	--provider <id>    Required. e.g. gemini, openai, anthropic, groq, deepseek, openrouter
-//	--api-key  <key>   Required for API-key providers (not needed for vertex/bedrock).
+//	--provider <id>     Required. e.g. gemini, openai, anthropic, groq, deepseek, openrouter
+//	--api-key  <key>    Required for API-key providers.
+//	--api-base <url>    Optional. Useful for Ollama, vLLM, and custom endpoints.
+//	--connect-mode <m>  Optional. Used by github_copilot (`stdio` or `grpc`).
 //	--model    <model> Optional. Defaults to the first model for the provider.
 //	--workspace <path> Optional. Defaults to the standard V1Claw workspace path.
 //	--skip-test        Optional. Skip live provider validation and save config immediately.
 func onboardAuto(args []string) {
 	providerID := flagValue(args, "--provider")
 	apiKey := flagValue(args, "--api-key")
+	apiBase := flagValue(args, "--api-base")
+	connectMode := flagValue(args, "--connect-mode")
 	model := flagValue(args, "--model")
 	workspace := flagValue(args, "--workspace")
 	skipTest := hasFlag(args, "--skip-test")
@@ -765,7 +942,7 @@ func onboardAuto(args []string) {
 		fmt.Printf("  Example:\n")
 		fmt.Printf("    v1claw onboard --auto --provider gemini --api-key YOUR_KEY\n\n")
 		fmt.Printf("  Providers: %s\n", supportedProviderList())
-		fmt.Printf("  Enterprise (no key needed): vertex, bedrock\n\n")
+		fmt.Printf("  Keyless/local: vertex, bedrock, ollama, vllm, github_copilot\n\n")
 		os.Exit(1)
 	}
 
@@ -775,7 +952,7 @@ func onboardAuto(args []string) {
 		os.Exit(1)
 	}
 
-	needsKey := providerID != "vertex" && providerID != "bedrock"
+	needsKey := providerNeedsAPIKey(providerID)
 	if needsKey && apiKey == "" {
 		fmt.Printf("  %s --api-key is required for provider %q.\n\n", errorStyle.Render("✗"), providerID)
 		fmt.Printf("  Example:\n")
@@ -822,24 +999,43 @@ func onboardAuto(args []string) {
 	if apiKey != "" {
 		setProviderKey(cfg, providerID, apiKey)
 	}
+	if connectMode != "" {
+		setProviderConnectMode(cfg, providerID, connectMode)
+	}
+	if apiBase != "" {
+		setProviderAPIBase(cfg, providerID, apiBase)
+	} else {
+		switch providerID {
+		case "ollama", "vllm":
+			setProviderAPIBase(cfg, providerID, defaultProviderAPIBase(providerID))
+		case "github_copilot":
+			if strings.TrimSpace(cfg.Providers.GitHubCopilot.ConnectMode) == "" {
+				cfg.Providers.GitHubCopilot.ConnectMode = "stdio"
+			}
+			setProviderAPIBase(cfg, providerID, defaultGitHubCopilotTarget(cfg.Providers.GitHubCopilot.ConnectMode))
+		}
+	}
 
 	fmt.Printf("  %s Provider:  %s\n", successStyle.Render("✓"), providerID)
 	fmt.Printf("  %s Model:     %s\n", successStyle.Render("✓"), cfg.Agents.Defaults.Model)
 	fmt.Printf("  %s Workspace: %s\n", successStyle.Render("✓"), cfg.Workspace.Path)
+	if providerAPIBase := strings.TrimSpace(apiBaseFromConfig(cfg, providerID)); providerAPIBase != "" {
+		fmt.Printf("  %s API Base:  %s\n", successStyle.Render("✓"), providerAPIBase)
+	}
 
-	// Validate the key (live test).
-	if needsKey && !skipTest {
+	// Validate the provider (live test) when the provider supports it.
+	if providerSupportsLiveValidation(providerID) && !skipTest {
 		var testErr error
 		withSpinner("Testing connection to "+providerID+"…", func() {
 			testErr = validateProviderKey(cfg)
 		})
 		if testErr != nil {
 			fmt.Printf("  %s Connection test failed: %s\n", errorStyle.Render("✗"), simplifyProviderError(testErr))
-			fmt.Printf("  %s Config was NOT saved. Check your API key and try again.\n\n", warnStyle.Render("→"))
+			fmt.Printf("  %s Config was NOT saved. Check your provider settings and try again.\n\n", warnStyle.Render("→"))
 			os.Exit(1)
 		}
-		fmt.Printf("  %s API key validated — connection works.\n", successStyle.Render("✓"))
-	} else if needsKey && skipTest {
+		fmt.Printf("  %s Provider validated — connection works.\n", successStyle.Render("✓"))
+	} else if skipTest {
 		fmt.Printf("  %s Skipping live provider validation (--skip-test).\n", warnStyle.Render("→"))
 	}
 
@@ -905,6 +1101,37 @@ func defaultProviderModel(providerID string) string {
 		return models[0]
 	}
 	return ""
+}
+
+func apiBaseFromConfig(cfg *config.Config, providerID string) string {
+	switch strings.ToLower(strings.TrimSpace(providerID)) {
+	case "gemini":
+		return cfg.Providers.Gemini.APIBase
+	case "openai", "gpt":
+		return cfg.Providers.OpenAI.APIBase
+	case "anthropic", "claude":
+		return cfg.Providers.Anthropic.APIBase
+	case "groq":
+		return cfg.Providers.Groq.APIBase
+	case "deepseek":
+		return cfg.Providers.DeepSeek.APIBase
+	case "openrouter":
+		return cfg.Providers.OpenRouter.APIBase
+	case "zhipu", "glm":
+		return cfg.Providers.Zhipu.APIBase
+	case "moonshot":
+		return cfg.Providers.Moonshot.APIBase
+	case "nvidia":
+		return cfg.Providers.Nvidia.APIBase
+	case "vllm":
+		return cfg.Providers.VLLM.APIBase
+	case "ollama":
+		return cfg.Providers.Ollama.APIBase
+	case "github_copilot", "copilot":
+		return cfg.Providers.GitHubCopilot.APIBase
+	default:
+		return ""
+	}
 }
 
 // ─── Refresh mode ────────────────────────────────────────────────────────────

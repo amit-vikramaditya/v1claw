@@ -19,11 +19,30 @@ func TestLookupProviderInfo_UnknownProvider(t *testing.T) {
 
 func TestDefaultProviderModel(t *testing.T) {
 	assert.NotEmpty(t, defaultProviderModel("gemini"))
+	assert.NotEmpty(t, defaultProviderModel("github_copilot"))
 	assert.Empty(t, defaultProviderModel("nvidia"))
 }
 
 func TestSupportedProviderList_HasNoDuplicates(t *testing.T) {
-	assert.Equal(t, "gemini, vertex, openai, anthropic, bedrock, azure_openai, groq, deepseek, openrouter, nvidia", supportedProviderList())
+	assert.Equal(t, "gemini, vertex, openai, anthropic, bedrock, azure_openai, groq, deepseek, openrouter, zhipu, moonshot, nvidia, ollama, vllm, github_copilot", supportedProviderList())
+}
+
+func TestProviderNeedsAPIKey(t *testing.T) {
+	assert.True(t, providerNeedsAPIKey("gemini"))
+	assert.False(t, providerNeedsAPIKey("ollama"))
+	assert.False(t, providerNeedsAPIKey("vllm"))
+	assert.False(t, providerNeedsAPIKey("github_copilot"))
+}
+
+func TestDefaultProviderAPIBase(t *testing.T) {
+	assert.Equal(t, "http://localhost:11434/v1", defaultProviderAPIBase("ollama"))
+	assert.Equal(t, "http://localhost:8000/v1", defaultProviderAPIBase("vllm"))
+	assert.Empty(t, defaultProviderAPIBase("openai"))
+}
+
+func TestDefaultGitHubCopilotTarget(t *testing.T) {
+	assert.Equal(t, "copilot", defaultGitHubCopilotTarget("stdio"))
+	assert.Equal(t, "localhost:4321", defaultGitHubCopilotTarget("grpc"))
 }
 
 func TestHasFlag(t *testing.T) {

@@ -86,7 +86,12 @@ var traditional = []providerInfo{
 	{id: "groq", name: "Groq", desc: "Llama 3.3, 500+ tok/s — blazing fast tool loops", keyHint: "Groq API key", keyURL: "https://console.groq.com/keys"},
 	{id: "deepseek", name: "DeepSeek", desc: "DeepSeek V3, Coder", keyHint: "DeepSeek API key", keyURL: "https://platform.deepseek.com/api_keys"},
 	{id: "openrouter", name: "OpenRouter", desc: "100+ models, single API key", keyHint: "OpenRouter API key", keyURL: "https://openrouter.ai/keys"},
+	{id: "zhipu", name: "Zhipu AI", desc: "GLM reasoning and chat models", keyHint: "Zhipu API key", keyURL: "https://open.bigmodel.cn/usercenter/apikeys"},
+	{id: "moonshot", name: "Moonshot", desc: "Kimi cloud models", keyHint: "Moonshot API key", keyURL: "https://platform.moonshot.cn/console/api-keys"},
 	{id: "nvidia", name: "NVIDIA NIM", desc: "NVIDIA hosted models", keyHint: "NVIDIA API key", keyURL: "https://build.nvidia.com"},
+	{id: "ollama", name: "Ollama", desc: "Run local open-source models on your machine", keyHint: "No key needed — defaults to http://localhost:11434/v1", keyURL: ""},
+	{id: "vllm", name: "vLLM", desc: "OpenAI-compatible self-hosted endpoint", keyHint: "API key optional — set api_base for your server", keyURL: ""},
+	{id: "github_copilot", name: "GitHub Copilot", desc: "Use Copilot via local bridge or stdio worker", keyHint: "No API key needed — uses your local Copilot auth", keyURL: ""},
 }
 
 var providerModels = map[string][]string{
@@ -118,6 +123,36 @@ var providerModels = map[string][]string{
 	"openrouter": {
 		"anthropic/claude-3.5-sonnet", "openai/gpt-4o", "meta-llama/llama-3.1-405b", "google/gemini-pro-1.5",
 	},
+	"github_copilot": {
+		"gpt-4.1",
+	},
+}
+
+func providerNeedsAPIKey(providerID string) bool {
+	switch strings.ToLower(strings.TrimSpace(providerID)) {
+	case "vertex", "vertex_ai", "vertexai", "bedrock", "aws_bedrock", "aws", "ollama", "vllm", "github_copilot", "copilot":
+		return false
+	default:
+		return true
+	}
+}
+
+func defaultProviderAPIBase(providerID string) string {
+	switch strings.ToLower(strings.TrimSpace(providerID)) {
+	case "ollama":
+		return "http://localhost:11434/v1"
+	case "vllm":
+		return "http://localhost:8000/v1"
+	default:
+		return ""
+	}
+}
+
+func defaultGitHubCopilotTarget(connectMode string) string {
+	if strings.EqualFold(strings.TrimSpace(connectMode), "stdio") {
+		return "copilot"
+	}
+	return "localhost:4321"
 }
 
 func configureCmd() {
@@ -293,6 +328,17 @@ func configureModels(cfg *config.Config) {
 	).Run()
 
 	var unlockedModels []huh.Option[string]
+	modelProvider := make(map[string]string)
+	var selectedModelProviders []string
+
+	addProviderModels := func(providerID string) {
+		if models, ok := providerModels[providerID]; ok {
+			for _, m := range models {
+				unlockedModels = append(unlockedModels, huh.NewOption(m, m))
+				modelProvider[m] = providerID
+			}
+		}
+	}
 
 	for _, providerID := range selectedIDs {
 		isCLI := false
@@ -307,6 +353,10 @@ func configureModels(cfg *config.Config) {
 		}
 		if isCLI {
 			continue
+		}
+		selectedModelProviders = append(selectedModelProviders, providerID)
+		if cfg.Agents.Defaults.Provider == "" {
+			cfg.Agents.Defaults.Provider = providerID
 		}
 
 		var pInfo providerInfo
@@ -349,14 +399,7 @@ func configureModels(cfg *config.Config) {
 					cfg.Providers.Bedrock.Region = region
 				}
 			}
-			if models, ok := providerModels[providerID]; ok {
-				for _, m := range models {
-					unlockedModels = append(unlockedModels, huh.NewOption(m, m))
-				}
-			}
-			if cfg.Agents.Defaults.Provider == "" {
-				cfg.Agents.Defaults.Provider = providerID
-			}
+			addProviderModels(providerID)
 			continue
 		}
 
@@ -395,6 +438,92 @@ func configureModels(cfg *config.Config) {
 			continue
 		}
 
+		if providerID == "ollama" {
+			fmt.Printf("\n--- %s ---\n", cyanStyle.Render("Ollama"))
+			fmt.Printf("%s\n\n", grayStyle.Render("Point V1Claw at your local or remote Ollama server."))
+			apiBase := strings.TrimSpace(cfg.Providers.Ollama.APIBase)
+			if apiBase == "" {
+				apiBase = defaultProviderAPIBase("ollama")
+			}
+			huh.NewForm(huh.NewGroup(
+				huh.NewInput().
+					Title("Ollama API Base").
+					Placeholder(defaultProviderAPIBase("ollama")).
+					Value(&apiBase),
+			)).Run()
+			cfg.Providers.Ollama.APIBase = strings.TrimSpace(apiBase)
+			if cfg.Providers.Ollama.APIBase == "" {
+				cfg.Providers.Ollama.APIBase = defaultProviderAPIBase("ollama")
+			}
+			addProviderModels(providerID)
+			continue
+		}
+
+		if providerID == "vllm" {
+			fmt.Printf("\n--- %s ---\n", cyanStyle.Render("vLLM"))
+			fmt.Printf("%s\n\n", grayStyle.Render("Use any OpenAI-compatible vLLM endpoint. API key is optional."))
+			apiBase := strings.TrimSpace(cfg.Providers.VLLM.APIBase)
+			if apiBase == "" {
+				apiBase = defaultProviderAPIBase("vllm")
+			}
+			apiKey := cfg.Providers.VLLM.APIKey
+			huh.NewForm(huh.NewGroup(
+				huh.NewInput().
+					Title("vLLM API Base").
+					Placeholder(defaultProviderAPIBase("vllm")).
+					Value(&apiBase),
+				huh.NewInput().
+					Title("Optional API Key").
+					EchoMode(huh.EchoModePassword).
+					Value(&apiKey),
+			)).Run()
+			cfg.Providers.VLLM.APIBase = strings.TrimSpace(apiBase)
+			if cfg.Providers.VLLM.APIBase == "" {
+				cfg.Providers.VLLM.APIBase = defaultProviderAPIBase("vllm")
+			}
+			cfg.Providers.VLLM.APIKey = strings.TrimSpace(apiKey)
+			addProviderModels(providerID)
+			continue
+		}
+
+		if providerID == "github_copilot" {
+			fmt.Printf("\n--- %s ---\n", cyanStyle.Render("GitHub Copilot"))
+			fmt.Printf("%s\n\n", grayStyle.Render("Use stdio mode for the local Copilot CLI, or gRPC for a Copilot bridge."))
+			connectMode := strings.TrimSpace(cfg.Providers.GitHubCopilot.ConnectMode)
+			if connectMode == "" {
+				connectMode = "stdio"
+			}
+			target := strings.TrimSpace(cfg.Providers.GitHubCopilot.APIBase)
+			if target == "" {
+				target = defaultGitHubCopilotTarget(connectMode)
+			}
+			huh.NewForm(huh.NewGroup(
+				huh.NewSelect[string]().
+					Title("Connection Mode").
+					Options(
+						huh.NewOption("stdio (run local `copilot` command)", "stdio"),
+						huh.NewOption("gRPC bridge", "grpc"),
+					).
+					Value(&connectMode),
+				huh.NewInput().
+					Title("CLI command or bridge address").
+					Description("For stdio use a command name/path. For gRPC use host:port or URL.").
+					Value(&target),
+			)).Run()
+			connectMode = strings.TrimSpace(connectMode)
+			if connectMode == "" {
+				connectMode = "stdio"
+			}
+			target = strings.TrimSpace(target)
+			if target == "" {
+				target = defaultGitHubCopilotTarget(connectMode)
+			}
+			cfg.Providers.GitHubCopilot.ConnectMode = connectMode
+			cfg.Providers.GitHubCopilot.APIBase = target
+			addProviderModels(providerID)
+			continue
+		}
+
 		var apiKey string
 		fmt.Printf("\n--- Key Required: %s ---\n", cyanStyle.Render(pInfo.name))
 		fmt.Printf("Get a key here: %s\n", grayStyle.Render(pInfo.keyURL))
@@ -410,26 +539,54 @@ func configureModels(cfg *config.Config) {
 
 		if apiKey != "" {
 			setProviderKey(cfg, pInfo.id, apiKey)
-			if models, ok := providerModels[pInfo.id]; ok {
-				for _, m := range models {
-					unlockedModels = append(unlockedModels, huh.NewOption(m, m))
-				}
-			}
+			addProviderModels(pInfo.id)
 		}
 	}
 
-	if len(unlockedModels) > 0 {
-		var modelChoice string
-		unlockedModels = append(unlockedModels, huh.NewOption("Custom override...", "custom"))
+	chooseCustomProvider := func() string {
+		if len(selectedModelProviders) == 0 {
+			return ""
+		}
+		if len(selectedModelProviders) == 1 {
+			return selectedModelProviders[0]
+		}
 
+		var providerChoice string
+		options := make([]huh.Option[string], 0, len(selectedModelProviders))
+		for _, providerID := range selectedModelProviders {
+			label := optionMap[providerID]
+			if label == "" {
+				label = providerID
+			}
+			options = append(options, huh.NewOption(label, providerID))
+		}
 		huh.NewForm(
 			huh.NewGroup(
 				huh.NewSelect[string]().
-					Title("Select your primary AI Model").
-					Options(unlockedModels...).
-					Value(&modelChoice),
+					Title("Which provider should use this custom model?").
+					Options(options...).
+					Value(&providerChoice),
 			),
 		).Run()
+		return strings.TrimSpace(providerChoice)
+	}
+
+	if len(selectedModelProviders) > 0 {
+		var modelChoice string
+		if len(unlockedModels) > 0 {
+			unlockedModels = append(unlockedModels, huh.NewOption("Custom override...", "custom"))
+
+			huh.NewForm(
+				huh.NewGroup(
+					huh.NewSelect[string]().
+						Title("Select your primary AI Model").
+						Options(unlockedModels...).
+						Value(&modelChoice),
+				),
+			).Run()
+		} else {
+			modelChoice = "custom"
+		}
 
 		if modelChoice == "custom" {
 			var customModel string
@@ -440,15 +597,14 @@ func configureModels(cfg *config.Config) {
 			).Run()
 			if customModel != "" {
 				cfg.Agents.Defaults.Model = customModel
+				if providerID := chooseCustomProvider(); providerID != "" {
+					cfg.Agents.Defaults.Provider = providerID
+				}
 			}
 		} else if modelChoice != "" {
 			cfg.Agents.Defaults.Model = modelChoice
-			for pid, mList := range providerModels {
-				for _, m := range mList {
-					if m == modelChoice {
-						cfg.Agents.Defaults.Provider = pid
-					}
-				}
+			if providerID := modelProvider[modelChoice]; providerID != "" {
+				cfg.Agents.Defaults.Provider = providerID
 			}
 		}
 	}

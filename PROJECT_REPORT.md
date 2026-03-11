@@ -19,6 +19,11 @@ Status: hardening pass paused; work committed for resume later
 - Expanded `configure` to cover all advertised channels and added a dedicated permissions section for non-technical users.
 - Fixed `doctor` so credential checks are provider-aware and do not falsely fail valid external-auth providers like Vertex and Bedrock.
 - Added `notifications` and `screen` to the persisted permissions schema and runtime permission loading.
+- Added migration support for the newer provider/channel surfaces (`deepseek`, `nvidia`, `moonshot`, `ollama`, `github_copilot`, `slack`, `line`, `onebot`) so imports no longer drop real config.
+- Aligned provider setup across `configure`, `onboard`, `onboard --auto`, runtime provider creation, `doctor`, `gateway`, and `status` for `zhipu`, `moonshot`, `ollama`, `vllm`, and `github_copilot`.
+- Fixed provider onboarding order so providers without built-in default models are configured first, then modeled, then validated instead of failing before a model is chosen.
+- Added explicit runtime support and regression coverage for keyless/self-hosted providers: `ollama`, `vllm`, and `github_copilot`, plus explicit `moonshot` provider creation.
+- Synced README setup docs with the real non-interactive/local-provider flows, including `--api-base` support and keyless/local provider examples.
 
 ## Validation completed
 
@@ -29,9 +34,10 @@ Status: hardening pass paused; work committed for resume later
 - Source installer smoke test
 - Clean-home onboarding smoke test with `V1CLAW_HOME`
 - Custom-workspace onboarding smoke test
+- Targeted provider/setup regression tests covering CLI setup, migration, and provider creation
 
 ## Remaining work when resuming
 
 - Run live Windows/PowerShell install verification on a Windows machine.
-- Continue publish-readiness audit for remaining feature-claim gaps and first-run UX edges.
+- Continue publish-readiness audit for remaining feature-claim gaps and first-run UX edges outside the provider/setup surface.
 - Final release pass: tag/release flow verification, install verification against published artifacts, and final README tightening.
