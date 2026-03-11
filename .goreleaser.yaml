@@ -34,7 +34,7 @@ dockers_v2:
       - v1claw
     images:
       - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_OWNER }}/v1claw"
-      - "docker.io/{{ .Env.DOCKERHUB_IMAGE_NAME }}"
+      - "{{ if .Env.DOCKERHUB_IMAGE_NAME }}docker.io/{{ .Env.DOCKERHUB_IMAGE_NAME }}{{ end }}"
     tags:
       - "{{ .Tag }}"
       - "latest"

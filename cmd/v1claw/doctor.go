@@ -128,8 +128,8 @@ func runDoctor() bool {
 			fmt.Printf("%s  LLM connectivity   OK  %s\n", pass, stepStyle.Render(fmt.Sprintf("(%s)", elapsed)))
 		} else {
 			fmt.Printf("%s  LLM connectivity   %s  %s\n",
-				fail, simplifyProviderError(r.err), stepStyle.Render(fmt.Sprintf("(after %s)", elapsed)))
-			hint("Check your API key and internet connection.")
+				fail, simplifyProviderErrorFor(providerID, r.err), stepStyle.Render(fmt.Sprintf("(after %s)", elapsed)))
+			hint(providerConnectionHint(cfg, providerID))
 			allGood = false
 		}
 	}

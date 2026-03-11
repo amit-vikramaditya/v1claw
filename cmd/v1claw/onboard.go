@@ -566,11 +566,13 @@ func onboardAPIKeyWithKey(cfg *config.Config, providerID, keyURL string) bool {
 		}
 
 		if attempt < 3 {
-			fmt.Printf("  %s Could not connect: %s\n", errorStyle.Render("✗"), simplifyProviderError(validationErr))
+			fmt.Printf("  %s Could not connect: %s\n", errorStyle.Render("✗"), simplifyProviderErrorFor(providerID, validationErr))
+			fmt.Printf("  %s %s\n", warnStyle.Render("→"), providerConnectionHint(cfg, providerID))
 			fmt.Printf("  %s (attempt %d/3) — please check the key and try again\n\n", warnStyle.Render("→"), attempt)
 		} else {
 			fmt.Printf("  %s Could not validate the key after 3 attempts: %s\n",
-				errorStyle.Render("✗"), simplifyProviderError(validationErr))
+				errorStyle.Render("✗"), simplifyProviderErrorFor(providerID, validationErr))
+			fmt.Printf("  %s %s\n", warnStyle.Render("→"), providerConnectionHint(cfg, providerID))
 
 			var skip string
 			skipForm := huh.NewForm(
@@ -608,7 +610,8 @@ func onboardValidateProvider(cfg *config.Config, providerID string) bool {
 	}
 
 	fmt.Printf("  %s Could not validate %s: %s\n",
-		errorStyle.Render("✗"), providerID, simplifyProviderError(validationErr))
+		errorStyle.Render("✗"), providerID, simplifyProviderErrorFor(providerID, validationErr))
+	fmt.Printf("  %s %s\n", warnStyle.Render("→"), providerConnectionHint(cfg, providerID))
 
 	var choice string
 	form := huh.NewForm(
@@ -673,6 +676,56 @@ func simplifyProviderError(err error) string {
 			return msg[:120] + "…"
 		}
 		return msg
+	}
+}
+
+func simplifyProviderErrorFor(providerID string, err error) string {
+	msg := simplifyProviderError(err)
+	switch strings.ToLower(strings.TrimSpace(providerID)) {
+	case "ollama", "vllm":
+		if msg == "Cannot reach the server. Check your internet connection." {
+			return "Cannot reach the configured local endpoint."
+		}
+	case "github_copilot", "copilot":
+		if msg == "Cannot reach the server. Check your internet connection." {
+			return "Cannot reach the configured Copilot bridge or local CLI worker."
+		}
+	}
+	return msg
+}
+
+func providerConnectionHint(cfg *config.Config, providerID string) string {
+	switch strings.ToLower(strings.TrimSpace(providerID)) {
+	case "ollama":
+		apiBase := strings.TrimSpace(cfg.Providers.Ollama.APIBase)
+		if apiBase == "" {
+			apiBase = defaultProviderAPIBase("ollama")
+		}
+		return fmt.Sprintf("Start Ollama and make sure %s is reachable.", apiBase)
+	case "vllm":
+		apiBase := strings.TrimSpace(cfg.Providers.VLLM.APIBase)
+		if apiBase == "" {
+			apiBase = defaultProviderAPIBase("vllm")
+		}
+		return fmt.Sprintf("Start your vLLM server and make sure %s is reachable.", apiBase)
+	case "github_copilot", "copilot":
+		connectMode := strings.TrimSpace(cfg.Providers.GitHubCopilot.ConnectMode)
+		if connectMode == "" {
+			connectMode = "stdio"
+		}
+		target := strings.TrimSpace(cfg.Providers.GitHubCopilot.APIBase)
+		if target == "" {
+			target = defaultGitHubCopilotTarget(connectMode)
+		}
+		if connectMode == "stdio" {
+			return fmt.Sprintf("Install/authenticate the Copilot CLI and make sure %q is runnable.", target)
+		}
+		return fmt.Sprintf("Start the Copilot bridge and make sure %s is reachable.", target)
+	default:
+		if providerNeedsAPIKey(providerID) {
+			return "Check your API key and internet connection."
+		}
+		return "Check the provider endpoint and your network connection."
 	}
 }
 
@@ -770,8 +823,9 @@ func onboardSaveAndTest(cfg *config.Config, configPath string, aiName string, us
 	})
 
 	if testErr != nil {
-		fmt.Printf("  %s Live test failed: %s\n", warnStyle.Render("⚠"), simplifyProviderError(testErr))
-		fmt.Printf("  %s This is usually fine — your API key was already validated.\n", stepStyle.Render("→"))
+		fmt.Printf("  %s Live test failed: %s\n", warnStyle.Render("⚠"), simplifyProviderErrorFor(cfg.Agents.Defaults.Provider, testErr))
+		fmt.Printf("  %s %s\n", stepStyle.Render("→"), providerConnectionHint(cfg, cfg.Agents.Defaults.Provider))
+		fmt.Printf("  %s This is usually fine — your provider settings were already saved.\n", stepStyle.Render("→"))
 		fmt.Printf("  %s Run  v1claw doctor  to check your setup anytime.\n\n", stepStyle.Render("→"))
 		return true
 	}
@@ -1030,7 +1084,8 @@ func onboardAuto(args []string) {
 			testErr = validateProviderKey(cfg)
 		})
 		if testErr != nil {
-			fmt.Printf("  %s Connection test failed: %s\n", errorStyle.Render("✗"), simplifyProviderError(testErr))
+			fmt.Printf("  %s Connection test failed: %s\n", errorStyle.Render("✗"), simplifyProviderErrorFor(providerID, testErr))
+			fmt.Printf("  %s %s\n", warnStyle.Render("→"), providerConnectionHint(cfg, providerID))
 			fmt.Printf("  %s Config was NOT saved. Check your provider settings and try again.\n\n", warnStyle.Render("→"))
 			os.Exit(1)
 		}
