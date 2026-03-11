@@ -2,9 +2,9 @@
 
 **Your 24/7 Personal AI Assistant — Like Jarvis, but open source.**
 
-V1Claw is a self-hosted AI assistant that runs on your Mac, Linux PC, Windows machine, or Android phone via Termux. Connect any LLM (Claude, GPT, Gemini, or local models), talk to it through voice or text, and let it control your device — read files, run commands, browse the web, take photos, send messages, and more.
+V1Claw is a self-hosted AI assistant that runs on your Mac, Linux PC, Windows machine, or Android phone via Termux. Connect any LLM provider you want, talk to it through voice or text, and let it control your device — read files, run commands, browse the web, take photos, send messages, and more.
 
-One binary. No cloud dependency. Your data stays on your machine.
+One binary. No required V1Claw cloud service. Your data stays on your machine unless you choose a cloud model or channel.
 
 Default home directory: `~/.v1claw` on macOS/Linux, `%APPDATA%\\V1Claw` on Windows.
 Set `V1CLAW_HOME` to override it.
@@ -13,7 +13,7 @@ Set `V1CLAW_HOME` to override it.
 
 ## Features
 
-### 🧠 13 LLM Providers
+### 🧠 15 LLM Providers
 Connect to any AI model — paid APIs or self-hosted:
 
 | Provider | Type | Models |
@@ -21,6 +21,9 @@ Connect to any AI model — paid APIs or self-hosted:
 | **Anthropic** | Cloud API | Claude 4, Claude 3.5, etc. |
 | **OpenAI** | Cloud API | GPT-5, GPT-4, etc. |
 | **Google Gemini** | Cloud API | Gemini 2.x, etc. |
+| **Google Vertex AI** | Cloud API | Gemini on Vertex |
+| **AWS Bedrock** | Cloud API | Claude, Llama, Nova |
+| **Azure OpenAI** | Cloud API | GPT deployments on Azure |
 | **Groq** | Cloud API | LLaMA, Mixtral (fast inference) |
 | **OpenRouter** | Cloud API | 100+ models via single API |
 | **DeepSeek** | Cloud API | DeepSeek V3, Coder |
@@ -147,6 +150,12 @@ Then run the 2-minute setup wizard:
 v1claw onboard
 ```
 
+Then verify the install:
+
+```bash
+v1claw doctor
+```
+
 Or skip the wizard entirely with one line:
 
 ```bash
@@ -168,6 +177,11 @@ v1claw onboard --auto --provider vllm --api-base http://localhost:8000/v1 --mode
 > $installer = Join-Path $env:TEMP "v1claw-install.ps1"
 > Invoke-WebRequest "https://raw.githubusercontent.com/amit-vikramaditya/v1claw/main/install.ps1" -OutFile $installer
 > powershell -ExecutionPolicy Bypass -File $installer
+> ```
+>
+> Then verify:
+> ```powershell
+> v1claw doctor
 > ```
 
 ---
@@ -338,6 +352,12 @@ Then run the setup wizard:
 v1claw onboard
 ```
 
+Verify the install:
+
+```bash
+v1claw doctor
+```
+
 That's it. Skip to **Step 5: Test it** below.
 
 ---
@@ -439,6 +459,12 @@ Then run the setup wizard:
 
 ```bash
 v1claw onboard
+```
+
+Verify the install:
+
+```bash
+v1claw doctor
 ```
 
 That's it. Skip to **Step 5: Test it** below.
@@ -554,6 +580,12 @@ Then run:
 
 ```powershell
 v1claw onboard
+```
+
+Then verify:
+
+```powershell
+v1claw doctor
 ```
 
 #### Option B: Build from source manually
