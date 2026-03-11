@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -101,34 +100,18 @@ func runDoctor() bool {
 
 	// ── 6. Live connectivity ping ─────────────────────────────────────────────
 	if providerID != "" && model != "" && credentialsReady {
-		type result struct{ err error }
-		done := make(chan result, 1)
-		go func() {
-			p, pErr := providers.CreateProvider(cfg)
-			if pErr != nil {
-				done <- result{pErr}
-				return
-			}
-			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-			defer cancel()
-			msgs := []providers.Message{{Role: "user", Content: "ping"}}
-			opts := map[string]interface{}{"max_tokens": 5, "temperature": 0.0}
-			_, chatErr := p.Chat(ctx, msgs, nil, model, opts)
-			done <- result{chatErr}
-		}()
-
 		start := time.Now()
 		clearLen := len(providerID) + 40
 		fmt.Printf("      …  LLM connectivity  testing %s…", providerID)
-		r := <-done
+		err := validateProviderKey(cfg)
 		elapsed := time.Since(start).Round(time.Millisecond)
 		fmt.Printf("\r%s\r", strings.Repeat(" ", clearLen))
 
-		if r.err == nil {
+		if err == nil {
 			fmt.Printf("%s  LLM connectivity   OK  %s\n", pass, stepStyle.Render(fmt.Sprintf("(%s)", elapsed)))
 		} else {
 			fmt.Printf("%s  LLM connectivity   %s  %s\n",
-				fail, simplifyProviderErrorFor(providerID, r.err), stepStyle.Render(fmt.Sprintf("(after %s)", elapsed)))
+				fail, simplifyProviderErrorFor(providerID, err), stepStyle.Render(fmt.Sprintf("(after %s)", elapsed)))
 			hint(providerConnectionHint(cfg, providerID))
 			allGood = false
 		}
