@@ -13,10 +13,7 @@ import (
 	"sync"
 	"time"
 
-	th "github.com/mymmrac/telego/telegohandler"
-
 	"github.com/mymmrac/telego"
-	"github.com/mymmrac/telego/telegohandler"
 	tu "github.com/mymmrac/telego/telegoutil"
 
 	"github.com/amit-vikramaditya/v1claw/pkg/bus"
@@ -115,50 +112,6 @@ func (c *TelegramChannel) Start(ctx context.Context) error {
 		return fmt.Errorf("failed to start long polling: %w", err)
 	}
 
-	bh, err := telegohandler.NewBotHandler(c.bot, updates)
-	if err != nil {
-		return fmt.Errorf("failed to create bot handler: %w", err)
-	}
-
-	bh.HandleMessage(func(ctx *th.Context, message telego.Message) error {
-		// /help is only available to authorized users.
-		if !c.isAuthorized(&message) {
-			return nil
-		}
-		c.commands.Help(ctx, message)
-		return nil
-	}, th.CommandEqual("help"))
-
-	bh.HandleMessage(func(ctx *th.Context, message telego.Message) error {
-		// /start triggers OTP prompt if not yet paired, otherwise greets the user.
-		if c.authOTP != "" {
-			c.authMu.Lock()
-			otpHint := c.authOTP
-			c.authMu.Unlock()
-			if otpHint != "" {
-				c.bot.SendMessage(ctx, tu.Message(telego.ChatID{ID: message.Chat.ID},
-					fmt.Sprintf("🔒 This bot is not yet paired. Enter the 6-digit OTP shown on the server console to link your account.")))
-				return nil
-			}
-		}
-		if !c.isAuthorized(&message) {
-			return nil
-		}
-		return c.commands.Start(ctx, message)
-	}, th.CommandEqual("start"))
-
-	bh.HandleMessage(func(ctx *th.Context, message telego.Message) error {
-		return c.commands.Show(ctx, message)
-	}, th.CommandEqual("show"))
-
-	bh.HandleMessage(func(ctx *th.Context, message telego.Message) error {
-		return c.commands.List(ctx, message)
-	}, th.CommandEqual("list"))
-
-	bh.HandleMessage(func(ctx *th.Context, message telego.Message) error {
-		return c.handleMessage(ctx, &message)
-	}, th.AnyMessage())
-
 	c.setRunning(true)
 	logger.InfoCF("telegram", "Telegram bot connected", map[string]interface{}{
 		"username": c.bot.Username(),
@@ -173,14 +126,82 @@ func (c *TelegramChannel) Start(ctx context.Context) error {
 		fmt.Printf("=======================================================\n\n")
 	}
 
-	go bh.Start()
-
 	go func() {
-		<-ctx.Done()
-		bh.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case update, ok := <-updates:
+				if !ok {
+					logger.WarnC("telegram", "Telegram update stream closed")
+					return
+				}
+				if update.Message == nil {
+					continue
+				}
+				if err := c.dispatchUpdateMessage(ctx, update.Message); err != nil {
+					logger.ErrorCF("telegram", "Failed to handle Telegram message", map[string]interface{}{
+						"update_id": update.UpdateID,
+						"error":     err.Error(),
+					})
+				}
+			}
+		}
 	}()
 
 	return nil
+}
+
+func (c *TelegramChannel) dispatchUpdateMessage(ctx context.Context, message *telego.Message) error {
+	if message == nil {
+		return nil
+	}
+
+	switch telegramCommandName(message.Text) {
+	case "help":
+		if !c.isAuthorized(message) {
+			return nil
+		}
+		return c.commands.Help(ctx, *message)
+	case "start":
+		c.authMu.Lock()
+		otpHint := c.authOTP
+		c.authMu.Unlock()
+		if otpHint != "" {
+			_, err := c.bot.SendMessage(ctx, tu.Message(telego.ChatID{ID: message.Chat.ID},
+				"🔒 This bot is not yet paired. Enter the 6-digit OTP shown on the server console to link your account."))
+			return err
+		}
+		if !c.isAuthorized(message) {
+			return nil
+		}
+		return c.commands.Start(ctx, *message)
+	case "show":
+		if !c.isAuthorized(message) {
+			return nil
+		}
+		return c.commands.Show(ctx, *message)
+	case "list":
+		if !c.isAuthorized(message) {
+			return nil
+		}
+		return c.commands.List(ctx, *message)
+	default:
+		return c.handleMessage(ctx, message)
+	}
+}
+
+func telegramCommandName(text string) string {
+	text = strings.TrimSpace(text)
+	if !strings.HasPrefix(text, "/") {
+		return ""
+	}
+	command := strings.Fields(text)[0]
+	command = strings.TrimPrefix(command, "/")
+	if idx := strings.Index(command, "@"); idx >= 0 {
+		command = command[:idx]
+	}
+	return strings.ToLower(command)
 }
 func (c *TelegramChannel) Stop(ctx context.Context) error {
 	logger.InfoC("telegram", "Stopping Telegram bot...")
