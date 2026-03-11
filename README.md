@@ -127,9 +127,9 @@ Extend V1Claw with installable skills:
 
 Pick your device. Follow the steps. You'll have a working AI assistant in under 10 minutes.
 
-> **You need one thing before you start:** an API key from any AI provider.
-> The easiest free option is **Google Gemini** — get a key at [aistudio.google.com/apikey](https://aistudio.google.com/apikey).
-> Other options: [OpenAI](https://platform.openai.com/api-keys), [Anthropic](https://console.anthropic.com/), [Groq](https://console.groq.com/keys), [OpenRouter](https://openrouter.ai/keys).
+> **You need one provider before you start:** either an API key for a cloud model, or a local/self-hosted endpoint like Ollama or vLLM.
+> The easiest free cloud option is **Google Gemini** — get a key at [aistudio.google.com/apikey](https://aistudio.google.com/apikey).
+> Other cloud options: [OpenAI](https://platform.openai.com/api-keys), [Anthropic](https://console.anthropic.com/), [Groq](https://console.groq.com/keys), [OpenRouter](https://openrouter.ai/keys).
 
 ---
 
@@ -147,15 +147,21 @@ Then run the 2-minute setup wizard:
 v1claw onboard
 ```
 
-Or skip the wizard entirely with one line — replace `YOUR_KEY`:
+Or skip the wizard entirely with one line:
 
 ```bash
 v1claw onboard --auto --provider gemini --api-key "YOUR_KEY"
 ```
 
-Other providers: `openai` · `anthropic` · `groq` · `deepseek` · `openrouter` · `nvidia`
-Enterprise (no key needed): `vertex` (uses `gcloud auth`) · `bedrock` (uses `~/.aws/credentials`)
+Other API-key providers: `openai` · `anthropic` · `groq` · `deepseek` · `openrouter` · `nvidia` · `zhipu` · `moonshot`
+Keyless or local providers: `vertex` (uses `gcloud auth`) · `bedrock` (uses `~/.aws/credentials`) · `ollama` · `vllm` · `github_copilot`
 If your provider does not have a built-in default model, add `--model YOUR_MODEL`.
+For local/self-hosted endpoints, you can also pass `--api-base URL`, for example:
+
+```bash
+v1claw onboard --auto --provider ollama --model llama3.2
+v1claw onboard --auto --provider vllm --api-base http://localhost:8000/v1 --model my-model
+```
 
 > **Windows users:** PowerShell quick install:
 > ```powershell
@@ -590,7 +596,7 @@ go build -o build/v1claw.exe ./cmd/v1claw
 build\v1claw.exe onboard
 ```
 
-The setup wizard will ask you to pick a provider and enter your API key. Your config is ready immediately.
+The setup wizard will ask you to pick a provider, configure credentials or a local endpoint, and test the connection. Your config is ready immediately.
 
 ##### Step 5: Test it
 
@@ -622,7 +628,7 @@ cd v1claw
 
 # Copy the example config and edit it
 cp config/config.example.json config/config.json
-nano config/config.json   # Add your provider API key
+nano config/config.json   # Add provider credentials or endpoint settings
 
 # Run a one-shot query
 docker compose run --rm v1claw-agent -m "Hello V1Claw!"
@@ -743,6 +749,7 @@ v1claw onboard --refresh    # Upgrade existing config to new schema (non-destruc
 v1claw onboard --auto \     # Non-interactive setup (CI/scripts)
   --provider gemini \
   --api-key YOUR_KEY \
+  --api-base http://localhost:8000/v1 \
   --skip-test              # Optional for CI/offline setup
 v1claw agent                # Interactive chat
 v1claw agent -m "query"     # One-shot query
@@ -811,7 +818,7 @@ v1claw version              # Show version
 V1Claw works today as a powerful single-device assistant. Here's what's next to make it a full Jarvis:
 
 ### ✅ Done
-- [x] 13 LLM providers (cloud + local)
+- [x] 15 LLM providers (cloud + local)
 - [x] 10 communication channels
 - [x] Voice I/O pipeline (mic → STT → agent → TTS → speaker)
 - [x] Vision/camera integration

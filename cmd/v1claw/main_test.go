@@ -183,6 +183,23 @@ func TestValidateGatewaySecurity_SafePublicConfigPasses(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestGatewayProviderConfigError_AllowsVLLMWithoutAPIKey(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Agents.Defaults.Provider = "vllm"
+
+	err := gatewayProviderConfigError(cfg)
+	require.NoError(t, err)
+}
+
+func TestGatewayProviderConfigError_RequiresVertexProjectID(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Agents.Defaults.Provider = "vertex"
+
+	err := gatewayProviderConfigError(cfg)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "project_id")
+}
+
 func TestExecuteLocalCapability_Microphone_CommandInjection(t *testing.T) {
 	// Temporarily set up a fake Termux environment to allow executeLocalCapability to run
 	oldPath := os.Getenv("PATH")

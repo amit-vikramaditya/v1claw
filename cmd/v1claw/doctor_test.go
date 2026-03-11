@@ -65,3 +65,21 @@ func TestProviderCredentialStatus_GeminiRequiresCredentials(t *testing.T) {
 	assert.False(t, ready)
 	assert.Contains(t, hint, "configure")
 }
+
+func TestProviderCredentialStatus_VLLMUsesEndpointWithoutAPIKey(t *testing.T) {
+	cfg := config.DefaultConfig()
+
+	label, ready, hint := providerCredentialStatus(cfg, "vllm")
+	assert.Equal(t, "OpenAI-compatible endpoint at http://localhost:8000/v1", label)
+	assert.True(t, ready)
+	assert.Empty(t, hint)
+}
+
+func TestProviderCredentialStatus_OllamaUsesDefaultLocalEndpoint(t *testing.T) {
+	cfg := config.DefaultConfig()
+
+	label, ready, hint := providerCredentialStatus(cfg, "ollama")
+	assert.Equal(t, "local Ollama endpoint at http://localhost:11434/v1", label)
+	assert.True(t, ready)
+	assert.Empty(t, hint)
+}

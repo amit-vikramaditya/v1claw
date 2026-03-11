@@ -192,8 +192,14 @@ func apiKeyFromConfig(cfg *config.Config, providerID string) string {
 		return cfg.Providers.DeepSeek.APIKey
 	case "openrouter":
 		return cfg.Providers.OpenRouter.APIKey
+	case "zhipu", "glm":
+		return cfg.Providers.Zhipu.APIKey
+	case "moonshot":
+		return cfg.Providers.Moonshot.APIKey
 	case "nvidia":
 		return cfg.Providers.Nvidia.APIKey
+	case "vllm":
+		return cfg.Providers.VLLM.APIKey
 	case "github_copilot":
 		return cfg.Providers.GitHubCopilot.APIKey
 	default:
@@ -212,8 +218,31 @@ func providerCredentialStatus(cfg *config.Config, providerID string) (string, bo
 		return "gcloud / ADC credentials", true, ""
 	case "bedrock", "aws_bedrock", "aws":
 		return "AWS credentials / profile", true, ""
+	case "ollama":
+		apiBase := strings.TrimSpace(cfg.Providers.Ollama.APIBase)
+		if apiBase == "" {
+			apiBase = defaultProviderAPIBase("ollama")
+		}
+		return "local Ollama endpoint at " + apiBase, true, ""
+	case "vllm":
+		apiBase := strings.TrimSpace(cfg.Providers.VLLM.APIBase)
+		if apiBase == "" {
+			apiBase = defaultProviderAPIBase("vllm")
+		}
+		if apiKey := strings.TrimSpace(cfg.Providers.VLLM.APIKey); apiKey != "" {
+			return maskKey(apiKey) + " @ " + apiBase, true, ""
+		}
+		return "OpenAI-compatible endpoint at " + apiBase, true, ""
 	case "github_copilot", "copilot":
-		return "Copilot bridge / local auth", true, ""
+		connectMode := strings.TrimSpace(cfg.Providers.GitHubCopilot.ConnectMode)
+		if connectMode == "" {
+			connectMode = "stdio"
+		}
+		target := strings.TrimSpace(cfg.Providers.GitHubCopilot.APIBase)
+		if target == "" {
+			target = defaultGitHubCopilotTarget(connectMode)
+		}
+		return fmt.Sprintf("Copilot %s via %s", connectMode, target), true, ""
 	case "claude-cli", "claudecode", "claude-code":
 		return "Claude CLI auth", true, ""
 	case "codex-cli", "codex-code":

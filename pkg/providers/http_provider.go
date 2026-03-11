@@ -248,6 +248,22 @@ func (p *HTTPProvider) GetDefaultModel() string {
 	return ""
 }
 
+func providerAllowsKeylessHTTP(providerName, model string, apiBase string) bool {
+	switch strings.ToLower(strings.TrimSpace(providerName)) {
+	case "ollama":
+		return true
+	case "vllm":
+		return apiBase != ""
+	}
+
+	lowerModel := strings.ToLower(model)
+	if strings.Contains(lowerModel, "ollama") || strings.HasPrefix(lowerModel, "ollama/") {
+		return true
+	}
+
+	return apiBase != "" && providerName == ""
+}
+
 func createClaudeAuthProvider() (LLMProvider, error) {
 	cred, err := auth.GetCredential("anthropic")
 	if err != nil {
@@ -421,6 +437,14 @@ func CreateProvider(cfg *config.Config) (LLMProvider, error) {
 					apiBase = "https://open.bigmodel.cn/api/paas/v4"
 				}
 			}
+		case "moonshot":
+			if cfg.Providers.Moonshot.APIKey != "" {
+				apiKey = cfg.Providers.Moonshot.APIKey
+				apiBase = cfg.Providers.Moonshot.APIBase
+				if apiBase == "" {
+					apiBase = "https://api.moonshot.cn/v1"
+				}
+			}
 		case "gemini", "google":
 			if cfg.Providers.Gemini.APIKey != "" {
 				apiKey = cfg.Providers.Gemini.APIKey
@@ -430,9 +454,10 @@ func CreateProvider(cfg *config.Config) (LLMProvider, error) {
 				}
 			}
 		case "vllm":
-			if cfg.Providers.VLLM.APIBase != "" {
-				apiKey = cfg.Providers.VLLM.APIKey
-				apiBase = cfg.Providers.VLLM.APIBase
+			apiKey = cfg.Providers.VLLM.APIKey
+			apiBase = cfg.Providers.VLLM.APIBase
+			if apiBase == "" {
+				apiBase = "http://localhost:8000/v1"
 			}
 		case "shengsuanyun":
 			if cfg.Providers.ShengSuanYun.APIKey != "" {
@@ -494,13 +519,26 @@ func CreateProvider(cfg *config.Config) (LLMProvider, error) {
 					model = "deepseek-chat"
 				}
 			}
+		case "ollama":
+			apiKey = cfg.Providers.Ollama.APIKey
+			apiBase = cfg.Providers.Ollama.APIBase
+			proxy = cfg.Providers.Ollama.Proxy
+			if apiBase == "" {
+				apiBase = "http://localhost:11434/v1"
+			}
 		case "github_copilot", "copilot":
+			connectMode := cfg.Providers.GitHubCopilot.ConnectMode
+			if connectMode == "" {
+				connectMode = "stdio"
+			}
 			if cfg.Providers.GitHubCopilot.APIBase != "" {
 				apiBase = cfg.Providers.GitHubCopilot.APIBase
+			} else if connectMode == "stdio" {
+				apiBase = "copilot"
 			} else {
 				apiBase = "localhost:4321"
 			}
-			return NewGitHubCopilotProviderWithSandbox(apiBase, cfg.Providers.GitHubCopilot.ConnectMode, model, cfg.Workspace.Sandboxed)
+			return NewGitHubCopilotProviderWithSandbox(apiBase, connectMode, model, cfg.Workspace.Sandboxed)
 
 		}
 
@@ -579,7 +617,7 @@ func CreateProvider(cfg *config.Config) (LLMProvider, error) {
 			if apiBase == "" {
 				apiBase = "https://integrate.api.nvidia.com/v1"
 			}
-		case (strings.Contains(lowerModel, "ollama") || strings.HasPrefix(model, "ollama/")) && cfg.Providers.Ollama.APIKey != "":
+		case strings.Contains(lowerModel, "ollama") || strings.HasPrefix(model, "ollama/"):
 			apiKey = cfg.Providers.Ollama.APIKey
 			apiBase = cfg.Providers.Ollama.APIBase
 			proxy = cfg.Providers.Ollama.Proxy
@@ -606,7 +644,7 @@ func CreateProvider(cfg *config.Config) (LLMProvider, error) {
 		}
 	}
 
-	if apiKey == "" && !strings.HasPrefix(model, "bedrock/") {
+	if apiKey == "" && !strings.HasPrefix(model, "bedrock/") && !providerAllowsKeylessHTTP(providerName, model, apiBase) {
 		return nil, fmt.Errorf("no API key configured for provider (model: %s)", model)
 	}
 

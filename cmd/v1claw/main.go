@@ -373,13 +373,73 @@ func setProviderKey(cfg *config.Config, provider, key string) {
 		cfg.Providers.DeepSeek.APIKey = key
 	case "openrouter":
 		cfg.Providers.OpenRouter.APIKey = key
+	case "zhipu", "glm":
+		cfg.Providers.Zhipu.APIKey = key
+	case "moonshot":
+		cfg.Providers.Moonshot.APIKey = key
 	case "nvidia":
 		cfg.Providers.Nvidia.APIKey = key
+	case "vllm":
+		cfg.Providers.VLLM.APIKey = key
+	case "ollama":
+		cfg.Providers.Ollama.APIKey = key
 	case "github_copilot":
 		cfg.Providers.GitHubCopilot.APIKey = key
 	case "azure_openai", "azure":
 		cfg.Providers.AzureOpenAI.APIKey = key
 	}
+}
+
+func setProviderAPIBase(cfg *config.Config, provider, apiBase string) {
+	switch provider {
+	case "gemini":
+		cfg.Providers.Gemini.APIBase = apiBase
+	case "openai":
+		cfg.Providers.OpenAI.APIBase = apiBase
+	case "anthropic":
+		cfg.Providers.Anthropic.APIBase = apiBase
+	case "groq":
+		cfg.Providers.Groq.APIBase = apiBase
+	case "deepseek":
+		cfg.Providers.DeepSeek.APIBase = apiBase
+	case "openrouter":
+		cfg.Providers.OpenRouter.APIBase = apiBase
+	case "zhipu", "glm":
+		cfg.Providers.Zhipu.APIBase = apiBase
+	case "moonshot":
+		cfg.Providers.Moonshot.APIBase = apiBase
+	case "nvidia":
+		cfg.Providers.Nvidia.APIBase = apiBase
+	case "vllm":
+		cfg.Providers.VLLM.APIBase = apiBase
+	case "ollama":
+		cfg.Providers.Ollama.APIBase = apiBase
+	case "github_copilot":
+		cfg.Providers.GitHubCopilot.APIBase = apiBase
+	}
+}
+
+func setProviderConnectMode(cfg *config.Config, provider, connectMode string) {
+	switch provider {
+	case "github_copilot", "copilot":
+		cfg.Providers.GitHubCopilot.ConnectMode = connectMode
+	}
+}
+
+func gatewayProviderConfigError(cfg *config.Config) error {
+	providerName := strings.TrimSpace(cfg.Agents.Defaults.Provider)
+	if providerName == "" {
+		return nil
+	}
+
+	_, ready, hint := providerCredentialStatus(cfg, providerName)
+	if ready {
+		return nil
+	}
+	if hint == "" {
+		hint = "Run  v1claw onboard  or  v1claw configure → Brain  to finish setup."
+	}
+	return fmt.Errorf("provider %q is not ready. %s", providerName, hint)
 }
 
 func copyEmbeddedToTarget(targetDir string) error {
@@ -1480,19 +1540,13 @@ func gatewayCmd() {
 		os.Exit(1)
 	}
 
-	// Fail-fast API validation. Ignore validation only for local models like Ollama.
-	providerName := cfg.Agents.Defaults.Provider
-	if providerName != "ollama" && providerName != "" {
-		apiKey := cfg.GetAPIKey()
-		if apiKey == "" {
-			fmt.Printf("\n=======================================================\n")
-			fmt.Printf("❌ FATAL ERROR: No AI Provider API Key configured ❌\n")
-			fmt.Printf("Provider '%s' requires authentication to function.\n\n", providerName)
-			fmt.Printf("Please run: v1claw onboard\n")
-			fmt.Printf("Or set: export V1CLAW_PROVIDERS_%s_API_KEY=\"your_key\"\n", strings.ToUpper(providerName))
-			fmt.Printf("=======================================================\n\n")
-			os.Exit(1)
-		}
+	// Fail fast on incomplete provider setup using the same provider-aware rules as `doctor`.
+	if err := gatewayProviderConfigError(cfg); err != nil {
+		fmt.Printf("\n=======================================================\n")
+		fmt.Printf("❌ FATAL ERROR: Provider configuration is incomplete ❌\n")
+		fmt.Printf("%s\n", err)
+		fmt.Printf("=======================================================\n\n")
+		os.Exit(1)
 	}
 
 	if err := validateGatewaySecurity(cfg); err != nil {
@@ -1980,10 +2034,30 @@ func statusCmd() {
 		fmt.Println("  Groq:        ", ok(cfg.Providers.Groq.APIKey != ""))
 		fmt.Println("  DeepSeek:    ", ok(cfg.Providers.DeepSeek.APIKey != ""))
 		fmt.Println("  Zhipu:       ", ok(cfg.Providers.Zhipu.APIKey != ""))
+		fmt.Println("  Moonshot:    ", ok(cfg.Providers.Moonshot.APIKey != ""))
+		fmt.Println("  NVIDIA NIM:  ", ok(cfg.Providers.Nvidia.APIKey != ""))
 		if cfg.Providers.VLLM.APIBase != "" {
 			fmt.Printf("  vLLM/Local:   ✓ %s\n", cfg.Providers.VLLM.APIBase)
 		} else {
 			fmt.Println("  vLLM/Local:  ", ok(false))
+		}
+		if cfg.Providers.Ollama.APIBase != "" {
+			fmt.Printf("  Ollama:       ✓ %s\n", cfg.Providers.Ollama.APIBase)
+		} else {
+			fmt.Println("  Ollama:      ", ok(false))
+		}
+		if cfg.Providers.GitHubCopilot.APIBase != "" || cfg.Providers.GitHubCopilot.ConnectMode != "" {
+			connectMode := cfg.Providers.GitHubCopilot.ConnectMode
+			if connectMode == "" {
+				connectMode = "stdio"
+			}
+			target := cfg.Providers.GitHubCopilot.APIBase
+			if target == "" {
+				target = defaultGitHubCopilotTarget(connectMode)
+			}
+			fmt.Printf("  GitHub Copilot: ✓ %s via %s\n", connectMode, target)
+		} else {
+			fmt.Println("  GitHub Copilot:", ok(false))
 		}
 
 		fmt.Println()

@@ -13,13 +13,18 @@ import (
 )
 
 var supportedProviders = map[string]bool{
-	"anthropic":  true,
-	"openai":     true,
-	"openrouter": true,
-	"groq":       true,
-	"zhipu":      true,
-	"vllm":       true,
-	"gemini":     true,
+	"anthropic":      true,
+	"openai":         true,
+	"openrouter":     true,
+	"groq":           true,
+	"zhipu":          true,
+	"vllm":           true,
+	"gemini":         true,
+	"deepseek":       true,
+	"nvidia":         true,
+	"moonshot":       true,
+	"ollama":         true,
+	"github_copilot": true,
 }
 
 var supportedChannels = map[string]bool{
@@ -30,6 +35,9 @@ var supportedChannels = map[string]bool{
 	"qq":       true,
 	"dingtalk": true,
 	"maixcam":  true,
+	"slack":    true,
+	"line":     true,
+	"onebot":   true,
 }
 
 func findOpenClawConfig(openclawHome string) (string, error) {
@@ -120,6 +128,16 @@ func ConvertConfig(data map[string]interface{}, openClawHome, v1ClawHome string)
 				cfg.Providers.VLLM = pc
 			case "gemini":
 				cfg.Providers.Gemini = pc
+			case "deepseek":
+				cfg.Providers.DeepSeek = pc
+			case "nvidia":
+				cfg.Providers.Nvidia = pc
+			case "moonshot":
+				cfg.Providers.Moonshot = pc
+			case "ollama":
+				cfg.Providers.Ollama = pc
+			case "github_copilot":
+				cfg.Providers.GitHubCopilot = pc
 			}
 		}
 	}
@@ -188,6 +206,45 @@ func ConvertConfig(data map[string]interface{}, openClawHome, v1ClawHome string)
 				}
 				if v, ok := getString(cMap, "client_secret"); ok {
 					cfg.Channels.DingTalk.ClientSecret = v
+				}
+			case "slack":
+				cfg.Channels.Slack.Enabled = enabled
+				cfg.Channels.Slack.AllowFrom = allowFrom
+				if v, ok := getString(cMap, "bot_token"); ok {
+					cfg.Channels.Slack.BotToken = v
+				}
+				if v, ok := getString(cMap, "app_token"); ok {
+					cfg.Channels.Slack.AppToken = v
+				}
+			case "line":
+				cfg.Channels.LINE.Enabled = enabled
+				cfg.Channels.LINE.AllowFrom = allowFrom
+				if v, ok := getString(cMap, "channel_secret"); ok {
+					cfg.Channels.LINE.ChannelSecret = v
+				}
+				if v, ok := getString(cMap, "channel_access_token"); ok {
+					cfg.Channels.LINE.ChannelAccessToken = v
+				}
+				if v, ok := getString(cMap, "webhook_host"); ok {
+					cfg.Channels.LINE.WebhookHost = v
+				}
+				if v, ok := getFloat(cMap, "webhook_port"); ok {
+					cfg.Channels.LINE.WebhookPort = int(v)
+				}
+				if v, ok := getString(cMap, "webhook_path"); ok {
+					cfg.Channels.LINE.WebhookPath = v
+				}
+			case "onebot":
+				cfg.Channels.OneBot.Enabled = enabled
+				cfg.Channels.OneBot.AllowFrom = allowFrom
+				if v, ok := getString(cMap, "ws_url"); ok {
+					cfg.Channels.OneBot.WSUrl = v
+				}
+				if v, ok := getString(cMap, "access_token"); ok {
+					cfg.Channels.OneBot.AccessToken = v
+				}
+				if v, ok := getFloat(cMap, "reconnect_interval"); ok {
+					cfg.Channels.OneBot.ReconnectInterval = int(v)
 				}
 			case "maixcam":
 				cfg.Channels.MaixCam.Enabled = enabled
