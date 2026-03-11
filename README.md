@@ -150,6 +150,11 @@ Then run the 2-minute setup wizard:
 v1claw onboard
 ```
 
+`v1claw onboard` now starts with:
+- a security acknowledgement
+- `Quick Start` for the fastest path to a working assistant
+- `Manual` for workspace security, gateway, permissions, and channel setup
+
 Then verify the install:
 
 ```bash
@@ -352,6 +357,8 @@ Then run the setup wizard:
 v1claw onboard
 ```
 
+The wizard will offer `Quick Start` and `Manual` modes.
+
 Verify the install:
 
 ```bash
@@ -460,6 +467,8 @@ Then run the setup wizard:
 ```bash
 v1claw onboard
 ```
+
+The wizard will offer `Quick Start` and `Manual` modes.
 
 Verify the install:
 
@@ -581,6 +590,8 @@ Then run:
 ```powershell
 v1claw onboard
 ```
+
+The wizard will offer `Quick Start` and `Manual` modes.
 
 Then verify:
 
@@ -788,7 +799,7 @@ v1claw agent -m "query"     # One-shot query
 v1claw gateway              # Start 24/7 daemon
 v1claw client -s host[:port] # Connect to a remote gateway
 v1claw client -s https://gateway.example.com # HTTPS / reverse-proxy gateway
-v1claw configure            # Change settings interactively
+v1claw configure            # Guided tune-up or classic section editor
 v1claw auth login           # Authenticate
 v1claw auth status          # Check auth status
 v1claw status               # Show system status

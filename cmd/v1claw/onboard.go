@@ -65,42 +65,70 @@ func onboardCmd() {
 		onboardAuto(args)
 		return
 	}
-
-	printOnboardWelcome()
-
-	cfg := config.DefaultConfig()
-
-	// Load existing config if present, so re-running onboard doesn't wipe settings.
 	configPath := getConfigPath()
+	cfg := config.DefaultConfig()
+	hasExistingConfig := false
 	if _, err := os.Stat(configPath); err == nil {
 		if loaded, err := loadConfig(); err == nil {
 			cfg = loaded
+			hasExistingConfig = true
 		}
 	}
 
-	// Step 1 – Workspace
-	fmt.Println(stepStyle.Render("\n  Step 1 of 6 — Where should V1Claw store its files?"))
+	printOnboardWelcome()
+
+	if hasExistingConfig {
+		choice := onboardExistingConfigChoice(cfg, configPath)
+		if choice == "" {
+			return
+		}
+		if choice == configHandlingReset {
+			cfg = config.DefaultConfig()
+		}
+	}
+
+	if !onboardSecurityAcknowledgement() {
+		return
+	}
+
+	mode := onboardChooseMode()
+	if mode == "" {
+		return
+	}
+
+	target := onboardChooseTarget(cfg)
+	if target == "" {
+		return
+	}
+	applySetupTargetDefaults(cfg, target)
+
+	switch mode {
+	case onboardModeQuick:
+		runQuickStartOnboarding(cfg, configPath)
+	case onboardModeManual:
+		runManualOnboarding(cfg, configPath)
+	}
+}
+
+func runQuickStartOnboarding(cfg *config.Config, configPath string) {
+	fmt.Println(stepStyle.Render("\n  Step 1 of 4 — Workspace"))
 	if !onboardWorkspace(cfg) {
 		return
 	}
 
-	// Step 2 – Provider
-	fmt.Println(stepStyle.Render("\n  Step 2 of 6 — Choose your AI provider"))
+	fmt.Println(stepStyle.Render("\n  Step 2 of 4 — AI provider"))
 	providerID, providerURL := onboardProvider(cfg)
 	if providerID == "" {
 		return
 	}
 
-	// Step 3 – Provider access
-	fmt.Println(stepStyle.Render("\n  Step 3 of 6 — Configure provider access"))
+	fmt.Println(stepStyle.Render("\n  Step 3 of 4 — Provider access"))
 	if !onboardAPIKey(cfg, providerID, providerURL) {
 		return
 	}
-
 	if !onboardModel(cfg, providerID) {
 		return
 	}
-
 	if providerSupportsLiveValidation(providerID) {
 		fmt.Println(stepStyle.Render("\n  Checking provider connection…"))
 		if !onboardValidateProvider(cfg, providerID) {
@@ -108,20 +136,70 @@ func onboardCmd() {
 		}
 	}
 
-	// Step 4 – Identity (name the AI and yourself)
-	fmt.Println(stepStyle.Render("\n  Step 4 of 6 — Give your assistant a name"))
-	aiName, userName := onboardIdentity(cfg)
-
-	// Step 5 – Tools
-	fmt.Println(stepStyle.Render("\n  Step 5 of 6 — Enable web search (free, no key needed)"))
-	onboardTools(cfg)
-
-	// Step 6 – Save, seed workspace, and live test
-	fmt.Println(stepStyle.Render("\n  Step 6 of 6 — Saving and running a live test…"))
+	aiName, userName := defaultOnboardIdentity()
+	fmt.Println(stepStyle.Render("\n  Step 4 of 4 — Save and test"))
 	if !onboardSaveAndTest(cfg, configPath, aiName, userName) {
 		return
 	}
+	printOnboardSuccess(cfg, configPath, aiName)
+}
 
+func runManualOnboarding(cfg *config.Config, configPath string) {
+	fmt.Println(stepStyle.Render("\n  Step 1 of 8 — Workspace and file access"))
+	configureWorkspace(cfg)
+
+	fmt.Println(stepStyle.Render("\n  Step 2 of 8 — AI provider"))
+	providerID, providerURL := onboardProvider(cfg)
+	if providerID == "" {
+		return
+	}
+
+	fmt.Println(stepStyle.Render("\n  Step 3 of 8 — Provider access"))
+	if !onboardAPIKey(cfg, providerID, providerURL) {
+		return
+	}
+	if !onboardModel(cfg, providerID) {
+		return
+	}
+	if providerSupportsLiveValidation(providerID) {
+		fmt.Println(stepStyle.Render("\n  Checking provider connection…"))
+		if !onboardValidateProvider(cfg, providerID) {
+			return
+		}
+	}
+
+	fmt.Println(stepStyle.Render("\n  Step 4 of 8 — Identity"))
+	aiName, userName := onboardIdentity(cfg)
+
+	fmt.Println(stepStyle.Render("\n  Step 5 of 8 — Web tools"))
+	onboardTools(cfg)
+
+	fmt.Println(stepStyle.Render("\n  Step 6 of 8 — Permissions"))
+	configurePermissions(cfg)
+
+	fmt.Println(stepStyle.Render("\n  Step 7 of 8 — Gateway and multi-device access"))
+	configureGateway(cfg)
+
+	var configureChannelsNow bool
+	form := huh.NewForm(
+		huh.NewGroup(
+			huh.NewConfirm().
+				Title("Do you want to configure messaging channels now?").
+				Description("You can always do this later with v1claw configure.").
+				Affirmative("Yes").
+				Negative("Later").
+				Value(&configureChannelsNow),
+		),
+	)
+	if err := form.Run(); err == nil && configureChannelsNow {
+		fmt.Println(stepStyle.Render("\n  Step 8 of 8 — Channels"))
+		configureChannels(cfg)
+	}
+
+	fmt.Println(stepStyle.Render("\n  Saving and running a live test…"))
+	if !onboardSaveAndTest(cfg, configPath, aiName, userName) {
+		return
+	}
 	printOnboardSuccess(cfg, configPath, aiName)
 }
 
@@ -132,10 +210,12 @@ func printOnboardWelcome() {
  Welcome to V1Claw 🤖
 
  V1Claw is your personal AI assistant that runs on your own computer.
- It can:  search the web · read & write files · run commands
-         remember things · and talk to you in plain English
+ This wizard will get you to a working setup first, then you can tune
+ the details later with  v1claw configure.
 
- This wizard takes about 2 minutes.
+ Choose Quick Start for the fastest path.
+ Choose Manual if you want to review security, gateway, and permissions now.
+
  Press Ctrl+C at any time to quit.`
 
 	fmt.Println(boxStyle.Render(titleStyle.Render(welcome)))
@@ -191,7 +271,7 @@ func onboardWorkspace(cfg *config.Config) bool {
 		}
 	}
 
-	cfg.Workspace.Sandboxed = true
+	cfg.Agents.Defaults.Workspace = cfg.Workspace.Path
 	fmt.Printf("\n  %s Workspace: %s\n", successStyle.Render("✓"), cfg.Workspace.Path)
 	return true
 }
@@ -805,12 +885,16 @@ func onboardSaveAndTest(cfg *config.Config, configPath string, aiName string, us
 	}
 
 	// Seed workspace template files first, then write identity memory on top.
-	createWorkspaceTemplates(cfg.Workspace.Path)
-	if cfg.Workspace.Path != "" {
-		initMemory(cfg.Workspace.Path, aiName, "Your helpful personal AI assistant", userName, "")
+	workspacePath := cfg.WorkspacePath()
+	createWorkspaceTemplates(workspacePath)
+	if workspacePath != "" {
+		initMemory(workspacePath, aiName, "Your helpful personal AI assistant", userName, "")
 	}
 
 	fmt.Printf("  %s Config saved to: %s\n", successStyle.Render("✓"), configPath)
+	if cfg.V1API.Enabled {
+		fmt.Printf("  %s Remote API: %s  (key: %s)\n", successStyle.Render("✓"), cfg.V1API.Addr, maskKey(cfg.V1API.APIKey))
+	}
 
 	// Run live test.
 	fmt.Printf("\n  %s\n\n", titleStyle.Render("Sending a live test message to your AI…"))
@@ -909,6 +993,13 @@ func printOnboardSuccess(cfg *config.Config, configPath string, aiName string) {
 
 	fmt.Printf("  Config: %s\n", stepStyle.Render(configPath))
 	fmt.Printf("  Workspace: %s\n\n", stepStyle.Render(cfg.Workspace.Path))
+
+	if cfg.V1API.Enabled {
+		fmt.Printf("  Multi-device API: %s  (key: %s)\n",
+			stepStyle.Render(cfg.V1API.Addr), stepStyle.Render(maskKey(cfg.V1API.APIKey)))
+		fmt.Printf("  Example client: %s\n\n",
+			stepStyle.Render(fmt.Sprintf("v1claw client -s YOUR_GATEWAY_HOST%s -k %s", cfg.V1API.Addr, cfg.V1API.APIKey)))
+	}
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
