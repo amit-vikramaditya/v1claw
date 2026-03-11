@@ -43,6 +43,12 @@ func (c *BaseChannel) AddAllowedUser(senderID string) {
 	c.allowList = append(c.allowList, senderID)
 }
 
+func (c *BaseChannel) SetAllowedUsers(allowList []string) {
+	c.allowMu.Lock()
+	defer c.allowMu.Unlock()
+	c.allowList = append([]string(nil), allowList...)
+}
+
 func (c *BaseChannel) Name() string {
 	return c.name
 }

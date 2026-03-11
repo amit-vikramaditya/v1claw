@@ -1037,6 +1037,10 @@ func printOnboardSuccess(cfg *config.Config, configPath string, aiName string) {
 	if channels := enabledChannelNames(cfg); len(channels) > 0 {
 		fmt.Printf("  Channels configured: %s\n", stepStyle.Render(strings.Join(channels, ", ")))
 		fmt.Printf("  Keep them online with: %s\n\n", stepStyle.Render("v1claw gateway"))
+		if cfg.Channels.Telegram.Enabled && len(cfg.Channels.Telegram.AllowFrom) == 0 {
+			fmt.Printf("  Telegram first-use flow: user messages the bot, bot shows an OTP, then approve it with:\n")
+			fmt.Printf("    %s\n\n", stepStyle.Render("v1claw telegram pairing <otp>"))
+		}
 	}
 
 	if cfg.V1API.Enabled {

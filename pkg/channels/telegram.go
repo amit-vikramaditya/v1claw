@@ -2,9 +2,7 @@ package channels
 
 import (
 	"context"
-	"crypto/rand"
 	"fmt"
-	"math/big"
 	"net/http"
 	"net/url"
 	"os"
@@ -19,6 +17,7 @@ import (
 	"github.com/amit-vikramaditya/v1claw/pkg/bus"
 	"github.com/amit-vikramaditya/v1claw/pkg/config"
 	"github.com/amit-vikramaditya/v1claw/pkg/logger"
+	"github.com/amit-vikramaditya/v1claw/pkg/pairing"
 	"github.com/amit-vikramaditya/v1claw/pkg/utils"
 	"github.com/amit-vikramaditya/v1claw/pkg/voice"
 )
@@ -31,11 +30,10 @@ type TelegramChannel struct {
 	chatIDs      map[string]int64
 	chatIDsMu    sync.Mutex
 	transcriber  *voice.GroqTranscriber
-	placeholders sync.Map // chatID -> messageID
-	stopThinking sync.Map // chatID -> thinkingCancel
-	authOTP      string
-	authMu       sync.Mutex
+	placeholders sync.Map  // chatID -> messageID
+	stopThinking sync.Map  // chatID -> thinkingCancel
 	startedAt    time.Time // set at Start(); messages older than this are discarded
+	pairings     *pairing.TelegramStore
 }
 
 type thinkingCancel struct {
@@ -46,11 +44,6 @@ func (c *thinkingCancel) Cancel() {
 	if c != nil && c.fn != nil {
 		c.fn()
 	}
-}
-
-func generateOTP() string {
-	n, _ := rand.Int(rand.Reader, big.NewInt(1000000))
-	return fmt.Sprintf("%06d", n.Int64())
 }
 
 func NewTelegramChannel(cfg *config.Config, bus *bus.MessageBus) (*TelegramChannel, error) {
@@ -77,11 +70,6 @@ func NewTelegramChannel(cfg *config.Config, bus *bus.MessageBus) (*TelegramChann
 
 	base := NewBaseChannel("telegram", telegramCfg, bus, telegramCfg.AllowFrom)
 
-	otp := ""
-	if len(telegramCfg.AllowFrom) == 0 {
-		otp = generateOTP()
-	}
-
 	return &TelegramChannel{
 		BaseChannel:  base,
 		commands:     NewTelegramCommands(bot, cfg),
@@ -91,12 +79,25 @@ func NewTelegramChannel(cfg *config.Config, bus *bus.MessageBus) (*TelegramChann
 		transcriber:  nil,
 		placeholders: sync.Map{},
 		stopThinking: sync.Map{},
-		authOTP:      otp,
+		pairings:     pairing.NewTelegramStore(),
 	}, nil
 }
 
 func (c *TelegramChannel) SetTranscriber(transcriber *voice.GroqTranscriber) {
 	c.transcriber = transcriber
+}
+
+func (c *TelegramChannel) syncAllowListFromConfig() {
+	loaded, err := config.LoadConfig(config.ConfigPath())
+	if err != nil {
+		return
+	}
+	c.config.Channels.Telegram.AllowFrom = loaded.Channels.Telegram.AllowFrom
+	c.SetAllowedUsers([]string(loaded.Channels.Telegram.AllowFrom))
+}
+
+func (c *TelegramChannel) hasAuthorizedUsers() bool {
+	return len(c.config.Channels.Telegram.AllowFrom) > 0
 }
 
 func (c *TelegramChannel) Start(ctx context.Context) error {
@@ -120,12 +121,14 @@ func (c *TelegramChannel) Start(ctx context.Context) error {
 		"username": "(profile lookup skipped at startup)",
 	})
 
-	if c.authOTP != "" {
+	if !c.hasAuthorizedUsers() {
 		fmt.Printf("\n=======================================================\n")
 		fmt.Printf("🔒 TELEGRAM BOT SECURITY: ACTION REQUIRED 🔒\n")
-		fmt.Printf("Your bot is running, but no users are authorized.\n")
-		fmt.Printf("Open Telegram, find your bot, and send this OTP:\n")
-		fmt.Printf("OTP PIN: %s\n", c.authOTP)
+		fmt.Printf("Your bot is running, but no users are authorized yet.\n")
+		fmt.Printf("Have the user send any message to the bot.\n")
+		fmt.Printf("The bot will reply with a 6-digit OTP.\n")
+		fmt.Printf("Approve it from this terminal with:\n")
+		fmt.Printf("  v1claw telegram pairing <otp>\n")
 		fmt.Printf("=======================================================\n\n")
 	}
 
@@ -168,18 +171,10 @@ func (c *TelegramChannel) dispatchUpdateMessage(ctx context.Context, message *te
 		}
 		return c.commands.Help(ctx, *message)
 	case "start":
-		c.authMu.Lock()
-		otpHint := c.authOTP
-		c.authMu.Unlock()
-		if otpHint != "" {
-			_, err := c.bot.SendMessage(ctx, tu.Message(telego.ChatID{ID: message.Chat.ID},
-				"🔒 This bot is not yet paired. Enter the 6-digit OTP shown on the server console to link your account."))
-			return err
+		if c.isAuthorized(message) {
+			return c.commands.Start(ctx, *message)
 		}
-		if !c.isAuthorized(message) {
-			return nil
-		}
-		return c.commands.Start(ctx, *message)
+		return c.handleMessage(ctx, message)
 	case "show":
 		if !c.isAuthorized(message) {
 			return nil
@@ -261,10 +256,8 @@ func (c *TelegramChannel) Send(ctx context.Context, msg bus.OutboundMessage) err
 }
 
 // isAuthorized checks whether a Telegram message should be processed.
-// It handles three cases:
-//  1. Message is stale (sent before gateway started) — always discard.
-//  2. OTP pairing is in progress — only accept the exact OTP code.
-//  3. allow_from list is configured — check membership.
+// If no users are paired yet, normal messages are not authorized and must go
+// through the pairing request flow in handleMessage.
 func (c *TelegramChannel) isAuthorized(message *telego.Message) bool {
 	if message == nil {
 		return false
@@ -289,12 +282,8 @@ func (c *TelegramChannel) isAuthorized(message *telego.Message) bool {
 		senderID = fmt.Sprintf("%d|%s", user.ID, user.Username)
 	}
 
-	// During OTP pairing, no message is "authorized" for normal handling —
-	// the OTP handler in handleMessage takes care of the pairing flow.
-	c.authMu.Lock()
-	otpActive := c.authOTP != ""
-	c.authMu.Unlock()
-	if otpActive {
+	c.syncAllowListFromConfig()
+	if !c.hasAuthorizedUsers() {
 		return false
 	}
 
@@ -326,35 +315,28 @@ func (c *TelegramChannel) handleMessage(ctx context.Context, message *telego.Mes
 		senderID = fmt.Sprintf("%d|%s", user.ID, user.Username)
 	}
 
-	// OTP pairing: if no users are authorized yet, only accept the correct OTP.
-	c.authMu.Lock()
-	if c.authOTP != "" {
-		text := strings.TrimSpace(message.Text)
-		if text == c.authOTP {
-			// Pairing success — clear OTP, persist, and grant access.
-			c.authOTP = ""
-			c.authMu.Unlock()
-
-			c.config.Channels.Telegram.AllowFrom = append(c.config.Channels.Telegram.AllowFrom, senderID)
-			c.AddAllowedUser(senderID)
-
-			configPath := config.ConfigPath()
-			if err := config.SaveConfig(configPath, c.config); err != nil {
-				logger.ErrorCF("telegram", "Failed to save config after OTP auth", map[string]interface{}{"error": err.Error()})
-			}
-
-			c.bot.SendMessage(ctx, tu.Message(telego.ChatID{ID: message.Chat.ID},
-				"✅ Paired successfully! This bot is now bound exclusively to your account. Only you can send it messages."))
+	c.syncAllowListFromConfig()
+	if !c.hasAuthorizedUsers() {
+		req, err := c.pairings.CreateOrReuse(senderID, fmt.Sprintf("%d", message.Chat.ID), user.Username, user.FirstName)
+		if err != nil {
+			logger.ErrorCF("telegram", "Failed to create pairing request", map[string]interface{}{
+				"user_id": senderID,
+				"error":   err.Error(),
+			})
+			_, _ = c.bot.SendMessage(ctx, tu.Message(telego.ChatID{ID: message.Chat.ID},
+				"🔒 This bot is not paired yet. Pairing request failed on the server; try again in a moment."))
 			return nil
 		}
 
-		c.authMu.Unlock()
-		logger.DebugCF("telegram", "Wrong OTP attempt during pairing", map[string]interface{}{"user_id": user.ID})
-		c.bot.SendMessage(ctx, tu.Message(telego.ChatID{ID: message.Chat.ID},
-			"🔒 Not paired. Enter the 6-digit OTP shown on the server console to link your account."))
+		reply := fmt.Sprintf(
+			"🔒 Pairing required.\n\nYour OTP is: %s\n\nAsk the terminal owner to approve it with:\n`v1claw telegram pairing %s`",
+			req.OTP, req.OTP,
+		)
+		if _, err := c.bot.SendMessage(ctx, tu.Message(telego.ChatID{ID: message.Chat.ID}, reply)); err != nil {
+			return err
+		}
 		return nil
 	}
-	c.authMu.Unlock()
 
 	// Enforce allow_from list.
 	if !c.IsAllowed(senderID) {
