@@ -145,16 +145,16 @@ func runQuickStartOnboarding(cfg *config.Config, configPath string) {
 }
 
 func runManualOnboarding(cfg *config.Config, configPath string) {
-	fmt.Println(stepStyle.Render("\n  Step 1 of 8 — Workspace and file access"))
+	fmt.Println(stepStyle.Render("\n  Step 1 of 9 — Workspace and file access"))
 	configureWorkspace(cfg)
 
-	fmt.Println(stepStyle.Render("\n  Step 2 of 8 — AI provider"))
+	fmt.Println(stepStyle.Render("\n  Step 2 of 9 — AI provider"))
 	providerID, providerURL := onboardProvider(cfg)
 	if providerID == "" {
 		return
 	}
 
-	fmt.Println(stepStyle.Render("\n  Step 3 of 8 — Provider access"))
+	fmt.Println(stepStyle.Render("\n  Step 3 of 9 — Provider access"))
 	if !onboardAPIKey(cfg, providerID, providerURL) {
 		return
 	}
@@ -168,16 +168,19 @@ func runManualOnboarding(cfg *config.Config, configPath string) {
 		}
 	}
 
-	fmt.Println(stepStyle.Render("\n  Step 4 of 8 — Identity"))
+	fmt.Println(stepStyle.Render("\n  Step 4 of 9 — High availability"))
+	onboardCouncil(cfg)
+
+	fmt.Println(stepStyle.Render("\n  Step 5 of 9 — Identity"))
 	aiName, userName := onboardIdentity(cfg)
 
-	fmt.Println(stepStyle.Render("\n  Step 5 of 8 — Web tools"))
+	fmt.Println(stepStyle.Render("\n  Step 6 of 9 — Web tools"))
 	onboardTools(cfg)
 
-	fmt.Println(stepStyle.Render("\n  Step 6 of 8 — Permissions"))
+	fmt.Println(stepStyle.Render("\n  Step 7 of 9 — Permissions"))
 	configurePermissions(cfg)
 
-	fmt.Println(stepStyle.Render("\n  Step 7 of 8 — Gateway and multi-device access"))
+	fmt.Println(stepStyle.Render("\n  Step 8 of 9 — Gateway and multi-device access"))
 	configureGateway(cfg)
 
 	var configureChannelsNow bool
@@ -192,7 +195,7 @@ func runManualOnboarding(cfg *config.Config, configPath string) {
 		),
 	)
 	if err := form.Run(); err == nil && configureChannelsNow {
-		fmt.Println(stepStyle.Render("\n  Step 8 of 8 — Channels"))
+		fmt.Println(stepStyle.Render("\n  Step 9 of 9 — Channels"))
 		configureChannels(cfg)
 	}
 
@@ -201,6 +204,34 @@ func runManualOnboarding(cfg *config.Config, configPath string) {
 		return
 	}
 	printOnboardSuccess(cfg, configPath, aiName)
+}
+
+func onboardCouncil(cfg *config.Config) {
+	var enableCouncil bool
+	form := huh.NewForm(
+		huh.NewGroup(
+			huh.NewConfirm().
+				Title("Enable High Availability (The Council)?").
+				Description("Automatically fail over to a fallback model if the primary provider becomes unavailable.").
+				Affirmative("Yes").
+				Negative("No").
+				Value(&enableCouncil),
+		),
+	)
+	if err := form.Run(); err != nil {
+		fmt.Println("Setup cancelled.")
+		return
+	}
+	if enableCouncil {
+		configureCouncil(cfg)
+		return
+	}
+	cfg.Council.Enabled = false
+	cfg.Council.Persona = ""
+	cfg.Council.Primary = ""
+	cfg.Council.PrimaryModel = ""
+	cfg.Council.Fallback = ""
+	cfg.Council.FallbackModel = ""
 }
 
 // ─── Welcome screen ───────────────────────────────────────────────────────────
@@ -993,6 +1024,20 @@ func printOnboardSuccess(cfg *config.Config, configPath string, aiName string) {
 
 	fmt.Printf("  Config: %s\n", stepStyle.Render(configPath))
 	fmt.Printf("  Workspace: %s\n\n", stepStyle.Render(cfg.Workspace.Path))
+
+	if workers := config.DiscoverLocalCLIs(); len(workers) > 0 {
+		names := make([]string, 0, len(workers))
+		for _, worker := range workers {
+			names = append(names, worker.DisplayName)
+		}
+		fmt.Printf("  Local AI workers detected: %s\n", stepStyle.Render(strings.Join(names, ", ")))
+		fmt.Printf("  These are auto-available for delegated/subagent tasks while V1Claw is running.\n\n")
+	}
+
+	if channels := enabledChannelNames(cfg); len(channels) > 0 {
+		fmt.Printf("  Channels configured: %s\n", stepStyle.Render(strings.Join(channels, ", ")))
+		fmt.Printf("  Keep them online with: %s\n\n", stepStyle.Render("v1claw gateway"))
+	}
 
 	if cfg.V1API.Enabled {
 		fmt.Printf("  Multi-device API: %s  (key: %s)\n",
