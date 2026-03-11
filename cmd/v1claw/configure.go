@@ -41,31 +41,16 @@ func printLogo() {
 }
 
 func printCurrentState(cfg *config.Config) {
-	workspace := cfg.WorkspacePath()
-	if workspace == "" {
-		workspace = redStyle.Render("Not Set")
+	lines := setupSummaryLines(cfg)
+	var body strings.Builder
+	body.WriteString("┌  Current System State\n│\n")
+	for _, line := range lines {
+		body.WriteString("│  ")
+		body.WriteString(line)
+		body.WriteByte('\n')
 	}
-
-	security := greenStyle.Render("Locked (Safe)")
-	if !cfg.Workspace.Sandboxed {
-		security = redStyle.Render("Unlocked (Danger)")
-	}
-
-	brain := cyanStyle.Render(cfg.Agents.Defaults.Model)
-	if brain == "" {
-		brain = redStyle.Render("Not Configured")
-	}
-
-	channels := "None"
-	activeChannels := enabledChannelNames(cfg)
-	if len(activeChannels) > 0 {
-		channels = strings.Join(activeChannels, ", ")
-	}
-
-	stateContent := fmt.Sprintf("┌  Current System State\n│\n│  Home: %s\n│  Security: %s\n│  Brain: %s\n│  Channels: %s\n└",
-		workspace, security, brain, channels)
-
-	fmt.Println(borderStyle.Render(stateContent))
+	body.WriteString("└")
+	fmt.Println(borderStyle.Render(body.String()))
 }
 
 type providerInfo struct {
@@ -165,9 +150,119 @@ func configureCmd() {
 		}
 	}
 
+	printLogo()
+	printSetupSummaryBox("Existing config", append([]string{"config: " + configPath}, setupSummaryLines(cfg)...))
+	printSetupWarningsBox(collectSetupWarnings(cfg))
+
+	var mode string
+	form := huh.NewForm(
+		huh.NewGroup(
+			huh.NewSelect[string]().
+				Title("Configure mode").
+				Options(
+					huh.NewOption("Guided tune-up  "+grayStyle.Render("(recommended)"), "guided"),
+					huh.NewOption("Classic editor", "classic"),
+					huh.NewOption("Health check only", "doctor"),
+				).
+				Value(&mode),
+		),
+	)
+
+	if err := form.Run(); err != nil {
+		fmt.Println("Configuration cancelled.")
+		return
+	}
+
+	switch mode {
+	case "guided":
+		runGuidedConfigure(cfg, configPath)
+		return
+	case "doctor":
+		runDoctor()
+		return
+	case "classic":
+		runClassicConfigureLoop(cfg, configPath)
+		return
+	}
+}
+
+func runGuidedConfigure(cfg *config.Config, configPath string) {
+	printCurrentState(cfg)
+	printSetupWarningsBox(collectSetupWarnings(cfg))
+
+	var sections []string
+	form := huh.NewForm(
+		huh.NewGroup(
+			huh.NewMultiSelect[string]().
+				Title("Select sections to configure").
+				Description("Choose one or more areas, then V1Claw will walk you through them in order.").
+				Options(
+					huh.NewOption("Workspace & security", "workspace"),
+					huh.NewOption("Brain (provider & model)", "models"),
+					huh.NewOption("Tools", "tools"),
+					huh.NewOption("Permissions", "permissions"),
+					huh.NewOption("Gateway & multi-device API", "gateway"),
+					huh.NewOption("Channels", "channels"),
+					huh.NewOption("Identity", "identity"),
+				).
+				Value(&sections),
+		),
+	)
+
+	if err := form.Run(); err != nil {
+		fmt.Println("Configuration cancelled.")
+		return
+	}
+
+	if len(sections) == 0 {
+		fmt.Println("No sections selected.")
+		return
+	}
+
+	for _, section := range sections {
+		switch section {
+		case "workspace":
+			configureWorkspace(cfg)
+		case "models":
+			configureModels(cfg)
+		case "tools":
+			configureTools(cfg)
+		case "permissions":
+			configurePermissions(cfg)
+		case "gateway":
+			configureGateway(cfg)
+		case "channels":
+			configureChannels(cfg)
+		case "identity":
+			configureIdentity(cfg)
+		}
+	}
+
+	if !saveConfiguredState(cfg, configPath) {
+		return
+	}
+
+	runHealthCheck := true
+	healthForm := huh.NewForm(
+		huh.NewGroup(
+			huh.NewConfirm().
+				Title("Run v1claw doctor now?").
+				Description("Recommended after any setup or security change.").
+				Affirmative("Yes").
+				Negative("No").
+				Value(&runHealthCheck),
+		),
+	)
+	if err := healthForm.Run(); err == nil && runHealthCheck {
+		runDoctor()
+	}
+}
+
+func runClassicConfigureLoop(cfg *config.Config, configPath string) {
 	for {
 		printLogo()
 		printCurrentState(cfg)
+		printSetupWarningsBox(collectSetupWarnings(cfg))
 
 		var choice string
 		form := huh.NewForm(
@@ -177,10 +272,12 @@ func configureCmd() {
 					Options(
 						huh.NewOption("🏠 The Home — "+grayStyle.Render("Workspace & Security"), "workspace"),
 						huh.NewOption("🧠 The Brain — "+grayStyle.Render("Providers & Council"), "models"),
-						huh.NewOption("🧰 Tools — "+grayStyle.Render("Skills & Search"), "tools"),
+						huh.NewOption("🧰 Tools — "+grayStyle.Render("Web Search & Background Tasks"), "tools"),
 						huh.NewOption("🔐 Permissions — "+grayStyle.Render("Camera, mic, screen, notifications"), "permissions"),
+						huh.NewOption("🌐 Gateway — "+grayStyle.Render("Local vs multi-device API"), "gateway"),
 						huh.NewOption("📡 Channels — "+grayStyle.Render("Telegram, Slack, WhatsApp, LINE, and more"), "channels"),
 						huh.NewOption("🧬 Identity — "+grayStyle.Render("Soul & User"), "identity"),
+						huh.NewOption("🩺 Health check", "health"),
 						huh.NewOption("💾 Save & Exit", "save"),
 					).
 					Value(&choice),
@@ -202,18 +299,16 @@ func configureCmd() {
 			configureTools(cfg)
 		case "permissions":
 			configurePermissions(cfg)
+		case "gateway":
+			configureGateway(cfg)
 		case "channels":
 			configureChannels(cfg)
 		case "identity":
 			configureIdentity(cfg)
+		case "health":
+			runDoctor()
 		case "save":
-			if err := config.SaveConfig(configPath, cfg); err != nil {
-				fmt.Printf("❌ Error saving config: %v\n", redStyle.Render(err.Error()))
-			} else {
-				createWorkspaceTemplates(cfg.WorkspacePath())
-				fmt.Println(greenStyle.Bold(true).Render("\n✓ Configuration saved securely to: ") + configPath)
-				fmt.Println(grayStyle.Render("⚠️  IMPORTANT: You MUST restart any running v1claw gateway for changes to take effect."))
-			}
+			saveConfiguredState(cfg, configPath)
 			return
 		}
 	}
@@ -628,66 +723,71 @@ func configureModels(cfg *config.Config) {
 }
 
 func configureTools(cfg *config.Config) {
-	fmt.Println(headerStyle.Render("┌  Tools & Autonomous Skills"))
+	fmt.Println(headerStyle.Render("┌  Tools (Web Search & Background Tasks)"))
 
-	var selectedTools []string
+	selectedTools := enabledWebToolIDs(cfg)
 	huh.NewForm(
 		huh.NewGroup(
 			huh.NewMultiSelect[string]().
-				Title("Select tools to equip").
-				Description("Give your AI abilities to interact with the world.").
+				Title("Select web search providers").
+				Description("Only real, configurable search providers are shown here.").
 				Options(
-					huh.NewOption("DuckDuckGo — "+grayStyle.Render("Free web search, no key required"), "ddg"),
-					huh.NewOption("Perplexity — "+grayStyle.Render("AI-powered search, requires API key"), "perplexity"),
-					huh.NewOption("Academic — "+grayStyle.Render("Search peer-reviewed papers (Consensus)"), "academic"),
-					huh.NewOption("Terminal — "+grayStyle.Render("Allow AI to run bash commands"), "shell"),
-					huh.NewOption("File System — "+grayStyle.Render("Allow AI to read and write files"), "fs"),
+					huh.NewOption("DuckDuckGo — "+grayStyle.Render("Free, no key required"), "duckduckgo"),
+					huh.NewOption("Brave Search — "+grayStyle.Render("Requires Brave API key"), "brave"),
+					huh.NewOption("Perplexity — "+grayStyle.Render("Requires Perplexity API key"), "perplexity"),
 				).
 				Value(&selectedTools),
 		),
 	).Run()
 
-	// Map tools to config
-	for _, t := range selectedTools {
-		switch t {
-		case "ddg":
+	cfg.Tools.Web.DuckDuckGo.Enabled = false
+	cfg.Tools.Web.Brave.Enabled = false
+	cfg.Tools.Web.Perplexity.Enabled = false
+
+	for _, toolID := range selectedTools {
+		switch toolID {
+		case "duckduckgo":
 			cfg.Tools.Web.DuckDuckGo.Enabled = true
+		case "brave":
+			cfg.Tools.Web.Brave.Enabled = true
+			promptSecretInput("Brave API Key", "Get one from https://api.search.brave.com/", &cfg.Tools.Web.Brave.APIKey)
 		case "perplexity":
 			cfg.Tools.Web.Perplexity.Enabled = true
-		case "shell":
-			cfg.Permissions.ShellHardware = true
+			promptSecretInput("Perplexity API Key", "Get one from https://www.perplexity.ai/settings/api", &cfg.Tools.Web.Perplexity.APIKey)
 		}
 	}
 
-	var enableCron bool
+	enableHeartbeat := cfg.Heartbeat.Enabled
 	huh.NewForm(
 		huh.NewGroup(
 			huh.NewConfirm().
-				Title("Enable Autonomous Background Thinking?").
-				Description("The AI will wake up on a schedule to research topics on its own.").
-				Value(&enableCron),
+				Title("Enable periodic background health checks?").
+				Description("This controls the built-in heartbeat loop.").
+				Value(&enableHeartbeat),
 		),
 	).Run()
 
-	if enableCron {
-		var schedule string
-		huh.NewForm(
-			huh.NewGroup(
-				huh.NewSelect[string]().
-					Title("Background Schedule").
-					Options(
-						huh.NewOption("Every 12 hours (Morning & Evening)", "720"),
-						huh.NewOption("Every 1 hour", "60"),
-					).
-					Value(&schedule),
-			),
-		).Run()
-		cfg.Heartbeat.Enabled = true
-		switch schedule {
-		case "60":
-			cfg.Heartbeat.Interval = 60
-		default:
-			cfg.Heartbeat.Interval = 720
+	cfg.Heartbeat.Enabled = enableHeartbeat
+	if !enableHeartbeat {
+		return
+	}
+
+	interval := fmt.Sprintf("%d", cfg.Heartbeat.Interval)
+	if strings.TrimSpace(interval) == "" || interval == "0" {
+		interval = "30"
+	}
+	huh.NewForm(
+		huh.NewGroup(
+			huh.NewInput().
+				Title("Heartbeat interval (minutes)").
+				Description("Recommended: 30 or 60.").
+				Value(&interval),
+		),
+	).Run()
+
+	if parsed := strings.TrimSpace(interval); parsed != "" {
+		if intValue, err := strconv.Atoi(parsed); err == nil && intValue > 0 {
+			cfg.Heartbeat.Interval = intValue
 		}
 	}
 }
@@ -751,6 +851,78 @@ func configurePermissions(cfg *config.Config) {
 		case "shell_hardware":
 			cfg.Permissions.ShellHardware = true
 		}
+	}
+}
+
+func configureGateway(cfg *config.Config) {
+	fmt.Println(headerStyle.Render("┌  Gateway & Multi-Device Access"))
+
+	modeChoice := "local"
+	switch defaultSetupTarget(cfg) {
+	case setupTargetGateway:
+		modeChoice = "gateway"
+	}
+
+	huh.NewForm(
+		huh.NewGroup(
+			huh.NewSelect[string]().
+				Title("Where will V1Claw accept connections?").
+				Options(
+					huh.NewOption("Local only — this machine only", "local"),
+					huh.NewOption("Gateway — this machine plus phones/laptops", "gateway"),
+					huh.NewOption("Custom", "custom"),
+				).
+				Value(&modeChoice),
+		),
+	).Run()
+
+	switch modeChoice {
+	case "local":
+		applySetupTargetDefaults(cfg, setupTargetLocal)
+		return
+	case "gateway":
+		applySetupTargetDefaults(cfg, setupTargetGateway)
+		promptChannelInput("Gateway bind host", "Use 0.0.0.0 for LAN/Tailscale access", &cfg.Gateway.Host)
+		promptChannelInt("Gateway port", "HTTP and health server port", &cfg.Gateway.Port)
+		promptChannelInput("V1 API address", "Remote client API listener, e.g. :18791", &cfg.V1API.Addr)
+
+		var rotateAPIKey bool
+		huh.NewForm(
+			huh.NewGroup(
+				huh.NewConfirm().
+					Title("Rotate the remote API key now?").
+					Description("Recommended if you are exposing a new gateway.").
+					Value(&rotateAPIKey),
+			),
+		).Run()
+		if rotateAPIKey || strings.TrimSpace(cfg.V1API.APIKey) == "" {
+			cfg.V1API.APIKey = generateSetupAPIKey()
+		}
+		fmt.Printf("  %s Remote API key: %s\n", successStyle.Render("✓"), maskKey(cfg.V1API.APIKey))
+	case "custom":
+		promptChannelInput("Gateway bind host", "Examples: 127.0.0.1, 0.0.0.0, gateway.local", &cfg.Gateway.Host)
+		promptChannelInt("Gateway port", "HTTP and health server port", &cfg.Gateway.Port)
+
+		apiEnabled := cfg.V1API.Enabled
+		huh.NewForm(
+			huh.NewGroup(
+				huh.NewConfirm().
+					Title("Enable the remote V1 API?").
+					Description("Required for v1claw client and other devices.").
+					Value(&apiEnabled),
+			),
+		).Run()
+		cfg.V1API.Enabled = apiEnabled
+		if !cfg.V1API.Enabled {
+			return
+		}
+
+		promptChannelInput("V1 API address", "Example: :18791", &cfg.V1API.Addr)
+		promptChannelInput("V1 API key", "Leave empty to auto-generate one", &cfg.V1API.APIKey)
+		if strings.TrimSpace(cfg.V1API.APIKey) == "" {
+			cfg.V1API.APIKey = generateSetupAPIKey()
+		}
+		fmt.Printf("  %s Remote API key: %s\n", successStyle.Render("✓"), maskKey(cfg.V1API.APIKey))
 	}
 }
 
@@ -925,12 +1097,49 @@ func enabledPermissionIDs(cfg *config.Config) []string {
 	return enabled
 }
 
+func enabledWebToolIDs(cfg *config.Config) []string {
+	var enabled []string
+	if cfg.Tools.Web.DuckDuckGo.Enabled {
+		enabled = append(enabled, "duckduckgo")
+	}
+	if cfg.Tools.Web.Brave.Enabled {
+		enabled = append(enabled, "brave")
+	}
+	if cfg.Tools.Web.Perplexity.Enabled {
+		enabled = append(enabled, "perplexity")
+	}
+	return enabled
+}
+
+func saveConfiguredState(cfg *config.Config, configPath string) bool {
+	if err := config.SaveConfig(configPath, cfg); err != nil {
+		fmt.Printf("❌ Error saving config: %v\n", redStyle.Render(err.Error()))
+		return false
+	}
+	createWorkspaceTemplates(cfg.WorkspacePath())
+	fmt.Println(greenStyle.Bold(true).Render("\n✓ Configuration saved securely to: ") + configPath)
+	fmt.Println(grayStyle.Render("⚠️  IMPORTANT: You MUST restart any running v1claw gateway for changes to take effect."))
+	return true
+}
+
 func promptChannelInput(title string, description string, value *string) {
 	huh.NewForm(
 		huh.NewGroup(
 			huh.NewInput().
 				Title(title).
 				Description(description).
+				Value(value),
+		),
+	).Run()
+}
+
+func promptSecretInput(title string, description string, value *string) {
+	huh.NewForm(
+		huh.NewGroup(
+			huh.NewInput().
+				Title(title).
+				Description(description).
+				EchoMode(huh.EchoModePassword).
 				Value(value),
 		),
 	).Run()
