@@ -47,6 +47,26 @@ function Get-LatestReleaseVersion {
     }
 }
 
+function Get-RequiredGoVersion {
+    param([string]$TempDir)
+
+    if ((Test-Path '.\go.mod') -and (Test-Path '.\cmd\v1claw')) {
+        $match = Select-String -Path '.\go.mod' -Pattern '^go\s+([0-9.]+)' | Select-Object -First 1
+        if ($match -and $match.Matches.Count -gt 0) {
+            return [string]$match.Matches[0].Groups[1].Value
+        }
+    }
+
+    $goModPath = Join-Path $TempDir 'go.mod'
+    Download-File -Url "https://raw.githubusercontent.com/$Repo/main/go.mod" -OutFile $goModPath
+    $remoteMatch = Select-String -Path $goModPath -Pattern '^go\s+([0-9.]+)' | Select-Object -First 1
+    if ($remoteMatch -and $remoteMatch.Matches.Count -gt 0) {
+        return [string]$remoteMatch.Matches[0].Groups[1].Value
+    }
+
+    Fail 'Could not determine the Go version required to build V1Claw.'
+}
+
 function Get-ArchiveArch {
     $arch = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString().ToLowerInvariant()
     switch ($arch) {
@@ -54,6 +74,43 @@ function Get-ArchiveArch {
         'arm64' { return 'arm64' }
         default { Fail "Unsupported Windows architecture: $arch. Download a release manually from https://github.com/$Repo/releases" }
     }
+}
+
+function Ensure-GoCommand {
+    param(
+        [string]$TempDir,
+        [string]$ArchiveArch
+    )
+
+    $goCmd = Get-Command go -ErrorAction SilentlyContinue
+    if ($goCmd) {
+        return [string]$goCmd.Source
+    }
+
+    $goVersion = Get-RequiredGoVersion -TempDir $TempDir
+    switch ($ArchiveArch) {
+        'x86_64' { $goArch = 'amd64' }
+        'arm64' { $goArch = 'arm64' }
+        default { Fail "Automatic Go bootstrap is not supported on architecture $ArchiveArch." }
+    }
+
+    $archive = "go${goVersion}.windows-${goArch}.zip"
+    $url = "https://dl.google.com/go/$archive"
+    $archivePath = Join-Path $TempDir $archive
+    $extractDir = Join-Path $TempDir 'go-toolchain'
+
+    Write-Info "Downloading temporary Go toolchain ($goVersion)..."
+    Download-File -Url $url -OutFile $archivePath
+
+    Write-Info 'Extracting temporary Go toolchain...'
+    Expand-Archive -Path $archivePath -DestinationPath $extractDir -Force
+
+    $goExe = Join-Path $extractDir 'go\bin\go.exe'
+    if (-not (Test-Path $goExe)) {
+        Fail "Temporary Go toolchain was extracted, but '$goExe' was not found."
+    }
+
+    return [string]$goExe
 }
 
 function Ensure-InstallDir {
@@ -161,17 +218,13 @@ if ($forceSource) {
 } elseif (-not $Version) {
     $InstallMode = 'source'
     Write-Warn "No published GitHub release was found for $Repo."
-    $goCmd = Get-Command go -ErrorAction SilentlyContinue
-    if (-not $goCmd) {
-        Fail 'No release is available and Go is not installed. Install Go or publish a release first.'
+    if (Get-Command go -ErrorAction SilentlyContinue) {
+        Write-Warn 'Falling back to a source build because Go is installed.'
+    } else {
+        Write-Warn 'Falling back to a source build and temporary Go bootstrap because Go is not installed.'
     }
-    Write-Warn 'Falling back to a source build because Go is installed.'
 } else {
     Write-Ok "Version: $Version"
-}
-
-if ($InstallMode -eq 'source' -and -not (Get-Command go -ErrorAction SilentlyContinue)) {
-    Fail "Source installation requires Go, but 'go' was not found in PATH."
 }
 
 $installDirExplicit = [bool]($InstallDir -or $env:INSTALL_DIR)
@@ -183,6 +236,11 @@ New-Item -ItemType Directory -Force -Path $tempDir | Out-Null
 
 try {
     $binaryPath = Join-Path $tempDir $Binary
+    $goSource = $null
+
+    if ($InstallMode -eq 'source') {
+        $goSource = Ensure-GoCommand -TempDir $tempDir -ArchiveArch $ArchiveArch
+    }
 
     if ($InstallMode -eq 'release') {
         $archive = "v1claw_Windows_${ArchiveArch}.zip"
@@ -199,13 +257,12 @@ try {
             Fail "Binary '$Binary' was not found in the release archive."
         }
     } else {
-        $goCmd = Get-Command go -ErrorAction Stop
         $sourceInfo = Get-SourceDir -TempDir $tempDir
 
-        Write-Info "Building from source with $(& $goCmd.Source version)..."
+        Write-Info "Building from source with $(& $goSource version)..."
         Push-Location $sourceInfo.Path
         try {
-            & $goCmd.Source build -o $binaryPath ./cmd/v1claw
+            & $goSource build -o $binaryPath ./cmd/v1claw
         } finally {
             Pop-Location
         }

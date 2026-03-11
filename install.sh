@@ -47,6 +47,53 @@ fetch_latest_release_version() {
   fi
 }
 
+fetch_required_go_version() {
+  local tempdir="${1:-}"
+  if [ -f "./go.mod" ] && [ -d "./cmd/$BINARY" ]; then
+    awk '/^go / {print $2; exit}' "./go.mod"
+    return 0
+  fi
+
+  local gomod_path="$tempdir/go.mod"
+  download_to "https://raw.githubusercontent.com/$REPO/main/go.mod" "$gomod_path" || return 1
+  awk '/^go / {print $2; exit}' "$gomod_path"
+}
+
+bootstrap_go_toolchain() {
+  local tempdir="$1"
+  local bootstrap_goos bootstrap_arch goversion archive url go_bin
+
+  goversion="$(fetch_required_go_version "$tempdir" || true)"
+  [ -n "$goversion" ] || fail "Could not determine the Go version required to build V1Claw."
+
+  case "$OS" in
+    Darwin) bootstrap_goos="darwin" ;;
+    Linux)  bootstrap_goos="linux" ;;
+    *)      fail "Automatic Go bootstrap is not supported on $OS." ;;
+  esac
+
+  case "$ARCH" in
+    x86_64)        bootstrap_arch="amd64" ;;
+    arm64|aarch64) bootstrap_arch="arm64" ;;
+    armv7l|armv6l) bootstrap_arch="armv6l" ;;
+    *)             fail "Automatic Go bootstrap is not supported on architecture $ARCH." ;;
+  esac
+
+  archive="go${goversion}.${bootstrap_goos}-${bootstrap_arch}.tar.gz"
+  url="https://dl.google.com/go/$archive"
+
+  info "Downloading temporary Go toolchain ($goversion)…"
+  download_to "$url" "$tempdir/$archive" || fail "Failed to download temporary Go toolchain from $url."
+
+  info "Extracting temporary Go toolchain…"
+  tar -xzf "$tempdir/$archive" -C "$tempdir" || fail "Failed to extract the temporary Go toolchain."
+
+  go_bin="$tempdir/go/bin/go"
+  [ -x "$go_bin" ] || fail "Temporary Go toolchain was extracted, but $go_bin was not found."
+
+  printf '%s\n' "$go_bin"
+}
+
 # ── detect OS + arch ─────────────────────────────────────────────────────────
 OS="$(uname -s)"
 ARCH="$(uname -m)"
@@ -86,16 +133,13 @@ if [ "$FORCE_SOURCE" -eq 1 ] || [ "${V1CLAW_INSTALL_MODE:-}" = "source" ]; then
 elif [ -z "$VERSION" ]; then
   INSTALL_MODE="source"
   warn "No published GitHub release was found for $REPO."
-  if ! command -v go &>/dev/null; then
-    fail "No release is available and Go is not installed. Build from source manually after installing Go, or publish a release first."
+  if command -v go &>/dev/null; then
+    warn "Falling back to a source build because Go is installed."
+  else
+    warn "Falling back to a source build and temporary Go bootstrap because Go is not installed."
   fi
-  warn "Falling back to a source build because Go is installed."
 else
   ok "Version: $VERSION"
-fi
-
-if [ "$INSTALL_MODE" = "source" ] && ! command -v go &>/dev/null; then
-  fail "Source installation requires Go, but 'go' was not found in PATH."
 fi
 
 # ── install location ──────────────────────────────────────────────────────────
@@ -111,6 +155,13 @@ mkdir -p "$INSTALL_DIR"
 # ── download + extract ────────────────────────────────────────────────────────
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
+
+GO_CMD=""
+if command -v go &>/dev/null; then
+  GO_CMD="$(command -v go)"
+elif [ "$INSTALL_MODE" = "source" ]; then
+  GO_CMD="$(bootstrap_go_toolchain "$TMP")"
+fi
 
 if [ "$INSTALL_MODE" = "release" ]; then
   ARCHIVE="${BINARY}_${GOOS}_${GOARCH}.tar.gz"
@@ -144,10 +195,12 @@ else
     [ -n "$SOURCE_DIR" ] || fail "Could not locate extracted source directory."
   fi
 
-  info "Building from source with $(go version | awk '{print $3}')…"
+  [ -n "$GO_CMD" ] || fail "Source installation requires Go, but no Go toolchain is available."
+
+  info "Building from source with $("$GO_CMD" version | awk '{print $3}')…"
   (
     cd "$SOURCE_DIR"
-    go build -o "$TMP/$BINARY" ./cmd/$BINARY
+    "$GO_CMD" build -o "$TMP/$BINARY" ./cmd/$BINARY
   ) || fail "Source build failed."
 fi
 

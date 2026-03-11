@@ -194,6 +194,9 @@ v1claw onboard --auto --provider vllm --api-base http://localhost:8000/v1 --mode
 
 </details>
 
+If no GitHub Release is published yet, the public installer now falls back to a source build automatically.
+On macOS, Linux, and Windows, it will bootstrap a temporary Go toolchain if Go is not already installed.
+
 ---
 
 ### 📱 Android (Termux)
@@ -354,7 +357,7 @@ Open **Terminal** (`Cmd+Space` → "Terminal") and run:
 curl -fsSL https://raw.githubusercontent.com/amit-vikramaditya/v1claw/main/install.sh | bash
 ```
 
-The installer will use the latest release when one is published. If you already have Go installed and no release exists yet, it can build from source automatically.
+The installer will use the latest release when one is published. If no release exists yet, it falls back to building from source automatically and bootstraps a temporary Go toolchain when needed.
 
 Then run the setup wizard:
 
@@ -465,7 +468,7 @@ v1claw gateway
 curl -fsSL https://raw.githubusercontent.com/amit-vikramaditya/v1claw/main/install.sh | bash
 ```
 
-The installer will use the latest release when one is published. If you already have Go installed and no release exists yet, it can build from source automatically.
+The installer will use the latest release when one is published. If no release exists yet, it falls back to building from source automatically and bootstraps a temporary Go toolchain when needed.
 
 Then run the setup wizard:
 
@@ -588,7 +591,7 @@ Invoke-WebRequest "https://raw.githubusercontent.com/amit-vikramaditya/v1claw/ma
 powershell -ExecutionPolicy Bypass -File $installer
 ```
 
-The installer prefers the latest release when one is published. If no release exists yet and Go is already installed, it falls back to building from source automatically.
+The installer prefers the latest release when one is published. If no release exists yet, it falls back to building from source automatically and bootstraps a temporary Go toolchain when needed.
 
 Then run:
 
