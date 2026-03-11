@@ -112,37 +112,25 @@ func (c *TelegramChannel) Start(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("failed to start long polling: %w", err)
 	}
+	logger.InfoC("telegram", "Telegram long polling channel created")
 
 	c.setRunning(true)
-	username := ""
-	meCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	me, meErr := c.bot.GetMe(meCtx)
-	cancel()
-	if meErr != nil {
-		logger.WarnCF("telegram", "Telegram bot connected but failed to resolve bot profile", map[string]interface{}{
-			"error": meErr.Error(),
-		})
-	} else {
-		username = me.Username
-	}
+	logger.InfoC("telegram", "Telegram channel marked running")
 	logger.InfoCF("telegram", "Telegram bot connected", map[string]interface{}{
-		"username": username,
+		"username": "(profile lookup skipped at startup)",
 	})
 
 	if c.authOTP != "" {
 		fmt.Printf("\n=======================================================\n")
 		fmt.Printf("🔒 TELEGRAM BOT SECURITY: ACTION REQUIRED 🔒\n")
 		fmt.Printf("Your bot is running, but no users are authorized.\n")
-		if username != "" {
-			fmt.Printf("Open Telegram, find your bot (@%s), and send this OTP:\n", username)
-		} else {
-			fmt.Printf("Open Telegram, find your bot, and send this OTP:\n")
-		}
+		fmt.Printf("Open Telegram, find your bot, and send this OTP:\n")
 		fmt.Printf("OTP PIN: %s\n", c.authOTP)
 		fmt.Printf("=======================================================\n\n")
 	}
 
 	go func() {
+		logger.InfoC("telegram", "Telegram update loop started")
 		for {
 			select {
 			case <-ctx.Done():
