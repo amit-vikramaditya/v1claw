@@ -600,7 +600,7 @@ func (al *AgentLoop) runAgentLoop(ctx context.Context, opts processOptions) (str
 	al.sessions.AddMessage(opts.SessionKey, "user", opts.UserMessage)
 
 	// 4. Run LLM iteration loop
-	finalContent, iteration, err := al.runLLMIteration(ctx, messages, opts)
+	finalContent, iteration, terminalToolReply, err := al.runLLMIteration(ctx, messages, opts)
 	if err != nil {
 		return "", err
 	}
@@ -609,12 +609,14 @@ func (al *AgentLoop) runAgentLoop(ctx context.Context, opts processOptions) (str
 	// This is controlled by the tool's Silent flag and ForUser content
 
 	// 5. Handle empty response
-	if finalContent == "" {
+	if finalContent == "" && !terminalToolReply {
 		finalContent = opts.DefaultResponse
 	}
 
 	// 6. Save final assistant message to session
-	al.sessions.AddMessage(opts.SessionKey, "assistant", finalContent)
+	if finalContent != "" {
+		al.sessions.AddMessage(opts.SessionKey, "assistant", finalContent)
+	}
 	al.sessions.Save(opts.SessionKey)
 
 	// 7. Optional: summarization
@@ -623,7 +625,7 @@ func (al *AgentLoop) runAgentLoop(ctx context.Context, opts processOptions) (str
 	}
 
 	// 8. Optional: send response via bus
-	if opts.SendResponse {
+	if opts.SendResponse && finalContent != "" {
 		al.bus.PublishOutbound(bus.OutboundMessage{
 			Channel: opts.Channel,
 			ChatID:  opts.ChatID,
@@ -645,9 +647,10 @@ func (al *AgentLoop) runAgentLoop(ctx context.Context, opts processOptions) (str
 
 // runLLMIteration executes the LLM call loop with tool handling.
 // Returns the final content, iteration count, and any error.
-func (al *AgentLoop) runLLMIteration(ctx context.Context, messages []providers.Message, opts processOptions) (string, int, error) {
+func (al *AgentLoop) runLLMIteration(ctx context.Context, messages []providers.Message, opts processOptions) (string, int, bool, error) {
 	iteration := 0
 	var finalContent string
+	var terminalToolReply bool
 
 	// Tool loop detector prevents the agent from spinning on the same tool call.
 	loopDetector := NewToolLoopDetector()
@@ -851,7 +854,7 @@ func (al *AgentLoop) runLLMIteration(ctx context.Context, messages []providers.M
 					"iteration": iteration,
 					"error":     err.Error(),
 				})
-			return "", iteration, fmt.Errorf("LLM call failed after retries: %w", err)
+			return "", iteration, false, fmt.Errorf("LLM call failed after retries: %w", err)
 		}
 
 		// Check if no tool calls - we're done
@@ -898,8 +901,14 @@ func (al *AgentLoop) runLLMIteration(ctx context.Context, messages []providers.M
 		// Save assistant message with tool calls to session
 		al.sessions.AddFullMessage(opts.SessionKey, assistantMsg)
 
+		onlyMessageToolCalls := len(response.ToolCalls) > 0
+
 		// Execute tool calls
 		for _, tc := range response.ToolCalls {
+			if tc.Name != "message" {
+				onlyMessageToolCalls = false
+			}
+
 			// Log tool call with arguments preview
 			argsJSON, _ := json.Marshal(tc.Arguments)
 			argsPreview := utils.Truncate(string(argsJSON), 200)
@@ -981,6 +990,11 @@ func (al *AgentLoop) runLLMIteration(ctx context.Context, messages []providers.M
 			al.sessions.AddFullMessage(opts.SessionKey, toolResultMsg)
 		}
 
+		if onlyMessageToolCalls {
+			terminalToolReply = true
+			break
+		}
+
 		// ── Tool loop detection ──────────────────────────────────────────────
 		// Evaluated once after ALL tool calls in this iteration are complete.
 		if det := loopDetector.Check(); det.Severity > LoopNone {
@@ -1003,7 +1017,7 @@ func (al *AgentLoop) runLLMIteration(ctx context.Context, messages []providers.M
 		}
 	}
 
-	return finalContent, iteration, nil
+	return finalContent, iteration, terminalToolReply, nil
 }
 
 // maybeSummarize triggers summarization if the session history exceeds thresholds.
