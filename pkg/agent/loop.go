@@ -416,6 +416,23 @@ func (al *AgentLoop) RegisterTool(tool tools.Tool) {
 
 func (al *AgentLoop) SetChannelManager(cm *channels.Manager) {
 	al.channelManager = cm
+
+	if msgToolRaw, ok := al.tools.Get("message"); ok {
+		if msgTool, ok := msgToolRaw.(*tools.MessageTool); ok {
+			msgTool.SetSendCallback(func(channel, chatID, content string) error {
+				if al.channelManager != nil {
+					return al.channelManager.SendToChannel(context.Background(), channel, chatID, content)
+				}
+
+				al.bus.PublishOutbound(bus.OutboundMessage{
+					Channel: channel,
+					ChatID:  chatID,
+					Content: content,
+				})
+				return nil
+			})
+		}
+	}
 }
 
 // RecordLastChannel records the last active channel for this workspace.
