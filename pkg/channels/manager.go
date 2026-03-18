@@ -279,9 +279,24 @@ func (m *Manager) dispatchOutbound(ctx context.Context) {
 					"channel": msg.Channel,
 					"error":   err.Error(),
 				})
+			} else {
+				logger.InfoCF("channels", "Outbound message delivered to channel", map[string]interface{}{
+					"channel":      msg.Channel,
+					"chat_id":      msg.ChatID,
+					"content_len":  len(msg.Content),
+					"content_head": truncateForChannelLog(msg.Content),
+				})
 			}
 		}
 	}
+}
+
+func truncateForChannelLog(content string) string {
+	const limit = 80
+	if len(content) <= limit {
+		return content
+	}
+	return content[:limit] + "..."
 }
 
 func (m *Manager) GetChannel(name string) (Channel, bool) {
