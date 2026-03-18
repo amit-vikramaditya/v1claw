@@ -540,16 +540,6 @@ func (c *TelegramChannel) handleMessage(ctx context.Context, message *telego.Mes
 		"preview":   utils.Truncate(content, 50),
 	})
 
-	// Thinking indicator
-	uxCtx, uxCancel := context.WithTimeout(ctx, telegramRequestTimeout)
-	err := c.bot.SendChatAction(uxCtx, tu.ChatAction(tu.ID(chatID), telego.ChatActionTyping))
-	uxCancel()
-	if err != nil {
-		logger.ErrorCF("telegram", "Failed to send chat action", map[string]interface{}{
-			"error": err.Error(),
-		})
-	}
-
 	// Stop any previous thinking animation
 	chatIDStr := fmt.Sprintf("%d", chatID)
 	if prevStop, ok := c.stopThinking.Load(chatIDStr); ok {
@@ -561,19 +551,6 @@ func (c *TelegramChannel) handleMessage(ctx context.Context, message *telego.Mes
 	// Create cancel function for thinking state
 	_, thinkCancel := context.WithTimeout(ctx, 5*time.Minute)
 	c.stopThinking.Store(chatIDStr, &thinkingCancel{fn: thinkCancel})
-
-	placeholderCtx, placeholderCancel := context.WithTimeout(ctx, telegramRequestTimeout)
-	pMsg, err := c.bot.SendMessage(placeholderCtx, tu.Message(tu.ID(chatID), "Thinking... 💭"))
-	placeholderCancel()
-	if err == nil {
-		pID := pMsg.MessageID
-		c.placeholders.Store(chatIDStr, pID)
-	} else {
-		logger.WarnCF("telegram", "Failed to create thinking placeholder", map[string]interface{}{
-			"chat_id": fmt.Sprintf("%d", chatID),
-			"error":   err.Error(),
-		})
-	}
 
 	metadata := map[string]string{
 		"message_id": fmt.Sprintf("%d", message.MessageID),
