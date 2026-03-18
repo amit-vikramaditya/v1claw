@@ -44,6 +44,7 @@ const (
 	telegramAPIBaseURL       = "https://api.telegram.org"
 	telegramPollTimeoutSec   = 25
 	telegramPollRetryBackoff = 3 * time.Second
+	telegramRequestTimeout   = 10 * time.Second
 )
 
 type thinkingCancel struct {
@@ -301,7 +302,10 @@ func (c *TelegramChannel) Send(ctx context.Context, msg bus.OutboundMessage) err
 		editMsg := tu.EditMessageText(tu.ID(chatID), pID.(int), htmlContent)
 		editMsg.ParseMode = telego.ModeHTML
 
-		if _, err = c.bot.EditMessageText(ctx, editMsg); err == nil {
+		editCtx, editCancel := context.WithTimeout(ctx, telegramRequestTimeout)
+		_, err = c.bot.EditMessageText(editCtx, editMsg)
+		editCancel()
+		if err == nil {
 			return nil
 		}
 		// Fallback to new message if edit fails
@@ -310,12 +314,17 @@ func (c *TelegramChannel) Send(ctx context.Context, msg bus.OutboundMessage) err
 	tgMsg := tu.Message(tu.ID(chatID), htmlContent)
 	tgMsg.ParseMode = telego.ModeHTML
 
-	if _, err = c.bot.SendMessage(ctx, tgMsg); err != nil {
+	sendCtx, sendCancel := context.WithTimeout(ctx, telegramRequestTimeout)
+	_, err = c.bot.SendMessage(sendCtx, tgMsg)
+	sendCancel()
+	if err != nil {
 		logger.ErrorCF("telegram", "HTML parse failed, falling back to plain text", map[string]interface{}{
 			"error": err.Error(),
 		})
 		tgMsg.ParseMode = ""
-		_, err = c.bot.SendMessage(ctx, tgMsg)
+		fallbackCtx, fallbackCancel := context.WithTimeout(ctx, telegramRequestTimeout)
+		_, err = c.bot.SendMessage(fallbackCtx, tgMsg)
+		fallbackCancel()
 		return err
 	}
 
@@ -390,7 +399,9 @@ func (c *TelegramChannel) handleMessage(ctx context.Context, message *telego.Mes
 				"user_id": senderID,
 				"error":   err.Error(),
 			})
-			_, _ = c.bot.SendMessage(ctx, tu.Message(telego.ChatID{ID: message.Chat.ID},
+			replyCtx, replyCancel := context.WithTimeout(ctx, telegramRequestTimeout)
+			defer replyCancel()
+			_, _ = c.bot.SendMessage(replyCtx, tu.Message(telego.ChatID{ID: message.Chat.ID},
 				"🔒 This bot is not paired yet. Pairing request failed on the server; try again in a moment."))
 			return nil
 		}
@@ -399,7 +410,9 @@ func (c *TelegramChannel) handleMessage(ctx context.Context, message *telego.Mes
 			"🔒 Pairing required.\n\nYour OTP is: %s\n\nAsk the terminal owner to approve it with:\n`v1claw telegram pairing %s`",
 			req.OTP, req.OTP,
 		)
-		if _, err := c.bot.SendMessage(ctx, tu.Message(telego.ChatID{ID: message.Chat.ID}, reply)); err != nil {
+		replyCtx, replyCancel := context.WithTimeout(ctx, telegramRequestTimeout)
+		defer replyCancel()
+		if _, err := c.bot.SendMessage(replyCtx, tu.Message(telego.ChatID{ID: message.Chat.ID}, reply)); err != nil {
 			return err
 		}
 		return nil
@@ -528,7 +541,9 @@ func (c *TelegramChannel) handleMessage(ctx context.Context, message *telego.Mes
 	})
 
 	// Thinking indicator
-	err := c.bot.SendChatAction(ctx, tu.ChatAction(tu.ID(chatID), telego.ChatActionTyping))
+	uxCtx, uxCancel := context.WithTimeout(ctx, telegramRequestTimeout)
+	err := c.bot.SendChatAction(uxCtx, tu.ChatAction(tu.ID(chatID), telego.ChatActionTyping))
+	uxCancel()
 	if err != nil {
 		logger.ErrorCF("telegram", "Failed to send chat action", map[string]interface{}{
 			"error": err.Error(),
@@ -547,10 +562,17 @@ func (c *TelegramChannel) handleMessage(ctx context.Context, message *telego.Mes
 	_, thinkCancel := context.WithTimeout(ctx, 5*time.Minute)
 	c.stopThinking.Store(chatIDStr, &thinkingCancel{fn: thinkCancel})
 
-	pMsg, err := c.bot.SendMessage(ctx, tu.Message(tu.ID(chatID), "Thinking... 💭"))
+	placeholderCtx, placeholderCancel := context.WithTimeout(ctx, telegramRequestTimeout)
+	pMsg, err := c.bot.SendMessage(placeholderCtx, tu.Message(tu.ID(chatID), "Thinking... 💭"))
+	placeholderCancel()
 	if err == nil {
 		pID := pMsg.MessageID
 		c.placeholders.Store(chatIDStr, pID)
+	} else {
+		logger.WarnCF("telegram", "Failed to create thinking placeholder", map[string]interface{}{
+			"chat_id": fmt.Sprintf("%d", chatID),
+			"error":   err.Error(),
+		})
 	}
 
 	metadata := map[string]string{
