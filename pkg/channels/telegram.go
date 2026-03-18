@@ -2,7 +2,9 @@ package channels
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -27,14 +29,22 @@ type TelegramChannel struct {
 	bot          *telego.Bot
 	commands     TelegramCommander
 	config       *config.Config
+	apiBaseURL   string
 	chatIDs      map[string]int64
 	chatIDsMu    sync.Mutex
+	pollClient   *http.Client
 	transcriber  *voice.GroqTranscriber
 	placeholders sync.Map  // chatID -> messageID
 	stopThinking sync.Map  // chatID -> thinkingCancel
 	startedAt    time.Time // set at Start(); messages older than this are discarded
 	pairings     *pairing.TelegramStore
 }
+
+const (
+	telegramAPIBaseURL       = "https://api.telegram.org"
+	telegramPollTimeoutSec   = 25
+	telegramPollRetryBackoff = 3 * time.Second
+)
 
 type thinkingCancel struct {
 	fn context.CancelFunc
@@ -58,10 +68,11 @@ func NewTelegramChannel(cfg *config.Config, bus *bus.MessageBus) (*TelegramChann
 		}
 		transport.Proxy = http.ProxyURL(proxyURL)
 	}
-	opts = append(opts, telego.WithHTTPClient(&http.Client{
+	httpClient := &http.Client{
 		Transport: transport,
-		Timeout:   30 * time.Second,
-	}))
+		Timeout:   (telegramPollTimeoutSec + 15) * time.Second,
+	}
+	opts = append(opts, telego.WithHTTPClient(httpClient))
 
 	bot, err := telego.NewBot(telegramCfg.Token, opts...)
 	if err != nil {
@@ -75,8 +86,10 @@ func NewTelegramChannel(cfg *config.Config, bus *bus.MessageBus) (*TelegramChann
 		commands:     NewTelegramCommands(bot, cfg),
 		bot:          bot,
 		config:       cfg,
+		apiBaseURL:   telegramAPIBaseURL,
 		chatIDs:      make(map[string]int64),
 		transcriber:  nil,
+		pollClient:   httpClient,
 		placeholders: sync.Map{},
 		stopThinking: sync.Map{},
 		pairings:     pairing.NewTelegramStore(),
@@ -107,14 +120,6 @@ func (c *TelegramChannel) Start(ctx context.Context) error {
 	// moment is a stale/replayed update and will be discarded in handleMessage.
 	c.startedAt = time.Now()
 
-	updates, err := c.bot.UpdatesViaLongPolling(ctx, &telego.GetUpdatesParams{
-		Timeout: 30,
-	})
-	if err != nil {
-		return fmt.Errorf("failed to start long polling: %w", err)
-	}
-	logger.InfoC("telegram", "Telegram long polling channel created")
-
 	c.setRunning(true)
 	logger.InfoC("telegram", "Telegram channel marked running")
 	logger.InfoCF("telegram", "Telegram bot connected", map[string]interface{}{
@@ -134,29 +139,91 @@ func (c *TelegramChannel) Start(ctx context.Context) error {
 
 	go func() {
 		logger.InfoC("telegram", "Telegram update loop started")
+		offset := 0
 		for {
 			select {
 			case <-ctx.Done():
 				return
-			case update, ok := <-updates:
-				if !ok {
-					logger.WarnC("telegram", "Telegram update stream closed")
-					return
-				}
-				if update.Message == nil {
+			default:
+				updates, err := c.pollUpdates(ctx, offset)
+				if err != nil {
+					if ctx.Err() != nil {
+						return
+					}
+					logger.ErrorCF("telegram", "Failed to poll Telegram updates", map[string]interface{}{
+						"error": err.Error(),
+					})
+					select {
+					case <-ctx.Done():
+						return
+					case <-time.After(telegramPollRetryBackoff):
+					}
 					continue
 				}
-				if err := c.dispatchUpdateMessage(ctx, update.Message); err != nil {
-					logger.ErrorCF("telegram", "Failed to handle Telegram message", map[string]interface{}{
-						"update_id": update.UpdateID,
-						"error":     err.Error(),
-					})
+
+				for _, update := range updates {
+					offset = update.UpdateID + 1
+					if update.Message == nil {
+						continue
+					}
+					if err := c.dispatchUpdateMessage(ctx, update.Message); err != nil {
+						logger.ErrorCF("telegram", "Failed to handle Telegram message", map[string]interface{}{
+							"update_id": update.UpdateID,
+							"error":     err.Error(),
+						})
+					}
 				}
 			}
 		}
 	}()
 
 	return nil
+}
+
+func (c *TelegramChannel) pollUpdates(ctx context.Context, offset int) ([]telego.Update, error) {
+	query := url.Values{}
+	query.Set("timeout", fmt.Sprintf("%d", telegramPollTimeoutSec))
+	query.Set("allowed_updates", `["message"]`)
+	if offset > 0 {
+		query.Set("offset", fmt.Sprintf("%d", offset))
+	}
+
+	endpoint := fmt.Sprintf("%s/bot%s/getUpdates?%s", strings.TrimRight(c.apiBaseURL, "/"), c.config.Channels.Telegram.Token, query.Encode())
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return nil, fmt.Errorf("build Telegram getUpdates request: %w", err)
+	}
+
+	resp, err := c.pollClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("execute Telegram getUpdates request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
+	if err != nil {
+		return nil, fmt.Errorf("read Telegram getUpdates response: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("Telegram getUpdates returned %s: %s", resp.Status, strings.TrimSpace(string(body)))
+	}
+
+	var payload struct {
+		OK          bool            `json:"ok"`
+		Result      []telego.Update `json:"result"`
+		Description string          `json:"description"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return nil, fmt.Errorf("decode Telegram getUpdates response: %w", err)
+	}
+	if !payload.OK {
+		if payload.Description == "" {
+			payload.Description = "unknown Telegram API error"
+		}
+		return nil, fmt.Errorf("Telegram getUpdates error: %s", payload.Description)
+	}
+
+	return payload.Result, nil
 }
 
 func (c *TelegramChannel) dispatchUpdateMessage(ctx context.Context, message *telego.Message) error {
