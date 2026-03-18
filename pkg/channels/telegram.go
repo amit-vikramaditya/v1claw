@@ -45,8 +45,8 @@ const (
 	telegramPollTimeoutSec   = 25
 	telegramPollRetryBackoff = 3 * time.Second
 	telegramRequestTimeout   = 10 * time.Second
-	telegramTypingInterval   = 4 * time.Second
-	telegramTypingLifetime   = 45 * time.Second
+	telegramTypingInterval   = 2 * time.Second
+	telegramTypingLifetime   = 90 * time.Second
 )
 
 type thinkingCancel struct {
@@ -321,13 +321,14 @@ func (c *TelegramChannel) Send(ctx context.Context, msg bus.OutboundMessage) err
 		return fmt.Errorf("invalid chat ID: %w", err)
 	}
 
-	// Stop thinking animation
-	if stop, ok := c.stopThinking.Load(msg.ChatID); ok {
-		if cf, ok := stop.(*thinkingCancel); ok && cf != nil {
-			cf.Cancel()
+	defer func() {
+		if stop, ok := c.stopThinking.Load(msg.ChatID); ok {
+			if cf, ok := stop.(*thinkingCancel); ok && cf != nil {
+				cf.Cancel()
+			}
+			c.stopThinking.Delete(msg.ChatID)
 		}
-		c.stopThinking.Delete(msg.ChatID)
-	}
+	}()
 
 	htmlContent := markdownToTelegramHTML(msg.Content)
 
