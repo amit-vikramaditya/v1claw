@@ -45,6 +45,8 @@ const (
 	telegramPollTimeoutSec   = 25
 	telegramPollRetryBackoff = 3 * time.Second
 	telegramRequestTimeout   = 10 * time.Second
+	telegramTypingInterval   = 4 * time.Second
+	telegramTypingLifetime   = 45 * time.Second
 )
 
 type thinkingCancel struct {
@@ -225,6 +227,39 @@ func (c *TelegramChannel) pollUpdates(ctx context.Context, offset int) ([]telego
 	}
 
 	return payload.Result, nil
+}
+
+func (c *TelegramChannel) startTypingIndicator(parent context.Context, chatKey string, chatID int64) {
+	typingCtx, typingCancel := context.WithTimeout(parent, telegramTypingLifetime)
+	c.stopThinking.Store(chatKey, &thinkingCancel{fn: typingCancel})
+
+	go func() {
+		ticker := time.NewTicker(telegramTypingInterval)
+		defer ticker.Stop()
+		defer c.stopThinking.Delete(chatKey)
+
+		sendTyping := func() {
+			reqCtx, cancel := context.WithTimeout(typingCtx, telegramRequestTimeout)
+			err := c.bot.SendChatAction(reqCtx, tu.ChatAction(tu.ID(chatID), telego.ChatActionTyping))
+			cancel()
+			if err != nil && typingCtx.Err() == nil {
+				logger.DebugCF("telegram", "Typing indicator failed", map[string]interface{}{
+					"chat_id": fmt.Sprintf("%d", chatID),
+					"error":   err.Error(),
+				})
+			}
+		}
+
+		sendTyping()
+		for {
+			select {
+			case <-typingCtx.Done():
+				return
+			case <-ticker.C:
+				sendTyping()
+			}
+		}
+	}()
 }
 
 func (c *TelegramChannel) dispatchUpdateMessage(ctx context.Context, message *telego.Message) error {
@@ -540,17 +575,14 @@ func (c *TelegramChannel) handleMessage(ctx context.Context, message *telego.Mes
 		"preview":   utils.Truncate(content, 50),
 	})
 
-	// Stop any previous thinking animation
+	// Stop any previous typing indicator
 	chatIDStr := fmt.Sprintf("%d", chatID)
 	if prevStop, ok := c.stopThinking.Load(chatIDStr); ok {
 		if cf, ok := prevStop.(*thinkingCancel); ok && cf != nil {
 			cf.Cancel()
 		}
 	}
-
-	// Create cancel function for thinking state
-	_, thinkCancel := context.WithTimeout(ctx, 5*time.Minute)
-	c.stopThinking.Store(chatIDStr, &thinkingCancel{fn: thinkCancel})
+	c.startTypingIndicator(ctx, chatIDStr, chatID)
 
 	metadata := map[string]string{
 		"message_id": fmt.Sprintf("%d", message.MessageID),
