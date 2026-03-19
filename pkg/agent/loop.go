@@ -206,6 +206,7 @@ func createToolRegistry(workspace string, restrict bool, cfg *config.Config, msg
 	registry.Register(tools.NewListDirTool(workspace, restrict, msgBus))
 	registry.Register(tools.NewEditFileTool(workspace, restrict))
 	registry.Register(tools.NewAppendFileTool(workspace, restrict))
+	registry.Register(tools.NewBootstrapTool(workspace))
 
 	// Epistemology memory tools
 	if graphStore != nil {
@@ -918,12 +919,13 @@ func (al *AgentLoop) runLLMIteration(ctx context.Context, messages []providers.M
 		// Save assistant message with tool calls to session
 		al.sessions.AddFullMessage(opts.SessionKey, assistantMsg)
 
-		onlyMessageToolCalls := len(response.ToolCalls) > 0
+		onlyTerminalToolCalls := len(response.ToolCalls) > 0
+		var terminalToolSummary string
 
 		// Execute tool calls
 		for _, tc := range response.ToolCalls {
-			if tc.Name != "message" {
-				onlyMessageToolCalls = false
+			if !isTerminalToolCall(tc.Name) {
+				onlyTerminalToolCalls = false
 			}
 
 			// Log tool call with arguments preview
@@ -966,6 +968,10 @@ func (al *AgentLoop) runLLMIteration(ctx context.Context, messages []providers.M
 			})
 			toolCancel()
 
+			if tc.Name == "complete_bootstrap" {
+				terminalToolSummary = "Bootstrap completed. I’ve saved the learned identity into the workspace and future sessions will wake from it."
+			}
+
 			// Send ForUser content to user immediately if not Silent
 			if !toolResult.Silent && toolResult.ForUser != "" && opts.SendResponse {
 				al.bus.PublishOutbound(bus.OutboundMessage{
@@ -1007,8 +1013,11 @@ func (al *AgentLoop) runLLMIteration(ctx context.Context, messages []providers.M
 			al.sessions.AddFullMessage(opts.SessionKey, toolResultMsg)
 		}
 
-		if onlyMessageToolCalls {
+		if onlyTerminalToolCalls {
 			terminalToolReply = true
+			if finalContent == "" && terminalToolSummary != "" {
+				finalContent = terminalToolSummary
+			}
 			break
 		}
 
@@ -1035,6 +1044,15 @@ func (al *AgentLoop) runLLMIteration(ctx context.Context, messages []providers.M
 	}
 
 	return finalContent, iteration, terminalToolReply, nil
+}
+
+func isTerminalToolCall(name string) bool {
+	switch name {
+	case "message", "complete_bootstrap":
+		return true
+	default:
+		return false
+	}
 }
 
 // maybeSummarize triggers summarization if the session history exceeds thresholds.

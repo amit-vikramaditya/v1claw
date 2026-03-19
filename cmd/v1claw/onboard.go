@@ -136,7 +136,7 @@ func runQuickStartOnboarding(cfg *config.Config, configPath string) {
 		}
 	}
 
-	aiName, userName := defaultOnboardIdentity()
+	aiName, userName := "", ""
 	fmt.Println(stepStyle.Render("\n  Step 4 of 4 — Save and test"))
 	if !onboardSaveAndTest(cfg, configPath, aiName, userName) {
 		return
@@ -171,8 +171,9 @@ func runManualOnboarding(cfg *config.Config, configPath string) {
 	fmt.Println(stepStyle.Render("\n  Step 4 of 9 — High availability"))
 	onboardCouncil(cfg)
 
-	fmt.Println(stepStyle.Render("\n  Step 5 of 9 — Identity"))
-	aiName, userName := onboardIdentity(cfg)
+	fmt.Println(stepStyle.Render("\n  Step 5 of 9 — First-run bootstrap"))
+	onboardBootstrap(cfg)
+	aiName, userName := "", ""
 
 	fmt.Println(stepStyle.Render("\n  Step 6 of 9 — Web tools"))
 	onboardTools(cfg)
@@ -879,6 +880,12 @@ func onboardIdentity(cfg *config.Config) (string, string) {
 	return aiName, userName
 }
 
+func onboardBootstrap(cfg *config.Config) {
+	fmt.Printf("  %s Fresh workspaces now start in bootstrap mode.\n", successStyle.Render("✓"))
+	fmt.Printf("  %s On the first private chat, the assistant should ask who it is, what to call you,\n", stepStyle.Render("→"))
+	fmt.Printf("    and what tone and role it should keep before it settles into a persona.\n")
+}
+
 // ─── Step 5: Tools ───────────────────────────────────────────────────────────
 
 func onboardTools(cfg *config.Config) {
@@ -919,7 +926,12 @@ func onboardSaveAndTest(cfg *config.Config, configPath string, aiName string, us
 	workspacePath := cfg.WorkspacePath()
 	createWorkspaceTemplates(workspacePath)
 	if workspacePath != "" {
-		initMemory(workspacePath, aiName, "Your helpful personal AI assistant", userName, "")
+		if workspaceNeedsBootstrap(workspacePath) {
+			initMemory(workspacePath, "", "Identity and user profile will be learned during bootstrap", "", "")
+		} else {
+			const aiRole = "Your personal AI assistant"
+			initMemory(workspacePath, aiName, aiRole, userName, "")
+		}
 	}
 
 	fmt.Printf("  %s Config saved to: %s\n", successStyle.Render("✓"), configPath)
@@ -934,7 +946,7 @@ func onboardSaveAndTest(cfg *config.Config, configPath string, aiName string, us
 	var testErr error
 
 	withSpinner("Waiting for response…", func() {
-		response, testErr = runOnboardTestMessage(cfg, aiName)
+		response, testErr = runOnboardTestMessage(cfg, aiName, workspacePath)
 	})
 
 	if testErr != nil {
@@ -957,7 +969,7 @@ func onboardSaveAndTest(cfg *config.Config, configPath string, aiName string, us
 
 // runOnboardTestMessage sends a friendly intro message and returns the reply.
 // aiName is used in the system prompt so the AI introduces itself by name.
-func runOnboardTestMessage(cfg *config.Config, aiName string) (string, error) {
+func runOnboardTestMessage(cfg *config.Config, aiName string, workspacePath string) (string, error) {
 	provider, err := providers.CreateProvider(cfg)
 	if err != nil {
 		return "", err
@@ -966,13 +978,20 @@ func runOnboardTestMessage(cfg *config.Config, aiName string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	if aiName == "" {
-		aiName = "V1"
-	}
-
-	msgs := []providers.Message{
-		{Role: "system", Content: fmt.Sprintf("You are %s, a helpful personal AI assistant. Keep your response to 1-2 friendly sentences.", aiName)},
-		{Role: "user", Content: "Say hello and introduce yourself! Tell me one thing you can help me with."},
+	var msgs []providers.Message
+	if workspaceNeedsBootstrap(workspacePath) {
+		msgs = []providers.Message{
+			{Role: "system", Content: "You are a newly installed AI assistant in bootstrap mode. Keep your response to 1-2 friendly sentences. Do not claim a fixed identity yet."},
+			{Role: "user", Content: "Say hello and explain that you will learn who you should be from the operator on first chat."},
+		}
+	} else {
+		if aiName == "" {
+			aiName = "V1"
+		}
+		msgs = []providers.Message{
+			{Role: "system", Content: fmt.Sprintf("You are %s, a helpful personal AI assistant. Keep your response to 1-2 friendly sentences.", aiName)},
+			{Role: "user", Content: "Say hello and introduce yourself! Tell me one thing you can help me with."},
+		}
 	}
 
 	opts := map[string]interface{}{
@@ -991,8 +1010,14 @@ func runOnboardTestMessage(cfg *config.Config, aiName string) (string, error) {
 // ─── Success screen ───────────────────────────────────────────────────────────
 
 func printOnboardSuccess(cfg *config.Config, configPath string, aiName string) {
-	if aiName == "" {
+	bootstrapPending := workspaceNeedsBootstrap(cfg.WorkspacePath())
+	if aiName == "" && !bootstrapPending {
 		aiName = "V1"
+	}
+
+	headline := aiName
+	if bootstrapPending {
+		headline = "Bootstrap mode"
 	}
 
 	successContent := fmt.Sprintf(`
@@ -1015,7 +1040,7 @@ func printOnboardSuccess(cfg *config.Config, configPath string, aiName string) {
    v1claw configure   ← change settings, add channels (Telegram, Discord)
    v1claw skills list ← see available skills
 `,
-		aiName,
+		headline,
 	)
 
 	fmt.Println(boxStyle.
@@ -1024,6 +1049,11 @@ func printOnboardSuccess(cfg *config.Config, configPath string, aiName string) {
 
 	fmt.Printf("  Config: %s\n", stepStyle.Render(configPath))
 	fmt.Printf("  Workspace: %s\n\n", stepStyle.Render(cfg.Workspace.Path))
+
+	if bootstrapPending {
+		fmt.Printf("  First chat bootstrap: %s\n", stepStyle.Render("the assistant will ask who it should be before it settles into an identity"))
+		fmt.Printf("  Finish bootstrap by answering its discovery questions in a private chat.\n\n")
+	}
 
 	if workers := config.DiscoverLocalCLIs(); len(workers) > 0 {
 		names := make([]string, 0, len(workers))
@@ -1079,6 +1109,14 @@ func withSpinner(label string, fn func()) {
 }
 
 // wrapText soft-wraps s to maxWidth characters, indenting continuation lines with indent.
+func workspaceNeedsBootstrap(workspacePath string) bool {
+	if strings.TrimSpace(workspacePath) == "" {
+		return false
+	}
+	_, err := os.Stat(filepath.Join(workspacePath, "BOOTSTRAP.md"))
+	return err == nil
+}
+
 func wrapText(s string, maxWidth int, indent string) string {
 	words := strings.Fields(s)
 	if len(words) == 0 {

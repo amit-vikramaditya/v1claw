@@ -162,6 +162,12 @@ func (c *TelegramChannel) Start(ctx context.Context) error {
 					}
 					continue
 				}
+				if len(updates) > 0 {
+					logger.InfoCF("telegram", "Telegram updates received", map[string]interface{}{
+						"count":       len(updates),
+						"next_offset": updates[len(updates)-1].UpdateID + 1,
+					})
+				}
 
 				for _, update := range updates {
 					offset = update.UpdateID + 1
@@ -191,7 +197,10 @@ func (c *TelegramChannel) pollUpdates(ctx context.Context, offset int) ([]telego
 	}
 
 	endpoint := fmt.Sprintf("%s/bot%s/getUpdates?%s", strings.TrimRight(c.apiBaseURL, "/"), c.config.Channels.Telegram.Token, query.Encode())
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	reqCtx, cancel := context.WithTimeout(ctx, (telegramPollTimeoutSec+5)*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return nil, fmt.Errorf("build Telegram getUpdates request: %w", err)
 	}

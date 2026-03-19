@@ -1173,6 +1173,7 @@ func configureIdentity(cfg *config.Config) {
 	).Run()
 
 	initMemory(cfg.WorkspacePath(), aiName, aiRole, userName, userPrefs)
+	writePersonalizedBootstrapFiles(cfg.WorkspacePath(), aiName, aiRole, userName, userPrefs)
 }
 
 func configureCouncil(cfg *config.Config) {

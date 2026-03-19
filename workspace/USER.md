@@ -1,21 +1,8 @@
 # User
 
-Information about user goes here.
+## Status
+Unresolved until bootstrap is complete.
 
-## Preferences
-
-- Communication style: (casual/formal)
-- Timezone: (your timezone)
-- Language: (your preferred language)
-
-## Personal Information
-
-- Name: (optional)
-- Location: (optional)
-- Occupation: (optional)
-
-## Learning Goals
-
-- What the user wants to learn from AI
-- Preferred interaction style
-- Areas of interest
+## Notes
+- Learn who the operator is, what to call them, and how they prefer to work.
+- Replace this file with the resolved operator profile after bootstrap.

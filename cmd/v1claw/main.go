@@ -362,6 +362,116 @@ This file stores important information that should persist across sessions.
 	_ = os.WriteFile(memoryFile, []byte(memoryContent), 0600)
 }
 
+func writePersonalizedBootstrapFiles(workspace, aiName, aiRole, userName, userPrefs string) {
+	safeName := strings.TrimSpace(sanitizeOnboardingField(aiName, false))
+	if safeName == "" {
+		safeName = "V1"
+	}
+	safeRole := strings.TrimSpace(sanitizeOnboardingField(aiRole, false))
+	if safeRole == "" {
+		safeRole = "Your personal AI assistant"
+	}
+	safeUser := strings.TrimSpace(sanitizeOnboardingField(userName, false))
+	if safeUser == "" {
+		safeUser = "User"
+	}
+	safePrefs := strings.TrimSpace(sanitizeOnboardingField(userPrefs, true))
+	if safePrefs == "" {
+		safePrefs = "- Keep replies direct and natural.\n- Prefer acting like a present assistant, not a product brochure."
+	} else if !strings.HasPrefix(safePrefs, "-") {
+		safePrefs = "- " + strings.ReplaceAll(safePrefs, "\n", "\n- ")
+	}
+
+	files := map[string]string{
+		"AGENT.md": fmt.Sprintf(`# Agent Instructions
+
+You are %s, %s for %s.
+
+## Operating Rules
+
+- Act like a present, awake assistant for %s, not like a README or marketing page.
+- When asked about yourself, answer in first person as %s and describe your current role, behavior, and practical capabilities.
+- Use the identity and personality defined in IDENTITY.md, SOUL.md, and USER.md as the source of truth.
+- Use tools when action is required; do not pretend that something was done.
+- Keep replies direct, natural, and grounded in the current conversation.
+`, safeName, safeRole, safeUser, safeUser, safeName),
+		"IDENTITY.md": fmt.Sprintf(`# Identity
+
+## Name
+%s
+
+## Role
+%s
+
+## Relationship
+You assist %s directly on their machine and channels.
+
+## How to Speak
+- Speak like a real assistant in the room.
+- Be clear, calm, practical, and concise.
+- Do not default to product pitches, GitHub blurbs, or README-style summaries unless %s asks about the project itself.
+`, safeName, safeRole, safeUser, safeUser),
+		"SOUL.md": `# Soul
+
+## Personality
+
+- Alert and grounded
+- Helpful without sounding generic
+- Calm under pressure
+- Honest about what is working, what is broken, and what you are doing next
+
+## Values
+
+- Protect the user's trust
+- Prefer clear action over vague promises
+- Stay practical and reality-based
+- Do not slip into marketing language
+`,
+		"USER.md": fmt.Sprintf(`# User
+
+## Primary Operator
+- Name: %s
+
+## Preferences
+%s
+`, safeUser, safePrefs),
+		"TOOLS.md": `# Tools
+
+## Guidance
+
+- Use tools to do real work; do not claim an action happened unless a tool actually completed it.
+- Prefer the smallest safe action that solves the user's request.
+- If a tool fails, say what failed and what you will try next.
+- Keep file and shell work grounded in the current workspace unless the user explicitly wants broader access.
+`,
+	}
+
+	for name, content := range files {
+		writeBootstrapFileIfTemplate(workspace, name, content)
+	}
+}
+
+func writeBootstrapFileIfTemplate(workspace, name, content string) {
+	targetPath := filepath.Join(workspace, name)
+
+	existing, err := os.ReadFile(targetPath)
+	switch {
+	case err == nil:
+		templateData, templateErr := embeddedFiles.ReadFile(filepath.Join("workspace", name))
+		if templateErr == nil && string(existing) != string(templateData) {
+			return
+		}
+	case os.IsNotExist(err):
+		if mkErr := os.MkdirAll(filepath.Dir(targetPath), 0755); mkErr != nil {
+			return
+		}
+	default:
+		return
+	}
+
+	_ = os.WriteFile(targetPath, []byte(content), 0644)
+}
+
 func setProviderKey(cfg *config.Config, provider, key string) {
 	switch provider {
 	case "gemini":
@@ -591,12 +701,14 @@ func defaultOpenClawHome() string {
 func agentCmd() {
 	message := ""
 	sessionKey := "cli:default"
+	debugMode := false
 
 	args := os.Args[2:]
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--debug", "-d":
 			logger.SetLevel(logger.DEBUG)
+			debugMode = true
 			fmt.Println("🔍 Debug mode enabled")
 		case "-m", "--message":
 			if i+1 < len(args) {
@@ -609,6 +721,10 @@ func agentCmd() {
 				i++
 			}
 		}
+	}
+
+	if !debugMode {
+		logger.SetLevel(logger.WARN)
 	}
 
 	cfg, err := loadConfig()

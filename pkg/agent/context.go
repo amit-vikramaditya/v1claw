@@ -92,13 +92,16 @@ func (cb *ContextBuilder) getIdentity() string {
 	now := time.Now().Format("2006-01-02 15:04 (Monday)")
 	workspacePath, _ := filepath.Abs(filepath.Join(cb.workspace))
 	runtime := fmt.Sprintf("%s %s, Go %s", runtime.GOOS, runtime.GOARCH, runtime.Version())
+	bootstrapPending := cb.hasPendingBootstrap()
 
 	// Build tools section dynamically
 	toolsSection := cb.buildToolsSection()
 
-	return fmt.Sprintf(`# V1 🤖
+	prompt := fmt.Sprintf(`# Runtime Context
 
-You are V1, a 24/7 personal AI assistant.
+You are the assistant configured for this workspace.
+Your identity, personality, relationship to the user, and operating style are defined by the workspace bootstrap files loaded below.
+Treat those workspace files as authoritative over any generic defaults.
 
 ## Current Time
 %s
@@ -122,6 +125,22 @@ Your workspace is at: %s
 
 3. **Memory** - When remembering something, write to %s/memory/MEMORY.md`,
 		now, runtime, workspacePath, workspacePath, workspacePath, workspacePath, toolsSection, workspacePath)
+
+	if bootstrapPending {
+		prompt += "\n\n## First-Run Bootstrap\n\n" +
+			"BOOTSTRAP.md is present, which means this assistant is not fully formed yet.\n\n" +
+			"- Do not pretend you already know your final name, persona, relationship, or preferences.\n" +
+			"- If the operator asks about who you are, answer honestly that you are in bootstrap mode and need a few answers first.\n" +
+			"- In the first private conversation, ask short discovery questions about:\n" +
+			"  - who you should be to the operator\n" +
+			"  - what you should call yourself\n" +
+			"  - what you should call the operator\n" +
+			"  - tone, boundaries, and priorities\n" +
+			"- Once you have enough information, call the `complete_bootstrap` tool exactly once with the resolved identity details.\n" +
+			"- Do not keep asking the same bootstrap questions after `complete_bootstrap` succeeds.\n"
+	}
+
+	return prompt
 }
 
 func (cb *ContextBuilder) buildToolsSection() string {
@@ -236,23 +255,46 @@ func (cb *ContextBuilder) InvalidatePromptCache() {
 	cb.promptCacheMu.Unlock()
 }
 
+func (cb *ContextBuilder) hasPendingBootstrap() bool {
+	_, err := os.Stat(filepath.Join(cb.workspace, "BOOTSTRAP.md"))
+	return err == nil
+}
+
 func (cb *ContextBuilder) LoadBootstrapFiles() string {
-	bootstrapFiles := []string{
-		"AGENTS.md",
-		"SOUL.md",
-		"USER.md",
-		"IDENTITY.md",
+	type bootstrapEntry struct {
+		label      string
+		candidates []string
+		required   bool
 	}
 
-	var result string
-	for _, filename := range bootstrapFiles {
-		filePath := filepath.Join(cb.workspace, filename)
-		if data, err := os.ReadFile(filePath); err == nil {
-			result += fmt.Sprintf("## %s\n\n<user_provided_content filename=%q>\n%s\n</user_provided_content>\n\n", filename, filename, string(data))
+	bootstrapFiles := []bootstrapEntry{
+		{label: "AGENT.md", candidates: []string{"AGENT.md", "AGENTS.md"}, required: true},
+		{label: "BOOTSTRAP.md", candidates: []string{"BOOTSTRAP.md"}},
+		{label: "SOUL.md", candidates: []string{"SOUL.md"}, required: true},
+		{label: "USER.md", candidates: []string{"USER.md"}, required: true},
+		{label: "IDENTITY.md", candidates: []string{"IDENTITY.md"}, required: true},
+		{label: "TOOLS.md", candidates: []string{"TOOLS.md"}},
+	}
+
+	var result strings.Builder
+	for _, entry := range bootstrapFiles {
+		found := false
+		for _, filename := range entry.candidates {
+			filePath := filepath.Join(cb.workspace, filename)
+			data, err := os.ReadFile(filePath)
+			if err != nil {
+				continue
+			}
+			result.WriteString(fmt.Sprintf("## %s\n\n<user_provided_content filename=%q>\n%s\n</user_provided_content>\n\n", entry.label, filename, string(data)))
+			found = true
+			break
+		}
+		if !found && entry.required {
+			result.WriteString(fmt.Sprintf("## %s\n\n<missing_workspace_file filename=%q />\n\n", entry.label, entry.label))
 		}
 	}
 
-	return result
+	return result.String()
 }
 
 func (cb *ContextBuilder) BuildMessages(history []providers.Message, summary string, currentMessage string, media []string, channel, chatID string) []providers.Message {

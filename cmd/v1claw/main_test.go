@@ -307,6 +307,43 @@ func TestCreateWorkspaceTemplates_DoesNotOverwriteExistingFiles(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestWritePersonalizedBootstrapFiles_ReplacesDefaultTemplates(t *testing.T) {
+	workspace := t.TempDir()
+	createWorkspaceTemplates(workspace)
+
+	writePersonalizedBootstrapFiles(workspace, "Jarvis", "Alex's personal AI assistant", "Alex", "keep it practical")
+
+	agentData, err := os.ReadFile(filepath.Join(workspace, "AGENT.md"))
+	require.NoError(t, err)
+	assert.Contains(t, string(agentData), "You are Jarvis")
+	assert.Contains(t, string(agentData), "not like a README or marketing page")
+
+	identityData, err := os.ReadFile(filepath.Join(workspace, "IDENTITY.md"))
+	require.NoError(t, err)
+	assert.Contains(t, string(identityData), "## Name\nJarvis")
+	assert.Contains(t, string(identityData), "You assist Alex directly")
+
+	userData, err := os.ReadFile(filepath.Join(workspace, "USER.md"))
+	require.NoError(t, err)
+	assert.Contains(t, string(userData), "Name: Alex")
+	assert.Contains(t, string(userData), "keep it practical")
+
+	toolsData, err := os.ReadFile(filepath.Join(workspace, "TOOLS.md"))
+	require.NoError(t, err)
+	assert.Contains(t, string(toolsData), "Use tools to do real work")
+}
+
+func TestWritePersonalizedBootstrapFiles_PreservesCustomFiles(t *testing.T) {
+	workspace := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "AGENT.md"), []byte("custom live agent"), 0644))
+
+	writePersonalizedBootstrapFiles(workspace, "Jarvis", "Alex's personal AI assistant", "Alex", "")
+
+	agentData, err := os.ReadFile(filepath.Join(workspace, "AGENT.md"))
+	require.NoError(t, err)
+	assert.Equal(t, "custom live agent", string(agentData))
+}
+
 type fakeClientWSConn struct {
 	activeWriters int32
 	maxActive     int32

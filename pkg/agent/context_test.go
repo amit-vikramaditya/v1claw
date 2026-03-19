@@ -45,3 +45,36 @@ func TestResolveBuiltinSkillsDir_FallsBackToGlobalSkills(t *testing.T) {
 	resolved := resolveBuiltinSkillsDir(workspace)
 	assert.Equal(t, globalSkillsDir, resolved)
 }
+
+func TestLoadBootstrapFiles_PrefersAgentFileAndIncludesBootstrapFiles(t *testing.T) {
+	workspace := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "AGENT.md"), []byte("agent"), 0644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "BOOTSTRAP.md"), []byte("bootstrap"), 0644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "SOUL.md"), []byte("soul"), 0644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "USER.md"), []byte("user"), 0644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "IDENTITY.md"), []byte("identity"), 0644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "TOOLS.md"), []byte("tools"), 0644))
+
+	cb := NewContextBuilder(workspace)
+	content := cb.LoadBootstrapFiles()
+
+	assert.Contains(t, content, `filename="AGENT.md"`)
+	assert.Contains(t, content, `filename="BOOTSTRAP.md"`)
+	assert.Contains(t, content, `filename="TOOLS.md"`)
+	assert.NotContains(t, content, "<missing_workspace_file")
+}
+
+func TestBuildSystemPrompt_IncludesBootstrapGuidance(t *testing.T) {
+	workspace := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "BOOTSTRAP.md"), []byte("pending"), 0644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "AGENT.md"), []byte("agent"), 0644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "SOUL.md"), []byte("soul"), 0644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "USER.md"), []byte("user"), 0644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "IDENTITY.md"), []byte("identity"), 0644))
+
+	cb := NewContextBuilder(workspace)
+	prompt := cb.BuildSystemPrompt()
+
+	assert.Contains(t, prompt, "BOOTSTRAP.md is present")
+	assert.Contains(t, prompt, "complete_bootstrap")
+}
