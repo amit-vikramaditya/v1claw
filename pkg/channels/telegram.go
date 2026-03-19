@@ -46,7 +46,6 @@ const (
 	telegramPollRetryBackoff = 3 * time.Second
 	telegramRequestTimeout   = 10 * time.Second
 	telegramTypingInterval   = 2 * time.Second
-	telegramTypingLifetime   = 90 * time.Second
 )
 
 type thinkingCancel struct {
@@ -230,7 +229,7 @@ func (c *TelegramChannel) pollUpdates(ctx context.Context, offset int) ([]telego
 }
 
 func (c *TelegramChannel) startTypingIndicator(parent context.Context, chatKey string, chatID int64) {
-	typingCtx, typingCancel := context.WithTimeout(parent, telegramTypingLifetime)
+	typingCtx, typingCancel := context.WithCancel(parent)
 	c.stopThinking.Store(chatKey, &thinkingCancel{fn: typingCancel})
 
 	go func() {
