@@ -53,3 +53,9 @@ OUR_WORK.md
 # Logs and Process IDs
 *.log
 *.pid
+
+# Local agent customizations (keep project workflows/templates tracked)
+.github/agents/
+.github/instructions/
+.github/copilot-instructions.md
+.claude/
