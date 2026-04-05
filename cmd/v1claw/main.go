@@ -500,6 +500,16 @@ func setProviderKey(cfg *config.Config, provider, key string) {
 		cfg.Providers.GitHubCopilot.APIKey = key
 	case "azure_openai", "azure":
 		cfg.Providers.AzureOpenAI.APIKey = key
+	case "mistral":
+		cfg.Providers.Mistral.APIKey = key
+	case "xai", "grok":
+		cfg.Providers.XAI.APIKey = key
+	case "cerebras":
+		cfg.Providers.Cerebras.APIKey = key
+	case "sambanova":
+		cfg.Providers.SambaNova.APIKey = key
+	case "github_models":
+		cfg.Providers.GitHubModels.APIKey = key
 	}
 }
 
@@ -529,6 +539,16 @@ func setProviderAPIBase(cfg *config.Config, provider, apiBase string) {
 		cfg.Providers.Ollama.APIBase = apiBase
 	case "github_copilot":
 		cfg.Providers.GitHubCopilot.APIBase = apiBase
+	case "mistral":
+		cfg.Providers.Mistral.APIBase = apiBase
+	case "xai", "grok":
+		cfg.Providers.XAI.APIBase = apiBase
+	case "cerebras":
+		cfg.Providers.Cerebras.APIBase = apiBase
+	case "sambanova":
+		cfg.Providers.SambaNova.APIBase = apiBase
+	case "github_models":
+		cfg.Providers.GitHubModels.APIBase = apiBase
 	}
 }
 
@@ -1805,18 +1825,6 @@ func gatewayCmd() {
 				logger.InfoC("voice", "Groq transcription attached to Telegram channel")
 			}
 		}
-		if discordChannel, ok := channelManager.GetChannel("discord"); ok {
-			if dc, ok := discordChannel.(*channels.DiscordChannel); ok {
-				dc.SetTranscriber(transcriber)
-				logger.InfoC("voice", "Groq transcription attached to Discord channel")
-			}
-		}
-		if slackChannel, ok := channelManager.GetChannel("slack"); ok {
-			if sc, ok := slackChannel.(*channels.SlackChannel); ok {
-				sc.SetTranscriber(transcriber)
-				logger.InfoC("voice", "Groq transcription attached to Slack channel")
-			}
-		}
 	}
 
 	enabledChannels := channelManager.GetEnabledChannels()
@@ -2061,14 +2069,6 @@ func enabledChannelsWithoutAllowlist(cfg *config.Config) []string {
 	rules := []channelRule{
 		{name: "telegram", enabled: cfg.Channels.Telegram.Enabled, allowList: cfg.Channels.Telegram.AllowFrom},
 		{name: "whatsapp", enabled: cfg.Channels.WhatsApp.Enabled, allowList: cfg.Channels.WhatsApp.AllowFrom},
-		{name: "feishu", enabled: cfg.Channels.Feishu.Enabled, allowList: cfg.Channels.Feishu.AllowFrom},
-		{name: "discord", enabled: cfg.Channels.Discord.Enabled, allowList: cfg.Channels.Discord.AllowFrom},
-		{name: "maixcam", enabled: cfg.Channels.MaixCam.Enabled, allowList: cfg.Channels.MaixCam.AllowFrom},
-		{name: "qq", enabled: cfg.Channels.QQ.Enabled, allowList: cfg.Channels.QQ.AllowFrom},
-		{name: "dingtalk", enabled: cfg.Channels.DingTalk.Enabled, allowList: cfg.Channels.DingTalk.AllowFrom},
-		{name: "slack", enabled: cfg.Channels.Slack.Enabled, allowList: cfg.Channels.Slack.AllowFrom},
-		{name: "line", enabled: cfg.Channels.LINE.Enabled, allowList: cfg.Channels.LINE.AllowFrom},
-		{name: "onebot", enabled: cfg.Channels.OneBot.Enabled, allowList: cfg.Channels.OneBot.AllowFrom},
 	}
 
 	var insecure []string

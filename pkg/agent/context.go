@@ -112,7 +112,7 @@ Treat those workspace files as authoritative over any generic defaults.
 ## Workspace
 Your workspace is at: %s
 - Memory: %s/memory/MEMORY.md
-- Daily Notes: %s/memory/YYYYMM/YYYYMMDD.md
+- Daily Notes: %s/memory/YYYY-MM-DD.md or %s/memory/YYYYMM/YYYYMMDD.md
 - Skills: %s/skills/{skill-name}/SKILL.md
 
 %s
@@ -124,7 +124,7 @@ Your workspace is at: %s
 2. **Be helpful and accurate** - When using tools, briefly explain what you're doing.
 
 3. **Memory** - When remembering something, write to %s/memory/MEMORY.md`,
-		now, runtime, workspacePath, workspacePath, workspacePath, workspacePath, toolsSection, workspacePath)
+		now, runtime, workspacePath, workspacePath, workspacePath, workspacePath, workspacePath, toolsSection, workspacePath)
 
 	if bootstrapPending {
 		prompt += "\n\n## First-Run Bootstrap\n\n" +
@@ -268,12 +268,18 @@ func (cb *ContextBuilder) LoadBootstrapFiles() string {
 	}
 
 	bootstrapFiles := []bootstrapEntry{
-		{label: "AGENT.md", candidates: []string{"AGENT.md", "AGENTS.md"}, required: true},
+		{label: "AGENT.md", candidates: []string{"AGENTS.md", "AGENT.md"}, required: true},
 		{label: "BOOTSTRAP.md", candidates: []string{"BOOTSTRAP.md"}},
 		{label: "SOUL.md", candidates: []string{"SOUL.md"}, required: true},
 		{label: "USER.md", candidates: []string{"USER.md"}, required: true},
 		{label: "IDENTITY.md", candidates: []string{"IDENTITY.md"}, required: true},
 		{label: "TOOLS.md", candidates: []string{"TOOLS.md"}},
+		{label: "MEMORY.md", candidates: []string{"MEMORY.md"}},
+		{label: "Legacy PROJECTS", candidates: []string{"core/memory/PROJECTS.md"}},
+		{label: "Legacy DECISIONS", candidates: []string{"core/memory/DECISIONS.md"}},
+		{label: "Legacy LESSONS", candidates: []string{"core/memory/LESSONS.md"}},
+		{label: "Legacy PEOPLE", candidates: []string{"core/memory/PEOPLE.md"}},
+		{label: "Legacy GRAND_STRATEGY", candidates: []string{"core/memory/GRAND_STRATEGY.md"}},
 	}
 
 	var result strings.Builder

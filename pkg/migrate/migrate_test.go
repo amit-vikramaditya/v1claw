@@ -218,29 +218,6 @@ func TestConvertConfig(t *testing.T) {
 					"token":      "tg-token-123",
 					"allow_from": []interface{}{"user1"},
 				},
-				"discord": map[string]interface{}{
-					"enabled": true,
-					"token":   "disc-token-456",
-				},
-				"slack": map[string]interface{}{
-					"enabled":   true,
-					"bot_token": "xoxb-test",
-					"app_token": "xapp-test",
-				},
-				"line": map[string]interface{}{
-					"enabled":              true,
-					"channel_secret":       "line-secret",
-					"channel_access_token": "line-token",
-					"webhook_host":         "line.example.com",
-					"webhook_port":         float64(8443),
-					"webhook_path":         "/webhook/line",
-				},
-				"onebot": map[string]interface{}{
-					"enabled":            true,
-					"ws_url":             "ws://127.0.0.1:3001",
-					"access_token":       "onebot-token",
-					"reconnect_interval": float64(15),
-				},
 			},
 		}
 
@@ -256,21 +233,6 @@ func TestConvertConfig(t *testing.T) {
 		}
 		if len(cfg.Channels.Telegram.AllowFrom) != 1 || cfg.Channels.Telegram.AllowFrom[0] != "user1" {
 			t.Errorf("Telegram.AllowFrom = %v, want [user1]", cfg.Channels.Telegram.AllowFrom)
-		}
-		if !cfg.Channels.Discord.Enabled {
-			t.Error("Discord should be enabled")
-		}
-		if !cfg.Channels.Slack.Enabled || cfg.Channels.Slack.BotToken != "xoxb-test" || cfg.Channels.Slack.AppToken != "xapp-test" {
-			t.Errorf("Slack config not migrated correctly: %+v", cfg.Channels.Slack)
-		}
-		if !cfg.Channels.LINE.Enabled || cfg.Channels.LINE.ChannelSecret != "line-secret" || cfg.Channels.LINE.ChannelAccessToken != "line-token" {
-			t.Errorf("LINE config not migrated correctly: %+v", cfg.Channels.LINE)
-		}
-		if cfg.Channels.LINE.WebhookHost != "line.example.com" || cfg.Channels.LINE.WebhookPort != 8443 || cfg.Channels.LINE.WebhookPath != "/webhook/line" {
-			t.Errorf("LINE webhook settings not migrated correctly: %+v", cfg.Channels.LINE)
-		}
-		if !cfg.Channels.OneBot.Enabled || cfg.Channels.OneBot.WSUrl != "ws://127.0.0.1:3001" || cfg.Channels.OneBot.AccessToken != "onebot-token" || cfg.Channels.OneBot.ReconnectInterval != 15 {
-			t.Errorf("OneBot config not migrated correctly: %+v", cfg.Channels.OneBot)
 		}
 	})
 

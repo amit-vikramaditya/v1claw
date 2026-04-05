@@ -10,12 +10,13 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
 // MemoryStore manages persistent memory for the agent.
 // - Long-term memory: memory/MEMORY.md
-// - Daily notes: memory/YYYYMM/YYYYMMDD.md
+// - Daily notes: memory/YYYY-MM-DD.md (legacy) or memory/YYYYMM/YYYYMMDD.md
 type MemoryStore struct {
 	workspace  string
 	memoryDir  string
@@ -39,12 +40,67 @@ func NewMemoryStore(workspace string) *MemoryStore {
 	}
 }
 
-// getTodayFile returns the path to today's daily note file (memory/YYYYMM/YYYYMMDD.md).
+// getTodayFile returns the nested daily note path (memory/YYYYMM/YYYYMMDD.md).
 func (ms *MemoryStore) getTodayFile() string {
-	today := time.Now().Format("20060102") // YYYYMMDD
-	monthDir := today[:6]                  // YYYYMM
-	filePath := filepath.Join(ms.memoryDir, monthDir, today+".md")
-	return filePath
+	return ms.getDailyFileNested(time.Now())
+}
+
+func (ms *MemoryStore) getTodayFileLegacy() string {
+	return ms.getDailyFileLegacy(time.Now())
+}
+
+func (ms *MemoryStore) getDailyFileNested(date time.Time) string {
+	dateStr := date.Format("20060102") // YYYYMMDD
+	monthDir := dateStr[:6]            // YYYYMM
+	return filepath.Join(ms.memoryDir, monthDir, dateStr+".md")
+}
+
+func (ms *MemoryStore) getDailyFileLegacy(date time.Time) string {
+	dateStr := date.Format("2006-01-02") // YYYY-MM-DD
+	return filepath.Join(ms.memoryDir, dateStr+".md")
+}
+
+func (ms *MemoryStore) hasLegacyDailyNotes() bool {
+	entries, err := os.ReadDir(ms.memoryDir)
+	if err != nil {
+		return false
+	}
+
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+
+		name := entry.Name()
+		if name == "MEMORY.md" || !strings.HasSuffix(name, ".md") {
+			continue
+		}
+
+		stem := strings.TrimSuffix(name, ".md")
+		if _, err := time.Parse("2006-01-02", stem); err == nil {
+			return true
+		}
+	}
+
+	return false
+}
+
+func (ms *MemoryStore) getTodayFileForAppend() string {
+	legacy := ms.getTodayFileLegacy()
+	nested := ms.getTodayFile()
+
+	if _, err := os.Stat(legacy); err == nil {
+		return legacy
+	}
+	if _, err := os.Stat(nested); err == nil {
+		return nested
+	}
+
+	if ms.hasLegacyDailyNotes() {
+		return legacy
+	}
+
+	return nested
 }
 
 // ReadLongTerm reads the long-term memory (MEMORY.md).
@@ -64,9 +120,10 @@ func (ms *MemoryStore) WriteLongTerm(content string) error {
 // ReadToday reads today's daily note.
 // Returns empty string if the file doesn't exist.
 func (ms *MemoryStore) ReadToday() string {
-	todayFile := ms.getTodayFile()
-	if data, err := os.ReadFile(todayFile); err == nil {
-		return string(data)
+	for _, candidate := range []string{ms.getTodayFileLegacy(), ms.getTodayFile()} {
+		if data, err := os.ReadFile(candidate); err == nil {
+			return string(data)
+		}
 	}
 	return ""
 }
@@ -74,12 +131,10 @@ func (ms *MemoryStore) ReadToday() string {
 // AppendToday appends content to today's daily note.
 // If the file doesn't exist, it creates a new file with a date header.
 func (ms *MemoryStore) AppendToday(content string) error {
-	todayFile := ms.getTodayFile()
+	todayFile := ms.getTodayFileForAppend()
 
-	// Ensure month directory exists
-	monthDir := filepath.Dir(todayFile)
-	if err := os.MkdirAll(monthDir, 0700); err != nil {
-		return fmt.Errorf("create month directory: %w", err)
+	if err := os.MkdirAll(filepath.Dir(todayFile), 0700); err != nil {
+		return fmt.Errorf("create memory directory: %w", err)
 	}
 
 	var existingContent string
@@ -89,11 +144,9 @@ func (ms *MemoryStore) AppendToday(content string) error {
 
 	var newContent string
 	if existingContent == "" {
-		// Add header for new day
 		header := fmt.Sprintf("# %s\n\n", time.Now().Format("2006-01-02"))
 		newContent = header + content
 	} else {
-		// Append to existing content
 		newContent = existingContent + "\n" + content
 	}
 
@@ -107,12 +160,11 @@ func (ms *MemoryStore) GetRecentDailyNotes(days int) string {
 
 	for i := 0; i < days; i++ {
 		date := time.Now().AddDate(0, 0, -i)
-		dateStr := date.Format("20060102") // YYYYMMDD
-		monthDir := dateStr[:6]            // YYYYMM
-		filePath := filepath.Join(ms.memoryDir, monthDir, dateStr+".md")
-
-		if data, err := os.ReadFile(filePath); err == nil {
-			notes = append(notes, string(data))
+		for _, candidate := range []string{ms.getDailyFileLegacy(date), ms.getDailyFileNested(date)} {
+			if data, err := os.ReadFile(candidate); err == nil {
+				notes = append(notes, string(data))
+				break
+			}
 		}
 	}
 
@@ -120,7 +172,6 @@ func (ms *MemoryStore) GetRecentDailyNotes(days int) string {
 		return ""
 	}
 
-	// Join with separator
 	var result string
 	for i, note := range notes {
 		if i > 0 {
@@ -136,13 +187,11 @@ func (ms *MemoryStore) GetRecentDailyNotes(days int) string {
 func (ms *MemoryStore) GetMemoryContext() string {
 	var parts []string
 
-	// Long-term memory
 	longTerm := ms.ReadLongTerm()
 	if longTerm != "" {
 		parts = append(parts, "## Long-term Memory\n\n"+longTerm)
 	}
 
-	// Recent daily notes (last 3 days)
 	recentNotes := ms.GetRecentDailyNotes(3)
 	if recentNotes != "" {
 		parts = append(parts, "## Recent Daily Notes\n\n"+recentNotes)
@@ -152,7 +201,6 @@ func (ms *MemoryStore) GetMemoryContext() string {
 		return ""
 	}
 
-	// Join parts with separator
 	var result string
 	for i, part := range parts {
 		if i > 0 {

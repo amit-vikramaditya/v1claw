@@ -131,14 +131,6 @@ type AgentDefaults struct {
 type ChannelsConfig struct {
 	WhatsApp WhatsAppConfig `json:"whatsapp"`
 	Telegram TelegramConfig `json:"telegram"`
-	Feishu   FeishuConfig   `json:"feishu"`
-	Discord  DiscordConfig  `json:"discord"`
-	MaixCam  MaixCamConfig  `json:"maixcam"`
-	QQ       QQConfig       `json:"qq"`
-	DingTalk DingTalkConfig `json:"dingtalk"`
-	Slack    SlackConfig    `json:"slack"`
-	LINE     LINEConfig     `json:"line"`
-	OneBot   OneBotConfig   `json:"onebot"`
 }
 
 type WhatsAppConfig struct {
@@ -153,69 +145,6 @@ type TelegramConfig struct {
 	Token     string              `json:"token" env:"V1CLAW_CHANNELS_TELEGRAM_TOKEN"`
 	Proxy     string              `json:"proxy" env:"V1CLAW_CHANNELS_TELEGRAM_PROXY"`
 	AllowFrom FlexibleStringSlice `json:"allow_from" env:"V1CLAW_CHANNELS_TELEGRAM_ALLOW_FROM"`
-}
-
-type FeishuConfig struct {
-	Enabled           bool                `json:"enabled" env:"V1CLAW_CHANNELS_FEISHU_ENABLED"`
-	AppID             string              `json:"app_id" env:"V1CLAW_CHANNELS_FEISHU_APP_ID"`
-	AppSecret         string              `json:"app_secret" env:"V1CLAW_CHANNELS_FEISHU_APP_SECRET"`
-	EncryptKey        string              `json:"encrypt_key" env:"V1CLAW_CHANNELS_FEISHU_ENCRYPT_KEY"`
-	VerificationToken string              `json:"verification_token" env:"V1CLAW_CHANNELS_FEISHU_VERIFICATION_TOKEN"`
-	AllowFrom         FlexibleStringSlice `json:"allow_from" env:"V1CLAW_CHANNELS_FEISHU_ALLOW_FROM"`
-}
-
-type DiscordConfig struct {
-	Enabled   bool                `json:"enabled" env:"V1CLAW_CHANNELS_DISCORD_ENABLED"`
-	Token     string              `json:"token" env:"V1CLAW_CHANNELS_DISCORD_TOKEN"`
-	AllowFrom FlexibleStringSlice `json:"allow_from" env:"V1CLAW_CHANNELS_DISCORD_ALLOW_FROM"`
-}
-
-type MaixCamConfig struct {
-	Enabled   bool                `json:"enabled" env:"V1CLAW_CHANNELS_MAIXCAM_ENABLED"`
-	Host      string              `json:"host" env:"V1CLAW_CHANNELS_MAIXCAM_HOST"`
-	Port      int                 `json:"port" env:"V1CLAW_CHANNELS_MAIXCAM_PORT"`
-	Token     string              `json:"token" env:"V1CLAW_CHANNELS_MAIXCAM_TOKEN"`
-	AllowFrom FlexibleStringSlice `json:"allow_from" env:"V1CLAW_CHANNELS_MAIXCAM_ALLOW_FROM"`
-}
-
-type QQConfig struct {
-	Enabled   bool                `json:"enabled" env:"V1CLAW_CHANNELS_QQ_ENABLED"`
-	AppID     string              `json:"app_id" env:"V1CLAW_CHANNELS_QQ_APP_ID"`
-	AppSecret string              `json:"app_secret" env:"V1CLAW_CHANNELS_QQ_APP_SECRET"`
-	AllowFrom FlexibleStringSlice `json:"allow_from" env:"V1CLAW_CHANNELS_QQ_ALLOW_FROM"`
-}
-
-type DingTalkConfig struct {
-	Enabled      bool                `json:"enabled" env:"V1CLAW_CHANNELS_DINGTALK_ENABLED"`
-	ClientID     string              `json:"client_id" env:"V1CLAW_CHANNELS_DINGTALK_CLIENT_ID"`
-	ClientSecret string              `json:"client_secret" env:"V1CLAW_CHANNELS_DINGTALK_CLIENT_SECRET"`
-	AllowFrom    FlexibleStringSlice `json:"allow_from" env:"V1CLAW_CHANNELS_DINGTALK_ALLOW_FROM"`
-}
-
-type SlackConfig struct {
-	Enabled   bool                `json:"enabled" env:"V1CLAW_CHANNELS_SLACK_ENABLED"`
-	BotToken  string              `json:"bot_token" env:"V1CLAW_CHANNELS_SLACK_BOT_TOKEN"`
-	AppToken  string              `json:"app_token" env:"V1CLAW_CHANNELS_SLACK_APP_TOKEN"`
-	AllowFrom FlexibleStringSlice `json:"allow_from" env:"V1CLAW_CHANNELS_SLACK_ALLOW_FROM"`
-}
-
-type LINEConfig struct {
-	Enabled            bool                `json:"enabled" env:"V1CLAW_CHANNELS_LINE_ENABLED"`
-	ChannelSecret      string              `json:"channel_secret" env:"V1CLAW_CHANNELS_LINE_CHANNEL_SECRET"`
-	ChannelAccessToken string              `json:"channel_access_token" env:"V1CLAW_CHANNELS_LINE_CHANNEL_ACCESS_TOKEN"`
-	WebhookHost        string              `json:"webhook_host" env:"V1CLAW_CHANNELS_LINE_WEBHOOK_HOST"`
-	WebhookPort        int                 `json:"webhook_port" env:"V1CLAW_CHANNELS_LINE_WEBHOOK_PORT"`
-	WebhookPath        string              `json:"webhook_path" env:"V1CLAW_CHANNELS_LINE_WEBHOOK_PATH"`
-	AllowFrom          FlexibleStringSlice `json:"allow_from" env:"V1CLAW_CHANNELS_LINE_ALLOW_FROM"`
-}
-
-type OneBotConfig struct {
-	Enabled            bool                `json:"enabled" env:"V1CLAW_CHANNELS_ONEBOT_ENABLED"`
-	WSUrl              string              `json:"ws_url" env:"V1CLAW_CHANNELS_ONEBOT_WS_URL"`
-	AccessToken        string              `json:"access_token" env:"V1CLAW_CHANNELS_ONEBOT_ACCESS_TOKEN"`
-	ReconnectInterval  int                 `json:"reconnect_interval" env:"V1CLAW_CHANNELS_ONEBOT_RECONNECT_INTERVAL"`
-	GroupTriggerPrefix []string            `json:"group_trigger_prefix" env:"V1CLAW_CHANNELS_ONEBOT_GROUP_TRIGGER_PREFIX"`
-	AllowFrom          FlexibleStringSlice `json:"allow_from" env:"V1CLAW_CHANNELS_ONEBOT_ALLOW_FROM"`
 }
 
 type HeartbeatConfig struct {
@@ -242,6 +171,11 @@ type ProvidersConfig struct {
 	ShengSuanYun  ProviderConfig    `json:"shengsuanyun"`
 	DeepSeek      ProviderConfig    `json:"deepseek"`
 	GitHubCopilot ProviderConfig    `json:"github_copilot"`
+	Mistral       ProviderConfig    `json:"mistral"`
+	XAI           ProviderConfig    `json:"xai"`
+	Cerebras      ProviderConfig    `json:"cerebras"`
+	SambaNova     ProviderConfig    `json:"sambanova"`
+	GitHubModels  ProviderConfig    `json:"github_models"`
 	Vertex        VertexConfig      `json:"vertex"`
 	Bedrock       BedrockConfig     `json:"bedrock"`
 	AzureOpenAI   AzureOpenAIConfig `json:"azure_openai"`
@@ -409,60 +343,6 @@ func DefaultConfig() *Config {
 				Token:     "",
 				AllowFrom: FlexibleStringSlice{},
 			},
-			Feishu: FeishuConfig{
-				Enabled:           false,
-				AppID:             "",
-				AppSecret:         "",
-				EncryptKey:        "",
-				VerificationToken: "",
-				AllowFrom:         FlexibleStringSlice{},
-			},
-			Discord: DiscordConfig{
-				Enabled:   false,
-				Token:     "",
-				AllowFrom: FlexibleStringSlice{},
-			},
-			MaixCam: MaixCamConfig{
-				Enabled:   false,
-				Host:      "0.0.0.0",
-				Port:      18790,
-				AllowFrom: FlexibleStringSlice{},
-			},
-			QQ: QQConfig{
-				Enabled:   false,
-				AppID:     "",
-				AppSecret: "",
-				AllowFrom: FlexibleStringSlice{},
-			},
-			DingTalk: DingTalkConfig{
-				Enabled:      false,
-				ClientID:     "",
-				ClientSecret: "",
-				AllowFrom:    FlexibleStringSlice{},
-			},
-			Slack: SlackConfig{
-				Enabled:   false,
-				BotToken:  "",
-				AppToken:  "",
-				AllowFrom: FlexibleStringSlice{},
-			},
-			LINE: LINEConfig{
-				Enabled:            false,
-				ChannelSecret:      "",
-				ChannelAccessToken: "",
-				WebhookHost:        "0.0.0.0",
-				WebhookPort:        18791,
-				WebhookPath:        "/webhook/line",
-				AllowFrom:          FlexibleStringSlice{},
-			},
-			OneBot: OneBotConfig{
-				Enabled:            false,
-				WSUrl:              "ws://127.0.0.1:3001",
-				AccessToken:        "",
-				ReconnectInterval:  5,
-				GroupTriggerPrefix: []string{},
-				AllowFrom:          FlexibleStringSlice{},
-			},
 		},
 		Providers: ProvidersConfig{
 			Anthropic:    ProviderConfig{},
@@ -475,6 +355,11 @@ func DefaultConfig() *Config {
 			Nvidia:       ProviderConfig{},
 			Moonshot:     ProviderConfig{},
 			ShengSuanYun: ProviderConfig{},
+			Mistral:      ProviderConfig{},
+			XAI:          ProviderConfig{},
+			Cerebras:     ProviderConfig{},
+			SambaNova:    ProviderConfig{},
+			GitHubModels: ProviderConfig{},
 		},
 		Gateway: GatewayConfig{
 			Host: "127.0.0.1",
@@ -583,6 +468,11 @@ func expandConfigEnvVars(cfg *Config) {
 	expand(&cfg.Providers.VLLM)
 	expand(&cfg.Providers.Ollama)
 	expand(&cfg.Providers.GitHubCopilot)
+	expand(&cfg.Providers.Mistral)
+	expand(&cfg.Providers.XAI)
+	expand(&cfg.Providers.Cerebras)
+	expand(&cfg.Providers.SambaNova)
+	expand(&cfg.Providers.GitHubModels)
 	// Enterprise providers: expand structured credential fields.
 	cfg.Providers.Vertex.ProjectID = expandEnvVar(cfg.Providers.Vertex.ProjectID)
 	cfg.Providers.Vertex.Location = expandEnvVar(cfg.Providers.Vertex.Location)
@@ -617,6 +507,11 @@ func applyProviderEnvOverrides(cfg *Config) {
 		{"SHENGSUANYUN", &cfg.Providers.ShengSuanYun},
 		{"DEEPSEEK", &cfg.Providers.DeepSeek},
 		{"GITHUB_COPILOT", &cfg.Providers.GitHubCopilot},
+		{"MISTRAL", &cfg.Providers.Mistral},
+		{"XAI", &cfg.Providers.XAI},
+		{"CEREBRAS", &cfg.Providers.Cerebras},
+		{"SAMBANOVA", &cfg.Providers.SambaNova},
+		{"GITHUB_MODELS", &cfg.Providers.GitHubModels},
 	}
 	for _, pe := range providers {
 		prefix := "V1CLAW_PROVIDERS_" + pe.name + "_"

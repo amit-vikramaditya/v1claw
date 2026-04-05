@@ -16,24 +16,15 @@ func TestRunDoctor_ReturnsFalseWithoutConfig(t *testing.T) {
 func TestEnabledChannelNames(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.Channels.Telegram.Enabled = true
-	cfg.Channels.Slack.Enabled = true
-	cfg.Channels.OneBot.Enabled = true
+	cfg.Channels.WhatsApp.Enabled = true
 
-	assert.Equal(t, []string{"Telegram", "Slack", "OneBot"}, enabledChannelNames(cfg))
+	assert.Equal(t, []string{"Telegram", "WhatsApp"}, enabledChannelNames(cfg))
 }
 
 func TestDisableAllChannels(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.Channels.Telegram.Enabled = true
-	cfg.Channels.Discord.Enabled = true
-	cfg.Channels.Slack.Enabled = true
 	cfg.Channels.WhatsApp.Enabled = true
-	cfg.Channels.LINE.Enabled = true
-	cfg.Channels.DingTalk.Enabled = true
-	cfg.Channels.Feishu.Enabled = true
-	cfg.Channels.QQ.Enabled = true
-	cfg.Channels.OneBot.Enabled = true
-	cfg.Channels.MaixCam.Enabled = true
 
 	disableAllChannels(cfg)
 

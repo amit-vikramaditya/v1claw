@@ -185,6 +185,16 @@ func apiKeyFromConfig(cfg *config.Config, providerID string) string {
 		return cfg.Providers.VLLM.APIKey
 	case "github_copilot":
 		return cfg.Providers.GitHubCopilot.APIKey
+	case "mistral":
+		return cfg.Providers.Mistral.APIKey
+	case "xai", "grok":
+		return cfg.Providers.XAI.APIKey
+	case "cerebras":
+		return cfg.Providers.Cerebras.APIKey
+	case "sambanova":
+		return cfg.Providers.SambaNova.APIKey
+	case "github_models":
+		return cfg.Providers.GitHubModels.APIKey
 	default:
 		return ""
 	}

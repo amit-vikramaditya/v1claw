@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -174,9 +175,24 @@ func (t *ExecTool) Execute(ctx context.Context, tc ToolContext, args map[string]
 		}
 	}
 
+	segments, err := splitPipelineSegments(vettedCommand)
+	if err != nil {
+		return ErrorResult(fmt.Sprintf("Command blocked by safety guard (%v)", err))
+	}
+	if len(segments) == 0 {
+		return ErrorResult("command is empty")
+	}
+
 	// 2. Legacy Pattern Guarding (still here for a second layer of defense/specific hardware checks)
-	if guardError := t.guardCommand(vettedCommand, cwd); guardError != "" {
-		return ErrorResult(guardError)
+	for _, segment := range segments {
+		if t.securityMiddleware != nil {
+			if _, err := t.securityMiddleware.VerifyCommand(segment); err != nil {
+				return ErrorResult(fmt.Sprintf("Security violation: %v", err))
+			}
+		}
+		if guardError := t.guardCommand(segment, cwd); guardError != "" {
+			return ErrorResult(guardError)
+		}
 	}
 
 	// ... continue with execution using vettedCommand
@@ -189,42 +205,31 @@ func (t *ExecTool) Execute(ctx context.Context, tc ToolContext, args map[string]
 	}
 	defer cancel()
 
-	// Determine command and arguments for direct execution.
-	// This entirely bypasses 'sh -c' to prevent shell injection.
-	program, argsSlice := parseCommandForDirectExecution(vettedCommand)
-	if program == "" {
-		return ErrorResult("Failed to parse command for direct execution or empty command")
-	}
-
-	if guardError := guardParsedCommand(program, argsSlice); guardError != "" {
-		return ErrorResult(guardError)
-	}
-
-	// 3. Program Path Validation (Security against arbitrary binary execution)
-	if t.restrictToWorkspace {
-		// Attempt to resolve the program in the PATH
-		resolvedProgram, err := exec.LookPath(program)
-		if err != nil {
-			return ErrorResult(fmt.Sprintf("Program '%s' not found in PATH or not executable", program))
+	parsed := make([]parsedExecCommand, 0, len(segments))
+	for _, segment := range segments {
+		program, argsSlice := parseCommandForDirectExecution(segment)
+		if program == "" {
+			return ErrorResult("Failed to parse command for direct execution or empty command")
 		}
-		program = resolvedProgram
+
+		if guardError := guardParsedCommand(program, argsSlice); guardError != "" {
+			return ErrorResult(guardError)
+		}
+
+		// 3. Program Path Validation (Security against arbitrary binary execution)
+		if t.restrictToWorkspace {
+			// Attempt to resolve the program in the PATH
+			resolvedProgram, err := exec.LookPath(program)
+			if err != nil {
+				return ErrorResult(fmt.Sprintf("Program '%s' not found in PATH or not executable", program))
+			}
+			program = resolvedProgram
+		}
+
+		parsed = append(parsed, parsedExecCommand{program: program, args: argsSlice})
 	}
 
-	var cmd *exec.Cmd
-	cmd = exec.CommandContext(cmdCtx, program, argsSlice...)
-	if cwd != "" {
-		cmd.Dir = cwd
-	}
-
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	err := cmd.Run()
-	output := stdout.String()
-	if stderr.Len() > 0 {
-		output += "\nSTDERR:\n" + stderr.String()
-	}
+	output, err := runParsedCommands(cmdCtx, cwd, parsed)
 
 	if err != nil {
 		if cmdCtx.Err() == context.DeadlineExceeded {
@@ -260,6 +265,165 @@ func (t *ExecTool) Execute(ctx context.Context, tc ToolContext, args map[string]
 		ForUser: output,
 		IsError: false,
 	}
+}
+
+type parsedExecCommand struct {
+	program string
+	args    []string
+}
+
+func runParsedCommands(ctx context.Context, cwd string, parsed []parsedExecCommand) (string, error) {
+	if len(parsed) == 0 {
+		return "", fmt.Errorf("no command to execute")
+	}
+
+	// Fast path for a single command.
+	if len(parsed) == 1 {
+		cmd := exec.CommandContext(ctx, parsed[0].program, parsed[0].args...)
+		if cwd != "" {
+			cmd.Dir = cwd
+		}
+
+		var stdout, stderr bytes.Buffer
+		cmd.Stdout = &stdout
+		cmd.Stderr = &stderr
+
+		err := cmd.Run()
+		output := stdout.String()
+		if stderr.Len() > 0 {
+			if output != "" {
+				output += "\n"
+			}
+			output += "STDERR:\n" + stderr.String()
+		}
+		return output, err
+	}
+
+	// Pipeline path. Each segment is still executed without invoking a shell.
+	cmds := make([]*exec.Cmd, 0, len(parsed))
+	var stderr bytes.Buffer
+	var finalStdout bytes.Buffer
+	var prevStdout io.ReadCloser
+
+	for i, item := range parsed {
+		cmd := exec.CommandContext(ctx, item.program, item.args...)
+		if cwd != "" {
+			cmd.Dir = cwd
+		}
+		cmd.Stderr = &stderr
+
+		if prevStdout != nil {
+			cmd.Stdin = prevStdout
+		}
+
+		if i < len(parsed)-1 {
+			stdoutPipe, err := cmd.StdoutPipe()
+			if err != nil {
+				return "", err
+			}
+			prevStdout = stdoutPipe
+		} else {
+			cmd.Stdout = &finalStdout
+		}
+
+		cmds = append(cmds, cmd)
+	}
+
+	for _, cmd := range cmds {
+		if err := cmd.Start(); err != nil {
+			return "", err
+		}
+	}
+
+	var runErr error
+	for _, cmd := range cmds {
+		if err := cmd.Wait(); err != nil && runErr == nil {
+			runErr = err
+		}
+	}
+
+	output := finalStdout.String()
+	if stderr.Len() > 0 {
+		if output != "" {
+			output += "\n"
+		}
+		output += "STDERR:\n" + stderr.String()
+	}
+
+	return output, runErr
+}
+
+func splitPipelineSegments(command string) ([]string, error) {
+	runes := []rune(command)
+	if len(runes) == 0 {
+		return nil, nil
+	}
+
+	var segments []string
+	var current strings.Builder
+	inSingleQuote := false
+	inDoubleQuote := false
+	escapeNext := false
+
+	flush := func() error {
+		seg := strings.TrimSpace(current.String())
+		current.Reset()
+		if seg == "" {
+			return fmt.Errorf("invalid pipeline segment")
+		}
+		segments = append(segments, seg)
+		return nil
+	}
+
+	for i, r := range runes {
+		if escapeNext {
+			current.WriteRune(r)
+			escapeNext = false
+			continue
+		}
+
+		if r == '\\' {
+			current.WriteRune(r)
+			escapeNext = true
+			continue
+		}
+
+		if r == '\'' && !inDoubleQuote {
+			inSingleQuote = !inSingleQuote
+			current.WriteRune(r)
+			continue
+		}
+
+		if r == '"' && !inSingleQuote {
+			inDoubleQuote = !inDoubleQuote
+			current.WriteRune(r)
+			continue
+		}
+
+		if r == '|' && !inSingleQuote && !inDoubleQuote {
+			if i+1 < len(runes) && runes[i+1] == '|' {
+				return nil, fmt.Errorf("unsupported operator ||")
+			}
+			if err := flush(); err != nil {
+				return nil, err
+			}
+			continue
+		}
+
+		current.WriteRune(r)
+	}
+
+	if inSingleQuote || inDoubleQuote {
+		return nil, fmt.Errorf("unclosed quote in command")
+	}
+
+	if strings.TrimSpace(current.String()) != "" {
+		if err := flush(); err != nil {
+			return nil, err
+		}
+	}
+
+	return segments, nil
 }
 
 func (t *ExecTool) guardCommand(command, cwd string) string {

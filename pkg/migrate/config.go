@@ -162,99 +162,14 @@ func ConvertConfig(data map[string]interface{}, openClawHome, v1ClawHome string)
 				if v, ok := getString(cMap, "token"); ok {
 					cfg.Channels.Telegram.Token = v
 				}
-			case "discord":
-				cfg.Channels.Discord.Enabled = enabled
-				cfg.Channels.Discord.AllowFrom = allowFrom
-				if v, ok := getString(cMap, "token"); ok {
-					cfg.Channels.Discord.Token = v
-				}
 			case "whatsapp":
 				cfg.Channels.WhatsApp.Enabled = enabled
 				cfg.Channels.WhatsApp.AllowFrom = allowFrom
 				if v, ok := getString(cMap, "bridge_url"); ok {
 					cfg.Channels.WhatsApp.BridgeURL = v
 				}
-			case "feishu":
-				cfg.Channels.Feishu.Enabled = enabled
-				cfg.Channels.Feishu.AllowFrom = allowFrom
-				if v, ok := getString(cMap, "app_id"); ok {
-					cfg.Channels.Feishu.AppID = v
-				}
-				if v, ok := getString(cMap, "app_secret"); ok {
-					cfg.Channels.Feishu.AppSecret = v
-				}
-				if v, ok := getString(cMap, "encrypt_key"); ok {
-					cfg.Channels.Feishu.EncryptKey = v
-				}
-				if v, ok := getString(cMap, "verification_token"); ok {
-					cfg.Channels.Feishu.VerificationToken = v
-				}
-			case "qq":
-				cfg.Channels.QQ.Enabled = enabled
-				cfg.Channels.QQ.AllowFrom = allowFrom
-				if v, ok := getString(cMap, "app_id"); ok {
-					cfg.Channels.QQ.AppID = v
-				}
-				if v, ok := getString(cMap, "app_secret"); ok {
-					cfg.Channels.QQ.AppSecret = v
-				}
-			case "dingtalk":
-				cfg.Channels.DingTalk.Enabled = enabled
-				cfg.Channels.DingTalk.AllowFrom = allowFrom
-				if v, ok := getString(cMap, "client_id"); ok {
-					cfg.Channels.DingTalk.ClientID = v
-				}
-				if v, ok := getString(cMap, "client_secret"); ok {
-					cfg.Channels.DingTalk.ClientSecret = v
-				}
-			case "slack":
-				cfg.Channels.Slack.Enabled = enabled
-				cfg.Channels.Slack.AllowFrom = allowFrom
-				if v, ok := getString(cMap, "bot_token"); ok {
-					cfg.Channels.Slack.BotToken = v
-				}
-				if v, ok := getString(cMap, "app_token"); ok {
-					cfg.Channels.Slack.AppToken = v
-				}
-			case "line":
-				cfg.Channels.LINE.Enabled = enabled
-				cfg.Channels.LINE.AllowFrom = allowFrom
-				if v, ok := getString(cMap, "channel_secret"); ok {
-					cfg.Channels.LINE.ChannelSecret = v
-				}
-				if v, ok := getString(cMap, "channel_access_token"); ok {
-					cfg.Channels.LINE.ChannelAccessToken = v
-				}
-				if v, ok := getString(cMap, "webhook_host"); ok {
-					cfg.Channels.LINE.WebhookHost = v
-				}
-				if v, ok := getFloat(cMap, "webhook_port"); ok {
-					cfg.Channels.LINE.WebhookPort = int(v)
-				}
-				if v, ok := getString(cMap, "webhook_path"); ok {
-					cfg.Channels.LINE.WebhookPath = v
-				}
-			case "onebot":
-				cfg.Channels.OneBot.Enabled = enabled
-				cfg.Channels.OneBot.AllowFrom = allowFrom
-				if v, ok := getString(cMap, "ws_url"); ok {
-					cfg.Channels.OneBot.WSUrl = v
-				}
-				if v, ok := getString(cMap, "access_token"); ok {
-					cfg.Channels.OneBot.AccessToken = v
-				}
-				if v, ok := getFloat(cMap, "reconnect_interval"); ok {
-					cfg.Channels.OneBot.ReconnectInterval = int(v)
-				}
-			case "maixcam":
-				cfg.Channels.MaixCam.Enabled = enabled
-				cfg.Channels.MaixCam.AllowFrom = allowFrom
-				if v, ok := getString(cMap, "host"); ok {
-					cfg.Channels.MaixCam.Host = v
-				}
-				if v, ok := getFloat(cMap, "port"); ok {
-					cfg.Channels.MaixCam.Port = int(v)
-				}
+			case "discord", "feishu", "qq", "dingtalk", "slack", "line", "onebot", "maixcam":
+				// Legacy channels — silently skip during migration
 			}
 		}
 	}
@@ -315,23 +230,8 @@ func MergeConfig(existing, incoming *config.Config) *config.Config {
 	if !existing.Channels.Telegram.Enabled && incoming.Channels.Telegram.Enabled {
 		existing.Channels.Telegram = incoming.Channels.Telegram
 	}
-	if !existing.Channels.Discord.Enabled && incoming.Channels.Discord.Enabled {
-		existing.Channels.Discord = incoming.Channels.Discord
-	}
 	if !existing.Channels.WhatsApp.Enabled && incoming.Channels.WhatsApp.Enabled {
 		existing.Channels.WhatsApp = incoming.Channels.WhatsApp
-	}
-	if !existing.Channels.Feishu.Enabled && incoming.Channels.Feishu.Enabled {
-		existing.Channels.Feishu = incoming.Channels.Feishu
-	}
-	if !existing.Channels.QQ.Enabled && incoming.Channels.QQ.Enabled {
-		existing.Channels.QQ = incoming.Channels.QQ
-	}
-	if !existing.Channels.DingTalk.Enabled && incoming.Channels.DingTalk.Enabled {
-		existing.Channels.DingTalk = incoming.Channels.DingTalk
-	}
-	if !existing.Channels.MaixCam.Enabled && incoming.Channels.MaixCam.Enabled {
-		existing.Channels.MaixCam = incoming.Channels.MaixCam
 	}
 
 	if existing.Tools.Web.Brave.APIKey == "" {

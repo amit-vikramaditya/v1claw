@@ -46,8 +46,9 @@ func TestResolveBuiltinSkillsDir_FallsBackToGlobalSkills(t *testing.T) {
 	assert.Equal(t, globalSkillsDir, resolved)
 }
 
-func TestLoadBootstrapFiles_PrefersAgentFileAndIncludesBootstrapFiles(t *testing.T) {
+func TestLoadBootstrapFiles_PrefersAgentsFileAndIncludesBootstrapFiles(t *testing.T) {
 	workspace := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "AGENTS.md"), []byte("agents"), 0644))
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, "AGENT.md"), []byte("agent"), 0644))
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, "BOOTSTRAP.md"), []byte("bootstrap"), 0644))
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, "SOUL.md"), []byte("soul"), 0644))
@@ -58,7 +59,9 @@ func TestLoadBootstrapFiles_PrefersAgentFileAndIncludesBootstrapFiles(t *testing
 	cb := NewContextBuilder(workspace)
 	content := cb.LoadBootstrapFiles()
 
-	assert.Contains(t, content, `filename="AGENT.md"`)
+	assert.Contains(t, content, `filename="AGENTS.md"`)
+	assert.Contains(t, content, "agents")
+	assert.NotContains(t, content, `filename="AGENT.md"`)
 	assert.Contains(t, content, `filename="BOOTSTRAP.md"`)
 	assert.Contains(t, content, `filename="TOOLS.md"`)
 	assert.NotContains(t, content, "<missing_workspace_file")

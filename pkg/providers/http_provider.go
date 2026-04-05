@@ -540,6 +540,47 @@ func CreateProvider(cfg *config.Config) (LLMProvider, error) {
 			}
 			return NewGitHubCopilotProviderWithSandbox(apiBase, connectMode, model, cfg.Workspace.Sandboxed)
 
+		case "mistral":
+			if cfg.Providers.Mistral.APIKey != "" {
+				apiKey = cfg.Providers.Mistral.APIKey
+				apiBase = cfg.Providers.Mistral.APIBase
+				if apiBase == "" {
+					apiBase = "https://api.mistral.ai/v1"
+				}
+			}
+		case "xai", "grok":
+			if cfg.Providers.XAI.APIKey != "" {
+				apiKey = cfg.Providers.XAI.APIKey
+				apiBase = cfg.Providers.XAI.APIBase
+				if apiBase == "" {
+					apiBase = "https://api.x.ai/v1"
+				}
+			}
+		case "cerebras":
+			if cfg.Providers.Cerebras.APIKey != "" {
+				apiKey = cfg.Providers.Cerebras.APIKey
+				apiBase = cfg.Providers.Cerebras.APIBase
+				if apiBase == "" {
+					apiBase = "https://api.cerebras.ai/v1"
+				}
+			}
+		case "sambanova":
+			if cfg.Providers.SambaNova.APIKey != "" {
+				apiKey = cfg.Providers.SambaNova.APIKey
+				apiBase = cfg.Providers.SambaNova.APIBase
+				if apiBase == "" {
+					apiBase = "https://api.sambanova.ai/v1"
+				}
+			}
+		case "github_models":
+			if cfg.Providers.GitHubModels.APIKey != "" {
+				apiKey = cfg.Providers.GitHubModels.APIKey
+				apiBase = cfg.Providers.GitHubModels.APIBase
+				if apiBase == "" {
+					apiBase = "https://models.inference.ai.azure.com"
+				}
+			}
+
 		}
 
 	}

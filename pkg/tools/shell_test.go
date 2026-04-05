@@ -272,6 +272,50 @@ func TestShellTool_BlocksXargs(t *testing.T) {
 	}
 }
 
+func TestShellTool_PipelineWorksWithoutShell(t *testing.T) {
+	tool := NewExecTool("", false, nil)
+
+	result := tool.Execute(context.Background(), ToolContext{}, map[string]interface{}{
+		"command": "printf 'alpha\\nbeta\\n' | wc -l",
+	})
+
+	if result.IsError {
+		t.Fatalf("expected pipeline to execute successfully, got error: %s", result.ForLLM)
+	}
+
+	if !strings.Contains(result.ForLLM, "2") {
+		t.Fatalf("expected pipeline output to contain line count 2, got: %s", result.ForLLM)
+	}
+}
+
+func TestShellTool_PipelineEnforcesAllowlistForEverySegment(t *testing.T) {
+	tool := NewExecTool("", false, nil)
+
+	result := tool.Execute(context.Background(), ToolContext{}, map[string]interface{}{
+		"command": "echo ok | python3 -c \"print('x')\"",
+	})
+
+	if !result.IsError {
+		t.Fatalf("expected pipeline with disallowed command to be blocked")
+	}
+
+	if !strings.Contains(strings.ToLower(result.ForLLM), "allowlist") && !strings.Contains(strings.ToLower(result.ForLLM), "security violation") {
+		t.Fatalf("expected security/allowlist error, got: %s", result.ForLLM)
+	}
+}
+
+func TestShellTool_BlocksUnsupportedLogicalOrOperator(t *testing.T) {
+	tool := NewExecTool("", false, nil)
+
+	result := tool.Execute(context.Background(), ToolContext{}, map[string]interface{}{
+		"command": "echo ok || echo fail",
+	})
+
+	if !result.IsError {
+		t.Fatalf("expected unsupported logical OR operator to be blocked")
+	}
+}
+
 func TestNewExecToolForWorkspace_SandboxedUsesDefaultAllowlist(t *testing.T) {
 	tool := NewExecToolForWorkspace(t.TempDir(), true, true, nil)
 

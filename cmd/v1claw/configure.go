@@ -66,13 +66,16 @@ var traditional = []providerInfo{
 	{id: "vertex", name: "Google Vertex AI", desc: "Enterprise Gemini: 10× limits, grounding, long-running tasks", keyHint: "No key needed — uses gcloud auth (run: gcloud auth application-default login)", keyURL: "https://cloud.google.com/vertex-ai"},
 	{id: "openai", name: "OpenAI", desc: "GPT-5, GPT-4o, o3", keyHint: "OpenAI API key (starts with sk-)", keyURL: "https://platform.openai.com/api-keys"},
 	{id: "anthropic", name: "Anthropic", desc: "Claude Opus 4.6, Sonnet", keyHint: "Anthropic API key (starts with sk-ant-)", keyURL: "https://console.anthropic.com/keys"},
+	{id: "mistral", name: "Mistral AI", desc: "Mistral Large, Medium, Small — free tier available", keyHint: "Mistral API key", keyURL: "https://console.mistral.ai/api-keys"},
+	{id: "xai", name: "xAI (Grok)", desc: "Grok-2, Grok-3 — Elon's frontier model", keyHint: "xAI API key", keyURL: "https://console.x.ai"},
+	{id: "cerebras", name: "Cerebras", desc: "Llama 3.3 70B at 2000+ tok/s — fastest inference", keyHint: "Cerebras API key", keyURL: "https://cloud.cerebras.ai"},
+	{id: "sambanova", name: "SambaNova", desc: "Llama 3.1 405B, DeepSeek R1 — free tier available", keyHint: "SambaNova API key", keyURL: "https://cloud.sambanova.ai"},
+	{id: "github_models", name: "GitHub Models", desc: "GPT-4o, Llama, Mistral via GitHub token — free for devs", keyHint: "GitHub personal access token", keyURL: "https://github.com/marketplace/models"},
 	{id: "bedrock", name: "AWS Bedrock", desc: "Claude + Llama + Titan in your own AWS account, IAM auth", keyHint: "No key needed — uses ~/.aws/credentials or AWS env vars", keyURL: "https://console.aws.amazon.com/bedrock"},
 	{id: "azure_openai", name: "Azure OpenAI", desc: "Private GPT-4o endpoint, enterprise SLAs, AD auth", keyHint: "Azure OpenAI api_key from Azure Portal", keyURL: "https://portal.azure.com"},
 	{id: "groq", name: "Groq", desc: "Llama 3.3, 500+ tok/s — blazing fast tool loops", keyHint: "Groq API key", keyURL: "https://console.groq.com/keys"},
 	{id: "deepseek", name: "DeepSeek", desc: "DeepSeek V3, Coder", keyHint: "DeepSeek API key", keyURL: "https://platform.deepseek.com/api_keys"},
 	{id: "openrouter", name: "OpenRouter", desc: "100+ models, single API key", keyHint: "OpenRouter API key", keyURL: "https://openrouter.ai/keys"},
-	{id: "zhipu", name: "Zhipu AI", desc: "GLM reasoning and chat models", keyHint: "Zhipu API key", keyURL: "https://open.bigmodel.cn/usercenter/apikeys"},
-	{id: "moonshot", name: "Moonshot", desc: "Kimi cloud models", keyHint: "Moonshot API key", keyURL: "https://platform.moonshot.cn/console/api-keys"},
 	{id: "nvidia", name: "NVIDIA NIM", desc: "NVIDIA hosted models", keyHint: "NVIDIA API key", keyURL: "https://build.nvidia.com"},
 	{id: "ollama", name: "Ollama", desc: "Run local open-source models on your machine", keyHint: "No key needed — defaults to http://localhost:11434/v1", keyURL: ""},
 	{id: "vllm", name: "vLLM", desc: "OpenAI-compatible self-hosted endpoint", keyHint: "API key optional — set api_base for your server", keyURL: ""},
@@ -96,7 +99,6 @@ var providerModels = map[string][]string{
 		"claude-sonnet-4-5", "claude-3-5-sonnet", "claude-3-5-haiku", "llama-3-3-70b", "llama-3-1-405b", "nova-pro", "nova-lite",
 	},
 	"azure_openai": {
-		// For Azure, the "model" is the deployment name — list common deployment names.
 		"gpt-4o", "gpt-4o-mini", "gpt-4", "gpt-35-turbo",
 	},
 	"deepseek": {
@@ -110,6 +112,24 @@ var providerModels = map[string][]string{
 	},
 	"github_copilot": {
 		"gpt-4.1",
+	},
+	"mistral": {
+		"mistral-large-latest", "mistral-medium-latest", "mistral-small-latest", "codestral-latest",
+	},
+	"xai": {
+		"grok-3", "grok-3-mini", "grok-2",
+	},
+	"cerebras": {
+		"llama-3.3-70b", "llama-3.1-8b",
+	},
+	"sambanova": {
+		"Meta-Llama-3.1-405B-Instruct", "Meta-Llama-3.1-70B-Instruct", "DeepSeek-R1",
+	},
+	"github_models": {
+		"gpt-4o", "Meta-Llama-3.1-405B-Instruct", "Mistral-large",
+	},
+	"nvidia": {
+		"meta/llama-3.3-70b-instruct", "nvidia/llama-3.1-nemotron-70b-instruct",
 	},
 }
 
@@ -949,48 +969,10 @@ func configureChannels(cfg *config.Config) {
 		case "telegram":
 			promptChannelInput("Telegram Bot Token", "Get this from @BotFather", &cfg.Channels.Telegram.Token)
 			cfg.Channels.Telegram.Enabled = strings.TrimSpace(cfg.Channels.Telegram.Token) != ""
-		case "discord":
-			promptChannelInput("Discord Bot Token", "Create this in the Discord developer portal", &cfg.Channels.Discord.Token)
-			cfg.Channels.Discord.Enabled = strings.TrimSpace(cfg.Channels.Discord.Token) != ""
-		case "slack":
-			promptChannelInput("Slack Bot Token", "Starts with xoxb-", &cfg.Channels.Slack.BotToken)
-			promptChannelInput("Slack App Token", "Starts with xapp-", &cfg.Channels.Slack.AppToken)
-			cfg.Channels.Slack.Enabled = strings.TrimSpace(cfg.Channels.Slack.BotToken) != "" && strings.TrimSpace(cfg.Channels.Slack.AppToken) != ""
 		case "whatsapp":
 			promptChannelInput("WhatsApp Bridge URL", "Example: ws://127.0.0.1:3001", &cfg.Channels.WhatsApp.BridgeURL)
 			promptChannelInput("WhatsApp Bridge Token (optional)", "Leave empty if your bridge does not require auth", &cfg.Channels.WhatsApp.BridgeToken)
 			cfg.Channels.WhatsApp.Enabled = strings.TrimSpace(cfg.Channels.WhatsApp.BridgeURL) != ""
-		case "line":
-			promptChannelInput("LINE Channel Secret", "From your LINE Official Account settings", &cfg.Channels.LINE.ChannelSecret)
-			promptChannelInput("LINE Channel Access Token", "Messaging API access token", &cfg.Channels.LINE.ChannelAccessToken)
-			promptChannelInput("LINE Webhook Host", "Public host that LINE can reach", &cfg.Channels.LINE.WebhookHost)
-			promptChannelInt("LINE Webhook Port", "HTTP port for the local webhook server", &cfg.Channels.LINE.WebhookPort)
-			promptChannelInput("LINE Webhook Path", "Example: /webhook/line", &cfg.Channels.LINE.WebhookPath)
-			cfg.Channels.LINE.Enabled = strings.TrimSpace(cfg.Channels.LINE.ChannelSecret) != "" && strings.TrimSpace(cfg.Channels.LINE.ChannelAccessToken) != ""
-		case "dingtalk":
-			promptChannelInput("DingTalk Client ID", "From your DingTalk app settings", &cfg.Channels.DingTalk.ClientID)
-			promptChannelInput("DingTalk Client Secret", "From your DingTalk app settings", &cfg.Channels.DingTalk.ClientSecret)
-			cfg.Channels.DingTalk.Enabled = strings.TrimSpace(cfg.Channels.DingTalk.ClientID) != "" && strings.TrimSpace(cfg.Channels.DingTalk.ClientSecret) != ""
-		case "feishu":
-			promptChannelInput("Feishu App ID", "From your Feishu/Lark app settings", &cfg.Channels.Feishu.AppID)
-			promptChannelInput("Feishu App Secret", "From your Feishu/Lark app settings", &cfg.Channels.Feishu.AppSecret)
-			promptChannelInput("Feishu Encrypt Key (optional)", "Required only if your app uses encrypted events", &cfg.Channels.Feishu.EncryptKey)
-			promptChannelInput("Feishu Verification Token (optional)", "Required if your event subscription uses a token", &cfg.Channels.Feishu.VerificationToken)
-			cfg.Channels.Feishu.Enabled = strings.TrimSpace(cfg.Channels.Feishu.AppID) != "" && strings.TrimSpace(cfg.Channels.Feishu.AppSecret) != ""
-		case "qq":
-			promptChannelInput("QQ App ID", "From your QQ bot app settings", &cfg.Channels.QQ.AppID)
-			promptChannelInput("QQ App Secret", "From your QQ bot app settings", &cfg.Channels.QQ.AppSecret)
-			cfg.Channels.QQ.Enabled = strings.TrimSpace(cfg.Channels.QQ.AppID) != "" && strings.TrimSpace(cfg.Channels.QQ.AppSecret) != ""
-		case "onebot":
-			promptChannelInput("OneBot WebSocket URL", "Example: ws://127.0.0.1:3001", &cfg.Channels.OneBot.WSUrl)
-			promptChannelInput("OneBot Access Token (optional)", "Leave empty if your bridge does not require auth", &cfg.Channels.OneBot.AccessToken)
-			promptChannelInt("OneBot Reconnect Interval (seconds)", "How long to wait before reconnecting", &cfg.Channels.OneBot.ReconnectInterval)
-			cfg.Channels.OneBot.Enabled = strings.TrimSpace(cfg.Channels.OneBot.WSUrl) != ""
-		case "maixcam":
-			promptChannelInput("MaixCam Bind Host", "Example: 0.0.0.0", &cfg.Channels.MaixCam.Host)
-			promptChannelInt("MaixCam Port", "TCP port for incoming device connections", &cfg.Channels.MaixCam.Port)
-			promptChannelInput("MaixCam Token (optional)", "Leave empty if devices do not require a shared token", &cfg.Channels.MaixCam.Token)
-			cfg.Channels.MaixCam.Enabled = strings.TrimSpace(cfg.Channels.MaixCam.Host) != "" && cfg.Channels.MaixCam.Port > 0
 		}
 	}
 }
@@ -1002,15 +984,7 @@ func enabledChannelNames(cfg *config.Config) []string {
 	}
 	states := []channelState{
 		{name: "Telegram", enabled: cfg.Channels.Telegram.Enabled},
-		{name: "Discord", enabled: cfg.Channels.Discord.Enabled},
-		{name: "Slack", enabled: cfg.Channels.Slack.Enabled},
 		{name: "WhatsApp", enabled: cfg.Channels.WhatsApp.Enabled},
-		{name: "LINE", enabled: cfg.Channels.LINE.Enabled},
-		{name: "DingTalk", enabled: cfg.Channels.DingTalk.Enabled},
-		{name: "Feishu", enabled: cfg.Channels.Feishu.Enabled},
-		{name: "QQ", enabled: cfg.Channels.QQ.Enabled},
-		{name: "OneBot", enabled: cfg.Channels.OneBot.Enabled},
-		{name: "MaixCam", enabled: cfg.Channels.MaixCam.Enabled},
 	}
 
 	var enabled []string
@@ -1029,15 +1003,7 @@ func enabledChannelIDs(cfg *config.Config) []string {
 	}
 	states := []channelState{
 		{id: "telegram", enabled: cfg.Channels.Telegram.Enabled},
-		{id: "discord", enabled: cfg.Channels.Discord.Enabled},
-		{id: "slack", enabled: cfg.Channels.Slack.Enabled},
 		{id: "whatsapp", enabled: cfg.Channels.WhatsApp.Enabled},
-		{id: "line", enabled: cfg.Channels.LINE.Enabled},
-		{id: "dingtalk", enabled: cfg.Channels.DingTalk.Enabled},
-		{id: "feishu", enabled: cfg.Channels.Feishu.Enabled},
-		{id: "qq", enabled: cfg.Channels.QQ.Enabled},
-		{id: "onebot", enabled: cfg.Channels.OneBot.Enabled},
-		{id: "maixcam", enabled: cfg.Channels.MaixCam.Enabled},
 	}
 
 	var enabled []string
@@ -1051,15 +1017,7 @@ func enabledChannelIDs(cfg *config.Config) []string {
 
 func disableAllChannels(cfg *config.Config) {
 	cfg.Channels.Telegram.Enabled = false
-	cfg.Channels.Discord.Enabled = false
-	cfg.Channels.Slack.Enabled = false
 	cfg.Channels.WhatsApp.Enabled = false
-	cfg.Channels.LINE.Enabled = false
-	cfg.Channels.DingTalk.Enabled = false
-	cfg.Channels.Feishu.Enabled = false
-	cfg.Channels.QQ.Enabled = false
-	cfg.Channels.OneBot.Enabled = false
-	cfg.Channels.MaixCam.Enabled = false
 }
 
 func enabledPermissionIDs(cfg *config.Config) []string {

@@ -20,11 +20,11 @@ func TestLookupProviderInfo_UnknownProvider(t *testing.T) {
 func TestDefaultProviderModel(t *testing.T) {
 	assert.NotEmpty(t, defaultProviderModel("gemini"))
 	assert.NotEmpty(t, defaultProviderModel("github_copilot"))
-	assert.Empty(t, defaultProviderModel("nvidia"))
+	assert.NotEmpty(t, defaultProviderModel("nvidia"))
 }
 
 func TestSupportedProviderList_HasNoDuplicates(t *testing.T) {
-	assert.Equal(t, "gemini, vertex, openai, anthropic, bedrock, azure_openai, groq, deepseek, openrouter, zhipu, moonshot, nvidia, ollama, vllm, github_copilot", supportedProviderList())
+	assert.Equal(t, "gemini, vertex, openai, anthropic, mistral, xai, cerebras, sambanova, github_models, bedrock, azure_openai, groq, deepseek, openrouter, nvidia, ollama, vllm, github_copilot", supportedProviderList())
 }
 
 func TestProviderNeedsAPIKey(t *testing.T) {
