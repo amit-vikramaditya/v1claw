@@ -170,7 +170,11 @@ func extractTarball(r io.Reader, dest string) error {
 		}
 
 		cleanTarget := filepath.Join(destRoot, cleanName)
-		if !strings.HasPrefix(cleanTarget, destRoot+string(filepath.Separator)) && cleanTarget != destRoot {
+		relToRoot, err := filepath.Rel(destRoot, cleanTarget)
+		if err != nil {
+			return fmt.Errorf("invalid archive entry path: %s", header.Name)
+		}
+		if relToRoot == ".." || strings.HasPrefix(relToRoot, ".."+string(filepath.Separator)) {
 			return fmt.Errorf("archive entry escapes extraction root: %s", header.Name)
 		}
 
