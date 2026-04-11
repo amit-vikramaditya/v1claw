@@ -14,4 +14,4 @@ We currently provide security updates for the following versions:
 
 Please report security vulnerabilities by using the **"Report a vulnerability"** button under the **Security** tab of this repository. This allows you to report the issue privately to the maintainers.
 
-Alternatively, you can contact me directly at 'amit.vikramaditya@icloud.com'
+Alternatively, you can contact me directly at [amit.vikramaditya@icloud.com](mailto:amit.vikramaditya@icloud.com).

@@ -68,7 +68,7 @@ func (si *SkillInstaller) InstallFromGitHub(ctx context.Context, repo string) er
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != 200 {
+	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("failed to fetch skill: HTTP %d", resp.StatusCode)
 	}
 
@@ -253,13 +253,26 @@ func copySkillDir(src, dst string) error {
 		if err != nil {
 			return err
 		}
-		defer in.Close()
 
 		out, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)
 		if err != nil {
+			if cerr := in.Close(); cerr != nil {
+				return fmt.Errorf("failed to open output file: %v (additionally failed to close input file: %w)", err, cerr)
+			}
 			return err
 		}
 		if _, err := io.Copy(out, in); err != nil {
+			inErr := in.Close()
+			outErr := out.Close()
+			if inErr != nil {
+				return fmt.Errorf("copy failed: %v (additionally failed to close input file: %w)", err, inErr)
+			}
+			if outErr != nil {
+				return fmt.Errorf("copy failed: %v (additionally failed to close output file: %w)", err, outErr)
+			}
+			return err
+		}
+		if err := in.Close(); err != nil {
 			out.Close()
 			return err
 		}
@@ -289,7 +302,10 @@ func (si *SkillInstaller) Uninstall(skillName string) error {
 func (si *SkillInstaller) ListAvailableSkills(ctx context.Context) ([]AvailableSkill, error) {
 	url := "https://raw.githubusercontent.com/amit-vikramaditya/v1claw-skills/main/skills.json"
 
-	client := &http.Client{Timeout: 15 * time.Second}
+	client := si.client
+	if client == nil {
+		client = &http.Client{Timeout: 15 * time.Second}
+	}
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
@@ -301,7 +317,7 @@ func (si *SkillInstaller) ListAvailableSkills(ctx context.Context) ([]AvailableS
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != 200 {
+	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("failed to fetch skills list: HTTP %d", resp.StatusCode)
 	}
 
