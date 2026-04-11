@@ -273,7 +273,9 @@ func copySkillDir(src, dst string) error {
 				return fmt.Errorf("copy failed: %v (additionally failed to close output file: %w)", err, outErr)
 			}
 			return err
-		}
+			if outErr := out.Close(); outErr != nil {
+				return fmt.Errorf("failed to close input file: %v (additionally failed to close output file: %w)", err, outErr)
+			}
 		if err := in.Close(); err != nil {
 			out.Close()
 			return err
