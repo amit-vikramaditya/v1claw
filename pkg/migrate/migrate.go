@@ -341,10 +341,13 @@ func expandHome(path string) string {
 	if path == "" {
 		return path
 	}
-	if path[0] == '~' {
-		home, _ := os.UserHomeDir()
-		if len(path) > 1 && path[1] == '/' {
-			return home + path[1:]
+	if strings.HasPrefix(path, "~") {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return path
+		}
+		if strings.HasPrefix(path, "~/") {
+			return filepath.Join(home, path[2:])
 		}
 		return home
 	}
