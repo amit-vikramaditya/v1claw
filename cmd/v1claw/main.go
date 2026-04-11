@@ -598,13 +598,13 @@ func copyEmbeddedToTarget(targetDir string) error {
 			return fmt.Errorf("Failed to read embedded file %s: %w", path, err)
 		}
 
-		new_path, err := filepath.Rel("workspace", path)
+		newPath, err := filepath.Rel("workspace", path)
 		if err != nil {
 			return fmt.Errorf("Failed to get relative path for %s: %v\n", path, err)
 		}
 
 		// Build target file path
-		targetPath := filepath.Join(targetDir, new_path)
+		targetPath := filepath.Join(targetDir, newPath)
 
 		// Never clobber an existing workspace file. Users are expected to
 		// customize these templates, so only seed missing files.
@@ -1246,11 +1246,11 @@ func executeLocalCapability(capability, action string, params map[string]interfa
 			outFile := filepath.Join(os.TempDir(), fmt.Sprintf("v1claw_mic_%d.wav", time.Now().UnixNano()))
 			duration := 5 // Default to 5 seconds
 			if dStr, ok := params["duration"].(string); ok {
-				if parsedDuration, err := strconv.Atoi(dStr); err != nil {
+				parsedDuration, err := strconv.Atoi(dStr)
+				if err != nil {
 					return nil, fmt.Sprintf("invalid duration parameter: %v", err)
-				} else {
-					duration = parsedDuration
 				}
+				duration = parsedDuration
 			}
 			// Clamp duration to a reasonable maximum to prevent DoS (e.g., 5 minutes)
 			if duration > 300 {

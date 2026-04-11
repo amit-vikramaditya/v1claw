@@ -341,9 +341,9 @@ func expandHome(path string) string {
 	if path == "" {
 		return path
 	}
-	if path[0] == '~' {
+	if strings.HasPrefix(path, "~") {
 		home, _ := os.UserHomeDir()
-		if len(path) > 1 && path[1] == '/' {
+		if strings.HasPrefix(path, "~/") {
 			return home + path[1:]
 		}
 		return home
