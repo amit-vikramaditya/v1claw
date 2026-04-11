@@ -203,7 +203,7 @@ func (t *WriteFileTool) Parameters() map[string]interface{} {
 	}
 }
 
-func (t *WriteFileTool) Execute(ctx context.Context, tc ToolContext, args map[string]interface{}) *ToolResult {
+func (t *WriteFileTool) Execute(ctx context.Context, tc ToolContext, args map[string]interface{}) (res *ToolResult) {
 	path, ok := args["path"].(string)
 	if !ok {
 		return ErrorResult("path is required")
@@ -248,10 +248,17 @@ func (t *WriteFileTool) Execute(ctx context.Context, tc ToolContext, args map[st
 	if err != nil {
 		return ErrorResult(fmt.Sprintf("failed to open file for writing: %v", err))
 	}
-	defer f.Close()
+	defer func() {
+		if cerr := f.Close(); err == nil && cerr != nil {
+			err = cerr
+		}
+	}()
 
-	if _, err := f.Write([]byte(content)); err != nil {
+	if _, err = f.Write([]byte(content)); err != nil {
 		return ErrorResult(fmt.Sprintf("failed to write file: %v", err))
+	}
+	if err != nil {
+		return ErrorResult(fmt.Sprintf("failed to close file: %v", err))
 	}
 
 	return SilentResult(fmt.Sprintf("File written: %s", path))
