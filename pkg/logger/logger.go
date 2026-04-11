@@ -78,6 +78,8 @@ func EnableFileLogging(filePath string) error {
 
 	if logger.file != nil {
 		if err := logger.file.Close(); err != nil {
+			log.Printf("failed to close previous log file: %v", err)
+		}
 			_ = file.Close()
 			return fmt.Errorf("failed to close previous log file: %w", err)
 		}
@@ -90,7 +92,9 @@ func EnableFileLogging(filePath string) error {
 
 func DisableFileLogging() {
 	mu.Lock()
-	defer mu.Unlock()
+		if err := logger.file.Close(); err != nil {
+			log.Printf("failed to close log file: %v", err)
+		}
 
 	if logger.file != nil {
 		if err := logger.file.Close(); err != nil {
