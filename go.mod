@@ -6,7 +6,7 @@ require (
 	github.com/adhocore/gronx v1.19.6
 	github.com/anthropics/anthropic-sdk-go v1.35.0
 	github.com/bwmarrin/discordgo v0.29.0
-	github.com/caarlos0/env/v11 v11.3.1
+	github.com/caarlos0/env/v11 v11.4.0
 	github.com/charmbracelet/huh v0.8.0
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/chzyer/readline v1.5.1
