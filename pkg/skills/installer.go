@@ -150,6 +150,7 @@ func extractTarball(r io.Reader, dest string) error {
 	}
 	defer gzr.Close()
 
+	destRoot := filepath.Clean(dest)
 	tr := tar.NewReader(gzr)
 	for {
 		header, err := tr.Next()
@@ -160,9 +161,16 @@ func extractTarball(r io.Reader, dest string) error {
 			return err
 		}
 
-		targetPath := filepath.Join(dest, header.Name)
-		cleanTarget := filepath.Clean(targetPath)
-		if !strings.HasPrefix(cleanTarget, filepath.Clean(dest)+string(filepath.Separator)) && cleanTarget != filepath.Clean(dest) {
+		if header.Name == "" || filepath.IsAbs(header.Name) {
+			return fmt.Errorf("invalid archive entry path: %s", header.Name)
+		}
+		cleanName := filepath.Clean(header.Name)
+		if cleanName == "." || cleanName == ".." || strings.HasPrefix(cleanName, ".."+string(filepath.Separator)) {
+			return fmt.Errorf("archive entry escapes extraction root: %s", header.Name)
+		}
+
+		cleanTarget := filepath.Join(destRoot, cleanName)
+		if !strings.HasPrefix(cleanTarget, destRoot+string(filepath.Separator)) && cleanTarget != destRoot {
 			return fmt.Errorf("archive entry escapes extraction root: %s", header.Name)
 		}
 
