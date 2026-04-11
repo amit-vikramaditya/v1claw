@@ -141,7 +141,7 @@ func (t *AppendFileTool) Parameters() map[string]interface{} {
 	}
 }
 
-func (t *AppendFileTool) Execute(ctx context.Context, tc ToolContext, args map[string]interface{}) *ToolResult {
+func (t *AppendFileTool) Execute(ctx context.Context, tc ToolContext, args map[string]interface{}) (res *ToolResult) {
 	path, ok := args["path"].(string)
 	if !ok {
 		return ErrorResult("path is required")
@@ -161,11 +161,16 @@ func (t *AppendFileTool) Execute(ctx context.Context, tc ToolContext, args map[s
 	if err != nil {
 		return ErrorResult(fmt.Sprintf("failed to open file: %v", err))
 	}
-	defer f.Close()
+	defer func() {
+		if cerr := f.Close(); cerr != nil && res == nil {
+			res = ErrorResult(fmt.Sprintf("failed to close file: %v", cerr))
+		}
+	}()
 
 	if _, err := f.WriteString(content); err != nil {
 		return ErrorResult(fmt.Sprintf("failed to append to file: %v", err))
 	}
 
-	return SilentResult(fmt.Sprintf("Appended to %s", path))
+	res = SilentResult(fmt.Sprintf("Appended to %s", path))
+	return
 }
