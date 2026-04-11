@@ -170,10 +170,16 @@ func copyDirectory(src, dst string) error {
 		if err != nil {
 			return err
 		}
-		defer dstFile.Close()
 
 		_, err = io.Copy(dstFile, srcFile)
-		return err
+		if err != nil {
+			_ = dstFile.Close()
+			return err
+		}
+		if err := dstFile.Close(); err != nil {
+			return err
+		}
+		return nil
 	})
 }
 
@@ -578,7 +584,7 @@ func gatewayProviderConfigError(cfg *config.Config) error {
 func copyEmbeddedToTarget(targetDir string) error {
 	// Ensure target directory exists
 	if err := os.MkdirAll(targetDir, 0755); err != nil {
-		return fmt.Errorf("Failed to create target directory: %w", err)
+		return fmt.Errorf("failed to create target directory: %w", err)
 	}
 
 	// Walk through all files in embed.FS
@@ -595,33 +601,33 @@ func copyEmbeddedToTarget(targetDir string) error {
 		// Read embedded file
 		data, err := embeddedFiles.ReadFile(path)
 		if err != nil {
-			return fmt.Errorf("Failed to read embedded file %s: %w", path, err)
+			return fmt.Errorf("failed to read embedded file %s: %w", path, err)
 		}
 
-		new_path, err := filepath.Rel("workspace", path)
+		newPath, err := filepath.Rel("workspace", path)
 		if err != nil {
-			return fmt.Errorf("Failed to get relative path for %s: %v\n", path, err)
+			return fmt.Errorf("failed to get relative path for %s: %w", path, err)
 		}
 
 		// Build target file path
-		targetPath := filepath.Join(targetDir, new_path)
+		targetPath := filepath.Join(targetDir, newPath)
 
 		// Never clobber an existing workspace file. Users are expected to
 		// customize these templates, so only seed missing files.
 		if _, err := os.Stat(targetPath); err == nil {
 			return nil
 		} else if !os.IsNotExist(err) {
-			return fmt.Errorf("Failed to stat existing file %s: %w", targetPath, err)
+			return fmt.Errorf("failed to stat existing file %s: %w", targetPath, err)
 		}
 
 		// Ensure target file's directory exists
 		if err := os.MkdirAll(filepath.Dir(targetPath), 0755); err != nil {
-			return fmt.Errorf("Failed to create directory %s: %w", filepath.Dir(targetPath), err)
+			return fmt.Errorf("failed to create directory %s: %w", filepath.Dir(targetPath), err)
 		}
 
 		// Write file
 		if err := os.WriteFile(targetPath, data, 0644); err != nil {
-			return fmt.Errorf("Failed to write file %s: %w", targetPath, err)
+			return fmt.Errorf("failed to write file %s: %w", targetPath, err)
 		}
 
 		return nil
@@ -1245,11 +1251,19 @@ func executeLocalCapability(capability, action string, params map[string]interfa
 		if isTermux {
 			outFile := filepath.Join(os.TempDir(), fmt.Sprintf("v1claw_mic_%d.wav", time.Now().UnixNano()))
 			duration := 5 // Default to 5 seconds
-			if dStr, ok := params["duration"].(string); ok {
-				if parsedDuration, err := strconv.Atoi(dStr); err != nil {
-					return nil, fmt.Sprintf("invalid duration parameter: %v", err)
-				} else {
+			if rawDuration, exists := params["duration"]; exists {
+				switch v := rawDuration.(type) {
+				case string:
+					parsedDuration, err := strconv.Atoi(v)
+					if err != nil {
+						return nil, fmt.Sprintf("invalid duration parameter: %v", err)
+					}
 					duration = parsedDuration
+				case float64:
+					if v < 0 {
+						return nil, "invalid duration parameter: must be non-negative"
+					}
+					duration = int(v)
 				}
 			}
 			// Clamp duration to a reasonable maximum to prevent DoS (e.g., 5 minutes)

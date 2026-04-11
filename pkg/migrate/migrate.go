@@ -341,10 +341,13 @@ func expandHome(path string) string {
 	if path == "" {
 		return path
 	}
-	if path[0] == '~' {
-		home, _ := os.UserHomeDir()
-		if len(path) > 1 && path[1] == '/' {
-			return home + path[1:]
+	if strings.HasPrefix(path, "~") {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return path
+		}
+		if strings.HasPrefix(path, "~/") {
+			return filepath.Join(home, path[2:])
 		}
 		return home
 	}
@@ -356,7 +359,7 @@ func backupFile(path string) error {
 	return copyFile(path, bakPath)
 }
 
-func copyFile(src, dst string) error {
+func copyFile(src, dst string) (err error) {
 	srcFile, err := os.Open(src)
 	if err != nil {
 		return err
@@ -372,7 +375,11 @@ func copyFile(src, dst string) error {
 	if err != nil {
 		return err
 	}
-	defer dstFile.Close()
+	defer func() {
+		if cerr := dstFile.Close(); err == nil && cerr != nil {
+			err = cerr
+		}
+	}()
 
 	_, err = io.Copy(dstFile, srcFile)
 	return err

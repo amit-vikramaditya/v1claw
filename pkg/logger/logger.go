@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -78,6 +79,7 @@ func EnableFileLogging(filePath string) error {
 
 	if logger.file != nil {
 		if err := logger.file.Close(); err != nil {
+			log.Printf("failed to close previous log file: %v", err)
 			_ = file.Close()
 			return fmt.Errorf("failed to close previous log file: %w", err)
 		}
@@ -166,8 +168,13 @@ func formatComponent(component string) string {
 
 func formatFields(fields map[string]interface{}) string {
 	var parts []string
-	for k, v := range fields {
-		parts = append(parts, fmt.Sprintf("%s=%v", k, v))
+	keys := make([]string, 0, len(fields))
+	for k := range fields {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		parts = append(parts, fmt.Sprintf("%s=%v", k, fields[k]))
 	}
 	return fmt.Sprintf("{%s}", strings.Join(parts, ", "))
 }
