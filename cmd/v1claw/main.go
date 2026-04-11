@@ -170,10 +170,16 @@ func copyDirectory(src, dst string) error {
 		if err != nil {
 			return err
 		}
-		defer dstFile.Close()
 
 		_, err = io.Copy(dstFile, srcFile)
-		return err
+		if err != nil {
+			_ = dstFile.Close()
+			return err
+		}
+		if err := dstFile.Close(); err != nil {
+			return err
+		}
+		return nil
 	})
 }
 
