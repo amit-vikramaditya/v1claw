@@ -4,6 +4,9 @@ on:
   push:
     branches: ["main"]
 
+permissions:      
+  contents: read
+
 jobs:
   fmt-check:
     runs-on: ubuntu-latest
