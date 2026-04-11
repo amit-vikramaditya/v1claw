@@ -72,8 +72,12 @@ func (t *EditFileTool) Execute(ctx context.Context, tc ToolContext, args map[str
 		return ErrorResult(err.Error())
 	}
 
-	if _, err := os.Stat(resolvedPath); os.IsNotExist(err) {
-		return ErrorResult(fmt.Sprintf("file not found: %s", path))
+	fi, err := os.Stat(resolvedPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return ErrorResult(fmt.Sprintf("file not found: %s", path))
+		}
+		return ErrorResult(fmt.Sprintf("failed to stat file: %v", err))
 	}
 
 	content, err := os.ReadFile(resolvedPath)
@@ -84,21 +88,18 @@ func (t *EditFileTool) Execute(ctx context.Context, tc ToolContext, args map[str
 	contentStr := string(content)
 
 	if !strings.Contains(contentStr, oldText) {
-		return ErrorResult("old_text not found in file. Make sure it matches exactly")
+		return ErrorResult("The specified text was not found in the file. Make sure it matches exactly.")
 	}
 
 	count := strings.Count(contentStr, oldText)
 	if count > 1 {
-		return ErrorResult(fmt.Sprintf("old_text appears %d times. Please provide more context to make it unique", count))
+		return ErrorResult(fmt.Sprintf("The specified text appears %d times in the file. Please provide more context to make it unique.", count))
 	}
 
 	newContent := strings.Replace(contentStr, oldText, newText, 1)
 
-	// Preserve the original file's permissions; default to 0600 for new files.
-	var mode os.FileMode = 0600
-	if fi, err := os.Stat(resolvedPath); err == nil {
-		mode = fi.Mode().Perm()
-	}
+	// Preserve the original file's permissions.
+	mode := fi.Mode().Perm()
 
 	if err := os.WriteFile(resolvedPath, []byte(newContent), mode); err != nil {
 		return ErrorResult(fmt.Sprintf("failed to write file: %v", err))

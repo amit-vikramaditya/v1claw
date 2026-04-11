@@ -63,7 +63,7 @@ func validatePath(path, workspace string, restrict bool) (string, error) {
 				suffix = filepath.Join(filepath.Base(absDir), suffix)
 				absDir = filepath.Dir(absDir)
 			}
-		} else if !os.IsPermission(err) {
+		} else {
 			return "", fmt.Errorf("failed to resolve path symlink: %w", err)
 		}
 

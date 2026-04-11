@@ -13,6 +13,8 @@ import (
 
 type LogLevel int
 
+const callerSkipFrames = 2
+
 const (
 	DEBUG LogLevel = iota
 	INFO
@@ -119,7 +121,7 @@ func logMessage(level LogLevel, component string, message string, fields map[str
 		Fields:    fields,
 	}
 
-	if pc, file, line, ok := runtime.Caller(2); ok {
+	if pc, file, line, ok := runtime.Caller(callerSkipFrames); ok {
 		fn := runtime.FuncForPC(pc)
 		if fn != nil {
 			entry.Caller = fmt.Sprintf("%s:%d (%s)", file, line, fn.Name())
