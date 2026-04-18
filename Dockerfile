@@ -1,7 +1,7 @@
 # ============================================================
 # Stage 1: Build the v1claw binary
 # ============================================================
-FROM golang:1.26.0-alpine AS builder
+FROM golang:1.26.2-alpine AS builder
 
 RUN apk add --no-cache git make
 
