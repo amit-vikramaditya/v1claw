@@ -7,7 +7,7 @@ require (
 	github.com/anthropics/anthropic-sdk-go v1.35.0
 	github.com/bwmarrin/discordgo v0.29.0
 	github.com/caarlos0/env/v11 v11.3.1
-	github.com/charmbracelet/huh v0.8.0
+	github.com/charmbracelet/huh v1.0.0
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/chzyer/readline v1.5.1
 	github.com/google/uuid v1.6.0
