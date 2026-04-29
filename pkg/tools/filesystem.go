@@ -11,6 +11,8 @@ import (
 	"github.com/amit-vikramaditya/v1claw/pkg/bus"
 )
 
+const maxWriteBytes = 50 * 1024 * 1024 // 50 MB
+
 // validatePath ensures the given path is within the workspace if restrict is true.
 func validatePath(path, workspace string, restrict bool) (string, error) {
 	if workspace == "" {
@@ -80,14 +82,34 @@ func isWithinWorkspace(candidate, workspace string) bool {
 	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator))
 }
 
+const defaultMaxReadBytes int64 = 10 * 1024 * 1024 // 10MB default read limit
+
 type ReadFileTool struct {
-	workspace string
-	restrict  bool
-	bus       *bus.MessageBus
+	workspace    string
+	restrict     bool
+	bus          *bus.MessageBus
+	maxReadBytes int64
 }
 
 func NewReadFileTool(workspace string, restrict bool, msgBus *bus.MessageBus) *ReadFileTool {
-	return &ReadFileTool{workspace: workspace, restrict: restrict, bus: msgBus}
+	return &ReadFileTool{
+		workspace:    workspace,
+		restrict:     restrict,
+		bus:          msgBus,
+		maxReadBytes: defaultMaxReadBytes,
+	}
+}
+
+func NewReadFileToolWithMaxReadBytes(workspace string, restrict bool, msgBus *bus.MessageBus, maxReadBytes int64) *ReadFileTool {
+	if maxReadBytes <= 0 {
+		maxReadBytes = defaultMaxReadBytes
+	}
+	return &ReadFileTool{
+		workspace:    workspace,
+		restrict:     restrict,
+		bus:          msgBus,
+		maxReadBytes: maxReadBytes,
+	}
 }
 
 func (t *ReadFileTool) Name() string {
@@ -118,8 +140,7 @@ func (t *ReadFileTool) Execute(ctx context.Context, tc ToolContext, args map[str
 	}
 
 	// [CRITICAL] Filesystem tools have TOCTOU window and unbounded reads.
-	// Fix: Add a max_bytes limit to prevent OOM.
-	const maxReadBytes = 10 * 1024 * 1024 // 10MB limit for reads
+	// Enforce configured max read bytes (defaults to 10MB) to prevent OOM.
 
 	resolvedPath, err := validatePath(path, t.workspace, t.restrict)
 	if err != nil {
@@ -144,11 +165,15 @@ func (t *ReadFileTool) Execute(ctx context.Context, tc ToolContext, args map[str
 		// TOCTOU mitigation: verify the opened file matches the resolved path's Lstat
 		// This prevents swapping the file with a symlink after validatePath
 		fi, err := f.Stat()
-		if err == nil {
-			li, lerr := os.Lstat(resolvedPath)
-			if lerr == nil && !os.SameFile(fi, li) {
-				return ErrorResult("access denied: symlink race detected (TOCTOU)")
-			}
+		if err != nil {
+			return ErrorResult(fmt.Sprintf("access denied: failed to stat opened file for TOCTOU check: %v", err))
+		}
+		li, lerr := os.Lstat(resolvedPath)
+		if lerr != nil {
+			return ErrorResult(fmt.Sprintf("access denied: failed to lstat path for TOCTOU check: %v", lerr))
+		}
+		if !os.SameFile(fi, li) {
+			return ErrorResult("access denied: symlink race detected (TOCTOU)")
 		}
 	}
 
@@ -156,8 +181,8 @@ func (t *ReadFileTool) Execute(ctx context.Context, tc ToolContext, args map[str
 	if err != nil {
 		return ErrorResult(fmt.Sprintf("failed to stat file: %v", err))
 	}
-	if info.Size() > maxReadBytes {
-		return ErrorResult(fmt.Sprintf("file too large to read (max %d bytes)", maxReadBytes))
+	if info.Size() > t.maxReadBytes {
+		return ErrorResult(fmt.Sprintf("file too large to read (max %d bytes)", t.maxReadBytes))
 	}
 
 	content, err := io.ReadAll(f)
@@ -214,7 +239,6 @@ func (t *WriteFileTool) Execute(ctx context.Context, tc ToolContext, args map[st
 		return ErrorResult("content is required")
 	}
 
-	const maxWriteBytes = 50 * 1024 * 1024 // 50 MB
 	if len(content) > maxWriteBytes {
 		return ErrorResult(fmt.Sprintf("content too large to write (max %d bytes)", maxWriteBytes))
 	}
@@ -239,7 +263,12 @@ func (t *WriteFileTool) Execute(ctx context.Context, tc ToolContext, args map[st
 	// V1: Symlink check BEFORE open — prevents TOCTOU where O_TRUNC would
 	// destroy the target before the check runs.
 	if t.restrict {
-		if li, lerr := os.Lstat(resolvedPath); lerr == nil && (li.Mode()&os.ModeSymlink != 0) {
+		li, lerr := os.Lstat(resolvedPath)
+		if lerr != nil {
+			if !os.IsNotExist(lerr) {
+				return ErrorResult(fmt.Sprintf("failed to validate path before write: %v", lerr))
+			}
+		} else if li.Mode()&os.ModeSymlink != 0 {
 			return ErrorResult("access denied: path resolves to a symlink")
 		}
 	}
