@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	"github.com/amit-vikramaditya/v1claw/pkg/bus"
 )
@@ -161,10 +162,11 @@ func (t *ReadFileTool) Execute(ctx context.Context, tc ToolContext, args map[str
 	}
 	defer f.Close()
 
+	var info os.FileInfo
 	if t.restrict {
 		// TOCTOU mitigation: verify the opened file matches the resolved path's Lstat
 		// This prevents swapping the file with a symlink after validatePath
-		fi, err := f.Stat()
+		info, err = f.Stat()
 		if err != nil {
 			return ErrorResult(fmt.Sprintf("access denied: failed to stat opened file for TOCTOU check: %v", err))
 		}
@@ -172,22 +174,26 @@ func (t *ReadFileTool) Execute(ctx context.Context, tc ToolContext, args map[str
 		if lerr != nil {
 			return ErrorResult(fmt.Sprintf("access denied: failed to lstat path for TOCTOU check: %v", lerr))
 		}
-		if !os.SameFile(fi, li) {
+		if !os.SameFile(info, li) {
 			return ErrorResult("access denied: symlink race detected (TOCTOU)")
+		}
+	} else {
+		info, err = f.Stat()
+		if err != nil {
+			return ErrorResult(fmt.Sprintf("failed to stat file: %v", err))
 		}
 	}
 
-	info, err := f.Stat()
-	if err != nil {
-		return ErrorResult(fmt.Sprintf("failed to stat file: %v", err))
-	}
 	if info.Size() > t.maxReadBytes {
 		return ErrorResult(fmt.Sprintf("file too large to read (max %d bytes)", t.maxReadBytes))
 	}
 
-	content, err := io.ReadAll(f)
+	content, err := io.ReadAll(io.LimitReader(f, t.maxReadBytes+1))
 	if err != nil {
 		return ErrorResult(fmt.Sprintf("failed to read file: %v", err))
+	}
+	if int64(len(content)) > t.maxReadBytes {
+		return ErrorResult(fmt.Sprintf("file too large to read (max %d bytes)", t.maxReadBytes))
 	}
 
 	return NewToolResult(string(content))
@@ -273,7 +279,12 @@ func (t *WriteFileTool) Execute(ctx context.Context, tc ToolContext, args map[st
 		}
 	}
 
-	f, err := os.OpenFile(resolvedPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+	openFlags := os.O_WRONLY | os.O_CREATE | os.O_TRUNC
+	if t.restrict {
+		openFlags |= syscall.O_NOFOLLOW
+	}
+
+	f, err := os.OpenFile(resolvedPath, openFlags, 0600)
 	if err != nil {
 		return ErrorResult(fmt.Sprintf("failed to open file for writing: %v", err))
 	}
