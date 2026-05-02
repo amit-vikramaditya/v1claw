@@ -1,6 +1,6 @@
 module github.com/amit-vikramaditya/v1claw
 
-go 1.25.5
+go 1.25.7
 
 require (
 	github.com/adhocore/gronx v1.19.6
@@ -13,7 +13,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3
 	github.com/larksuite/oapi-sdk-go/v3 v3.5.3
-	github.com/mymmrac/telego v1.6.0
+	github.com/mymmrac/telego v1.8.0
 	github.com/open-dingtalk/dingtalk-stream-sdk-go v0.9.1
 	github.com/openai/openai-go/v3 v3.22.0
 	github.com/slack-go/slack v0.17.3
@@ -79,7 +79,7 @@ require (
 	github.com/twitchyliquid64/golang-asm v0.15.1 // indirect
 	github.com/valyala/bytebufferpool v1.0.0 // indirect
 	github.com/valyala/fasthttp v1.69.0 // indirect
-	github.com/valyala/fastjson v1.6.7 // indirect
+	github.com/valyala/fastjson v1.6.10 // indirect
 	golang.org/x/arch v0.24.0 // indirect
 	golang.org/x/crypto v0.48.0
 	golang.org/x/net v0.50.0 // indirect
